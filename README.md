@@ -47,12 +47,16 @@ futures_backtest/
 │   └── futures.duckdb     ← 自動產生，勿納入版控
 ├── src/
 │   ├── etl/
+│   │   ├── download.py        ← 從期交所自動下載每日 zip
+│   │   ├── daily_update.py    ← 一鍵更新（下載 + 全 ETL）
 │   │   ├── parse_rpt.py       ← zip/rpt → ticks 表
 │   │   ├── build_1m.py        ← ticks → ohlcv_1m（1分K）
 │   │   ├── build_continuous.py ← Panama 換倉調整
 │   │   └── validate.py        ← 資料正確性驗證
 │   ├── strategies/            ← 策略邏輯（待實作）
 │   └── backtest/              ← 回測執行器（待實作）
+├── specs/
+│   └── daily_update.md        ← 每日更新系統規格
 ├── notebooks/                 ← Jupyter 探索分析
 └── tests/
 ```
@@ -71,33 +75,25 @@ futures_backtest/
 
 ## 快速開始
 
-### 1. 準備資料
+### 1. 下載初始資料
 
-將期交所 zip 檔依年份放入對應目錄：
-
-```
-data/raw/
-├── 2021/
-│   ├── Daily_2021_01_04.zip
-│   └── ...
-└── 2026/
-    └── Daily_2026_02_27.zip
-```
-
-### 2. 建立資料庫（依序執行）
+> **注意**：期交所網站只保留最近 **30 個交易日**的資料。歷史資料需手動備份或另行取得。
 
 ```bash
-# Step 1: 解析 zip/rpt → ticks 表（增量，已匯入日期自動跳過）
-uv run python src/etl/parse_rpt.py
+# 自動下載（期交所通常於 18:30 前更新當日資料）
+uv run python src/etl/download.py
 
-# Step 2: ticks → 1分K（日盤 08:45~13:45）
-uv run python src/etl/build_1m.py
+# 或指定範圍
+uv run python src/etl/download.py --start 2025-01-01 --end 2025-12-31
+```
 
-# Step 3: Panama 換倉調整，產生 adj_close
-uv run python src/etl/build_continuous.py
+### 2. 建立資料庫
 
-# Step 4: 驗證資料正確性
-uv run python src/etl/validate.py
+```bash
+uv run python src/etl/parse_rpt.py        # zip/rpt → ticks
+uv run python src/etl/build_1m.py         # ticks → 1分K
+uv run python src/etl/build_continuous.py # Panama 換倉調整
+uv run python src/etl/validate.py         # 驗證
 ```
 
 ### 3. 用 Claude Code 開發策略
@@ -114,13 +110,55 @@ claude
 ## 每日更新資料
 
 ```bash
-# 放入新的 zip 檔
-cp Daily_2026_03_03.zip data/raw/2026/
+# 一鍵更新：自動下載最新 zip + 跑完整 ETL
+uv run python src/etl/daily_update.py
 
-# 增量匯入（已存在的日期自動跳過）
-uv run python src/etl/parse_rpt.py
-uv run python src/etl/build_1m.py
-uv run python src/etl/build_continuous.py  # 會重算所有換倉調整
+# 只下載，不跑 ETL
+uv run python src/etl/download.py
+
+# 已有 zip，只跑 ETL
+uv run python src/etl/daily_update.py --skip-download
+```
+
+### 設定自動排程（macOS launchd）
+
+建立 `~/Library/LaunchAgents/com.futures-backtest.daily-update.plist`，每天 18:30 自動執行：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.futures-backtest.daily-update</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOUR_NAME/.asdf/shims/uv</string>
+        <string>run</string>
+        <string>python</string>
+        <string>src/etl/daily_update.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/YOUR_NAME/Projects/futures_backtest</string>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>18</integer>
+        <key>Minute</key><integer>30</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_NAME/Projects/futures_backtest/logs/daily_update.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_NAME/Projects/futures_backtest/logs/daily_update.err</string>
+    <key>RunAtLoad</key><false/>
+</dict>
+</plist>
+```
+
+載入排程：
+
+```bash
+mkdir -p logs
+launchctl load ~/Library/LaunchAgents/com.futures-backtest.daily-update.plist
 ```
 
 ## 常用查詢
