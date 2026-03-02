@@ -47,6 +47,9 @@ data/raw/
 - 夜盤：15:00 ~ 隔日 05:00
 - 當沖策略目前只關注日盤
 
+### 資料保存限制
+**期交所網站僅保留最近 30 個交易日**的下載檔案。若超過一個月未更新，缺失資料無法從官網補回。建議設定每日自動排程。
+
 ## 資料庫 Schema
 
 ### DuckDB 檔案：`data/futures.duckdb`（不納入版控）
@@ -105,8 +108,12 @@ futures_backtest/
 ├── data/
 │   ├── raw/              ← 原始 zip 檔（依年份子目錄，不納入版控）
 │   └── futures.duckdb    ← DuckDB 資料庫（不納入版控）
+├── specs/
+│   └── daily_update.md   ← 每日更新系統規格
 ├── src/
 │   ├── etl/
+│   │   ├── download.py         ← 從期交所自動下載每日 zip ✅
+│   │   ├── daily_update.py     ← 一鍵更新（下載 + 全 ETL）✅
 │   │   ├── parse_rpt.py        ← zip/rpt → ticks 表 ✅
 │   │   ├── build_1m.py         ← ticks → ohlcv_1m ✅
 │   │   ├── build_continuous.py ← 換倉 + Panama adj_close ✅
@@ -123,14 +130,30 @@ futures_backtest/
 
 ## ETL 執行順序
 
+### 每日更新（建議）
 ```bash
-uv run python src/etl/parse_rpt.py        # Step 1
-uv run python src/etl/build_1m.py         # Step 2
-uv run python src/etl/build_continuous.py  # Step 3
-uv run python src/etl/validate.py          # Step 4
+uv run python src/etl/daily_update.py
+```
+自動偵測起始日，下載今日資料，依序執行 Step 1–4。
+
+### 單步執行
+```bash
+uv run python src/etl/download.py         # Step 0: 下載 zip
+uv run python src/etl/parse_rpt.py        # Step 1: zip → ticks
+uv run python src/etl/build_1m.py         # Step 2: ticks → ohlcv_1m
+uv run python src/etl/build_continuous.py # Step 3: 換倉 + Panama
+uv run python src/etl/validate.py         # Step 4: 驗證
 ```
 
 每個 step 都可獨立重跑（冪等性）。
+
+## 下載邏輯（download.py）
+
+- URL：`https://www.taifex.com.tw/file/taifex/Dailydownload/Dailydownload/Daily_YYYY_MM_DD.zip`
+- 期交所通常於 **18:30 前**更新當日資料，預設結束日為今天
+- 自動起始日：磁碟上最新 zip 的隔天
+- 非交易日偵測：HTTP 404 或 magic-byte 檢查（非 `PK\x03\x04` 開頭）
+- 原子性寫入：`.zip.tmp` → rename，防止部分下載殘留
 
 ## 換倉邏輯
 
@@ -143,14 +166,14 @@ uv run python src/etl/validate.py          # Step 4
   - 最新合約 `adjustment = 0`，越早的歷史調整量越大
   - 換倉切換點：`adj_close(舊合約最後一根) == adj_close(新合約第一根)` ✅
 
-## 資料現況（截至 2026-02）
+## 資料現況（截至 2026-03）
 
 | 項目 | 數值 |
 |------|------|
-| 日期範圍 | 2020-12-31 ~ 2026-02-26 |
-| ticks 總筆數 | ~1.23 億筆 |
-| 交易日數 | 1,247 天 |
-| ohlcv_1m 總 bar 數 | 375,347 根 |
+| 日期範圍 | 2020-12-31 ~ 2026-03-02 |
+| ticks 總筆數 | ~1.24 億筆 |
+| 交易日數 | 1,248 天 |
+| ohlcv_1m 總 bar 數 | 375,648 根 |
 | 每日 bar 數 | 301 根（08:45~13:45） |
 | 每日平均成交量 | ~17.9 萬口 |
 | 換倉次數 | 62 次 |
@@ -178,3 +201,4 @@ DuckDB 同時只允許一個寫入連線；多個 process 同時開啟同一 .du
 - `build_continuous.py` 重跑時會清除 rollover_log 並重算所有 adjustment
 - rpt 檔編碼：優先嘗試 UTF-8，失敗則 Big5 → CP950
 - 價差合約（合約代號含 `/`）在 parse_rpt.py 階段過濾，不寫入 ticks
+- 期交所僅保留最近 30 個交易日資料，需定期排程避免缺口
