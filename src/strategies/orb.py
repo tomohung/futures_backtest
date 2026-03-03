@@ -22,6 +22,7 @@ class ORBStrategy(Strategy):
     """
 
     range_end_minute: int = 60
+    entry_end_minute: int = 75      # cutoff for new entries (from 08:00); 75=09:15
     sl_pct: float = 0.005
     tp_multiplier: float = 2.0
     trail_activate_minute: int = 45
@@ -29,6 +30,9 @@ class ORBStrategy(Strategy):
     def init(self):
         self._range_end_time = (
             datetime_from_time(time(8, 0)) + timedelta(minutes=self.range_end_minute)
+        ).time()
+        self._entry_end_time = (
+            datetime_from_time(time(8, 0)) + timedelta(minutes=self.entry_end_minute)
         ).time()
         self._trail_activate_time = (
             datetime_from_time(time(9, 0)) + timedelta(minutes=self.trail_activate_minute)
@@ -111,13 +115,13 @@ class ORBStrategy(Strategy):
         if not self.range_confirmed:
             self.range_confirmed = True
 
-        # D. Entry checks (only before force-exit time)
-        if self.range_confirmed and self.or_high is not None and bar_time < self._force_exit_time:
+        # D. Entry checks (only within entry window: range_end_time < bar_time < entry_end_time)
+        if self.range_confirmed and self.or_high is not None and bar_time < self._entry_end_time:
             # Long signal: close breaks above opening range high
             if close > self.or_high and not self.long_entered:
                 if self.position.is_short:
                     self.position.close()
-                self.buy()
+                self.buy(size=1)
                 self.long_entered = True
                 self.entry_price = close
                 sl_dist = self.entry_price * self.sl_pct
@@ -129,7 +133,7 @@ class ORBStrategy(Strategy):
             elif close < self.or_low and not self.short_entered:
                 if self.position.is_long:
                     self.position.close()
-                self.sell()
+                self.sell(size=1)
                 self.short_entered = True
                 self.entry_price = close
                 sl_dist = self.entry_price * self.sl_pct
