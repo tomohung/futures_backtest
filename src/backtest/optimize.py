@@ -20,7 +20,7 @@ from backtesting import Backtest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from src.backtest.runner import load_data
+from src.backtest.runner import load_data, load_data_with_night_ma
 from src.strategies.orb import ORBStrategy
 
 TARGET_WIN_RATE = 52.0
@@ -29,16 +29,16 @@ TARGET_PF = 1.2
 MIN_TRADES = 10
 
 PARAM_GRID = {
-    "range_end_minute":      [30, 45, 60, 75],
-    "entry_end_minute":      [60, 75, 90, 105, 120],
+    "range_end_minute":      [60, 75, 90, 105],        # 08:00+N → OR window 15/30/45/60 min
+    "entry_end_minute":      [75, 90, 105, 120, 150],  # must be > range_end_minute
     "sl_pct":                [0.003, 0.005, 0.007, 0.010],
     "tp_multiplier":         [1.5, 2.0, 2.5, 3.0],
-    "trail_activate_minute": [30, 45, 60, 90],
-    "trend_ma_days":         [0, 5, 10, 20, 60],
+    "trail_activate_minute": [45],                     # fixed: Phase 2
+    "trend_ma_days":         [10],                     # fixed: Phase 2
 }
 
 TREND_ONLY_GRID = {
-    "trend_ma_days": [0, 1, 2, 3, 5, 7, 10, 15, 20, 60],
+    "trend_ma_days": [0, 7, 8, 9, 10, 11, 12],
 }
 
 
@@ -78,14 +78,41 @@ def compute_metrics(stats) -> dict | None:
 
 
 def run_grid(df: pd.DataFrame, combos: list[dict], label: str = "") -> pd.DataFrame:
+    import time as _time
     bt = Backtest(df, ORBStrategy, cash=200_000, commission=0.0, trade_on_close=True)
     total = len(combos)
     print(f"{label}: testing {total} combinations...")
 
     rows = []
+    t0 = _time.time()
     for i, params in enumerate(combos, 1):
-        if i % 200 == 0 or i == total:
+        stats = bt.run(**params)
+        m = compute_metrics(stats)
+        if m:
+            rows.append({**params, **m})
+        if i % 50 == 0 or i == total:
+            elapsed = _time.time() - t0
+            rate = i / elapsed
+            eta = (total - i) / rate
+            print(f"  {i}/{total}  {rate:.1f} combo/s  ETA {eta/60:.1f} min")
+    return pd.DataFrame(rows)
+
+
+def run_grid_night_ma(combos: list[dict], start: str = None, end: str = None, label: str = "") -> pd.DataFrame:
+    """Like run_grid but loads data with night-session MA for each combo."""
+    total = len(combos)
+    print(f"{label}: testing {total} combinations (night MA)...")
+
+    rows = []
+    for i, params in enumerate(combos, 1):
+        if i % 10 == 0 or i == total:
             print(f"  {i}/{total}", end="\r")
+        n = params.get("trend_ma_days", 0)
+        if n == 0:
+            df = load_data(start=start, end=end)
+        else:
+            df = load_data_with_night_ma(start=start, end=end, trend_ma_days=n)
+        bt = Backtest(df, ORBStrategy, cash=200_000, commission=0.0, trade_on_close=True)
         stats = bt.run(**params)
         m = compute_metrics(stats)
         if m:
@@ -127,7 +154,12 @@ def main():
     parser.add_argument(
         "--trend-only",
         action="store_true",
-        help="Sensitivity scan: fix base params at defaults, sweep trend_ma_days only (5 combos)",
+        help="Sensitivity scan: fix base params at defaults, sweep trend_ma_days only",
+    )
+    parser.add_argument(
+        "--night-ma",
+        action="store_true",
+        help="(use with --trend-only) Compute trend MA on continuous day+night bars",
     )
     args = parser.parse_args()
 
@@ -135,6 +167,9 @@ def main():
         param_grid = TREND_ONLY_GRID
         label_suffix = " | trend_ma_days sweep"
         csv_suffix = "_trend_only"
+        if args.night_ma:
+            label_suffix += " (night MA)"
+            csv_suffix += "_night_ma"
     else:
         param_grid = PARAM_GRID
         label_suffix = ""
@@ -148,17 +183,37 @@ def main():
     print("=" * 70)
 
     print("\nLoading data...")
-    df_train = load_data(start="2023-01-01", end="2025-12-31")
-    df_test  = load_data(start="2026-01-01")
-    print(f"  Train (2023-2025): {len(df_train):,} bars  "
-          f"({df_train.index[0].date()} ~ {df_train.index[-1].date()})")
-    print(f"  Test  (2026):      {len(df_test):,} bars  "
-          f"({df_test.index[0].date()} ~ {df_test.index[-1].date()})")
+    use_night_ma = args.trend_only and args.night_ma
+
+    if use_night_ma:
+        # Night MA: each combo needs its own df (MA varies by trend_ma_days).
+        # Pre-load here for reporting; actual per-combo loading happens in run_grid.
+        _sample = load_data_with_night_ma(start="2023-01-01", end="2025-12-31", trend_ma_days=10)
+        df_train = df_test = None  # populated per-combo inside run_grid
+        print(f"  Night MA mode — data loaded per combo")
+        print(f"  Train (2023-2025): {len(_sample):,} bars  "
+              f"({_sample.index[0].date()} ~ {_sample.index[-1].date()})")
+        _sample_test = load_data_with_night_ma(start="2026-01-01", trend_ma_days=10)
+        print(f"  Test  (2026):      {len(_sample_test):,} bars  "
+              f"({_sample_test.index[0].date()} ~ {_sample_test.index[-1].date()})")
+    else:
+        df_train = load_data(start="2025-01-01", end="2025-12-31")
+        df_test  = load_data(start="2026-01-01")
+        print(f"  Train (2025):  {len(df_train):,} bars  "
+              f"({df_train.index[0].date()} ~ {df_train.index[-1].date()})")
+        print(f"  Test  (2026):  {len(df_test):,} bars  "
+              f"({df_test.index[0].date()} ~ {df_test.index[-1].date()})")
 
     combos = build_grid(param_grid)
 
     # --- Step 1: train ---
-    df_train_results = run_grid(df_train, combos, label=f"Train (2023-2025){label_suffix}")
+    if use_night_ma:
+        df_train_results = run_grid_night_ma(
+            combos, start="2023-01-01", end="2025-12-31",
+            label=f"Train (2023-2025){label_suffix}",
+        )
+    else:
+        df_train_results = run_grid(df_train, combos, label=f"Train (2023-2025){label_suffix}")
     good = print_results(df_train_results, label="Training results (2023-2025)", param_cols=param_cols)
 
     Path("output").mkdir(exist_ok=True)
@@ -174,7 +229,12 @@ def main():
     top_combos = good.head(30)[param_cols].to_dict("records")
 
     print(f"\nVerifying top {len(top_combos)} combos on 2026 data...")
-    df_test_results = run_grid(df_test, top_combos, label="Test (2026)")
+    if use_night_ma:
+        df_test_results = run_grid_night_ma(
+            top_combos, start="2026-01-01", label="Test (2026)",
+        )
+    else:
+        df_test_results = run_grid(df_test, top_combos, label="Test (2026)")
 
     train_top = good.head(30)[param_cols + ["win_rate", "avg_wl", "pf", "expectancy", "n_trades"]].copy()
     train_top.columns = param_cols + ["tr_win_rate", "tr_avg_wl", "tr_pf", "tr_exp", "tr_n"]

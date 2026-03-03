@@ -90,6 +90,47 @@ def load_data(start=None, end=None):
     return df
 
 
+def load_data_with_night_ma(start=None, end=None, trend_ma_days=10):
+    """Load day-session OHLCV with TrendMA computed on continuous day+night 1-min bars.
+
+    The MA is computed on the full price series (including night session) so that
+    overnight price action is reflected. The returned DataFrame contains a 'TrendMA'
+    column aligned to day-session timestamps; ORBStrategy will use it automatically.
+    """
+    import pandas as pd
+
+    with duckdb.connect(DB_PATH, read_only=True) as conn:
+        # All bars (day + night) for MA computation — no date filter, need full warmup
+        df_all = conn.execute("""
+            SELECT timestamp, close FROM ohlcv_1m
+            WHERE symbol = 'TX'
+            ORDER BY timestamp
+        """).df().set_index("timestamp")
+
+        # Day session only for backtesting
+        df_day = conn.execute("""
+            SELECT timestamp, open, high, low, close, volume
+            FROM ohlcv_1m
+            WHERE symbol = 'TX'
+              AND CAST(timestamp AS TIME) BETWEEN TIME '08:45:00' AND TIME '13:45:00'
+            ORDER BY timestamp
+        """).df().set_index("timestamp")
+
+    df_day.columns = ["Open", "High", "Low", "Close", "Volume"]
+
+    # Rolling MA on continuous series, then align to day-session index
+    n_bars = trend_ma_days * 301
+    ma = df_all["close"].rolling(n_bars, min_periods=n_bars).mean()
+    df_day["TrendMA"] = ma.reindex(df_day.index)
+
+    if start:
+        df_day = df_day[df_day.index >= start]
+    if end:
+        df_day = df_day[df_day.index <= end]
+
+    return df_day
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run ORB backtest on TX futures",

@@ -46,13 +46,22 @@ class ORBStrategy(Strategy):
         self._current_date = None
 
         # Trend MA indicator
+        # If a precomputed 'TrendMA' column is present in the data (e.g. from
+        # load_data_with_night_ma), use it directly so night-session prices are
+        # reflected. Otherwise compute the MA on day-session bars only.
         if self.trend_ma_days > 0:
-            n_bars = self.trend_ma_days * 301
-            closes = pd.Series(self.data.Close)
-            self._trend_ma = self.I(
-                lambda: closes.rolling(n_bars, min_periods=n_bars).mean(),
-                name="Trend MA", overlay=True,
-            )
+            if "TrendMA" in self.data.df.columns:
+                trend_ma_arr = self.data.df["TrendMA"].values
+                self._trend_ma = self.I(
+                    lambda: trend_ma_arr, name="Trend MA (night)", overlay=True,
+                )
+            else:
+                n_bars = self.trend_ma_days * 301
+                closes = pd.Series(self.data.Close)
+                self._trend_ma = self.I(
+                    lambda: closes.rolling(n_bars, min_periods=n_bars).mean(),
+                    name="Trend MA", overlay=True,
+                )
 
         # Precompute OR high/low arrays for chart overlay
         or_high_arr, or_low_arr = self._precompute_or_lines()
