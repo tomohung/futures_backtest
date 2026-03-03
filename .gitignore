@@ -208,8 +208,9 @@ __marimo__/
 
 .DS_Store
 
-# backtesting.py 自動產生的圖表（檔名為策略類別名，如 ORBStrategy.html）
-*Strategy.html
+# backtesting.py 自動產生的圖表（含參數版如 ORBStrategy(...).html）
+*Strategy*.html
+trades.csv
 
 # 回測輸出（交易記錄 CSV）
 output/
