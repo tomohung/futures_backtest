@@ -38,7 +38,7 @@ PARAM_GRID = {
 }
 
 TREND_ONLY_GRID = {
-    "trend_ma_days": [0, 5, 10, 20, 60],
+    "trend_ma_days": [0, 1, 2, 3, 5, 7, 10, 15, 20, 60],
 }
 
 
