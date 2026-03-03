@@ -31,6 +31,7 @@ def get_key_prices():
             FROM ohlcv_1m
             WHERE symbol = ?
               AND timestamp::DATE = ?
+              AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
         """, [SYMBOL, last_day]).fetchone()
 
         # 夜盤：last_day 15:00 ~ (last_day+1) 05:00（from ticks，跨日，主力合約）
@@ -76,7 +77,7 @@ def get_key_prices():
                     arg_max(close, timestamp) AS close
                 FROM ohlcv_1m
                 WHERE symbol = ?
-                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:44:59'
                 GROUP BY ts
             ),
             ma_calc AS (
