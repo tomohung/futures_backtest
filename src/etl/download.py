@@ -77,19 +77,22 @@ def _zip_path(target_date: date) -> Path:
 # Core download logic
 # ---------------------------------------------------------------------------
 
-def download_one(target_date: date, delay: float = 1.0) -> str:
+def download_one(target_date: date, delay: float = 1.0, force: bool = False) -> str:
     """Download zip for target_date.
 
     Returns:
-        'saved'        — zip written to disk
-        'skipped'      — file already exists on disk
+        'saved'        — zip written to disk (new file)
+        'updated'      — zip re-downloaded and overwritten (force=True)
+        'skipped'      — file already exists on disk and force=False
         'non_trading'  — server returned non-zip content (HTML)
         'error'        — HTTP error or network failure
     """
     dest = _zip_path(target_date)
 
-    if dest.exists():
+    if dest.exists() and not force:
         return "skipped"
+
+    was_existing = dest.exists()
 
     url = BASE_URL.format(
         year=target_date.strftime("%Y"),
@@ -122,7 +125,7 @@ def download_one(target_date: date, delay: float = 1.0) -> str:
     tmp.write_bytes(content)
     tmp.rename(dest)
 
-    return "saved"
+    return "updated" if was_existing else "saved"
 
 
 # ---------------------------------------------------------------------------
@@ -134,24 +137,41 @@ def download_range(
     end: date,
     delay: float = 1.0,
     dry_run: bool = False,
+    redownload_recent: int = 2,
 ) -> dict[str, int]:
     """Download all dates in [start, end] (inclusive).
 
-    Returns count dict with keys: saved, skipped, non_trading, error.
-    """
-    counts: dict[str, int] = {"saved": 0, "skipped": 0, "non_trading": 0, "error": 0}
+    Also force re-downloads the most recent `redownload_recent` zips already on
+    disk, even if they fall before `start` (they may be incomplete partial uploads).
 
+    Returns count dict with keys: saved, updated, skipped, non_trading, error.
+    """
+    counts: dict[str, int] = {"saved": 0, "updated": 0, "skipped": 0, "non_trading": 0, "error": 0}
+
+    # Determine which dates to force re-download (N most recent zips on disk)
+    all_zip_dates = sorted(existing_zip_dates())
+    force_dates: set[date] = set(all_zip_dates[-redownload_recent:]) if redownload_recent > 0 else set()
+    if force_dates:
+        print(f"強制重新下載最近 {len(force_dates)} 個 zip：{sorted(force_dates)}")
+
+    # Union of force_dates and [start, end]
+    to_process: dict[date, bool] = {d: True for d in force_dates}
     current = start
     while current <= end:
-        dest = _zip_path(current)
-        if dry_run:
-            status = "skipped" if dest.exists() else "would_download"
-            print(f"  [dry-run] {current}  →  {status}")
-        else:
-            status = download_one(current, delay=delay)
-            print(f"  {current}  →  {status}")
-            counts[status] = counts.get(status, 0) + 1
+        if current not in to_process:
+            to_process[current] = False
         current += timedelta(days=1)
+
+    for target in sorted(to_process):
+        force = to_process[target]
+        dest = _zip_path(target)
+        if dry_run:
+            label = "force" if force else ("skipped" if dest.exists() else "would_download")
+            print(f"  [dry-run] {target}  →  {label}")
+        else:
+            status = download_one(target, delay=delay, force=force)
+            print(f"  {target}  →  {status}")
+            counts[status] = counts.get(status, 0) + 1
 
     return counts
 
@@ -201,6 +221,13 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="只列出待下載日期，不實際下載",
     )
+    parser.add_argument(
+        "--redownload-recent",
+        type=int,
+        default=2,
+        metavar="N",
+        help="強制重新下載磁碟上最新 N 個 zip（可能是不完整的早期上傳，預設 2）",
+    )
     return parser.parse_args()
 
 
@@ -221,11 +248,17 @@ def main() -> None:
         print("起始日期晚於結束日期，無需下載。")
         return
 
-    counts = download_range(start, end, delay=args.delay, dry_run=args.dry_run)
+    counts = download_range(
+        start, end,
+        delay=args.delay,
+        dry_run=args.dry_run,
+        redownload_recent=args.redownload_recent,
+    )
 
     if not args.dry_run:
         print("\n=== 下載結果 ===")
-        print(f"  已儲存：   {counts['saved']}")
+        print(f"  新增：     {counts['saved']}")
+        print(f"  重新下載： {counts['updated']}")
         print(f"  已跳過：   {counts['skipped']}")
         print(f"  非交易日： {counts['non_trading']}")
         print(f"  錯誤：     {counts['error']}")

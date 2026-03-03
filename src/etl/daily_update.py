@@ -91,6 +91,20 @@ def _parse_args() -> argparse.Namespace:
         metavar="SECONDS",
         help="下載每筆間隔秒數（預設 1.0）",
     )
+    parser.add_argument(
+        "--redownload-recent",
+        type=int,
+        default=2,
+        metavar="N",
+        help="強制重新下載磁碟上最新 N 個 zip（預設 2）",
+    )
+    parser.add_argument(
+        "--reimport-recent",
+        type=int,
+        default=2,
+        metavar="N",
+        help="強制重新匯入最新 N 個 zip 日期的 ticks（預設 2）",
+    )
     return parser.parse_args()
 
 
@@ -103,7 +117,11 @@ def main() -> None:
 
     # Step 0: Download
     if not args.skip_download:
-        download_args = ["--end", args.end, "--delay", str(args.delay)]
+        download_args = [
+            "--end", args.end,
+            "--delay", str(args.delay),
+            "--redownload-recent", str(args.redownload_recent),
+        ]
         if args.start:
             download_args += ["--start", args.start]
         ok = run_step(ETL_DIR / "download.py", download_args)
@@ -114,7 +132,7 @@ def main() -> None:
         print("\n[跳過] Step 0: 下載")
 
     # Step 1: parse_rpt
-    ok = run_step(ETL_DIR / "parse_rpt.py")
+    ok = run_step(ETL_DIR / "parse_rpt.py", ["--reimport-recent", str(args.reimport_recent)])
     if not ok:
         print("\n[ABORT] parse_rpt.py 失敗，停止 pipeline。")
         sys.exit(1)

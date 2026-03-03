@@ -8,6 +8,7 @@ Step 1: 解析 rpt 檔 → ticks 表
 支援增量匯入：已存在的 trade_date 跳過。
 """
 
+import argparse
 import zipfile
 import io
 import re
@@ -112,6 +113,15 @@ def get_imported_dates(conn: duckdb.DuckDBPyConnection) -> set:
     return {r[0] for r in rows}
 
 
+def get_recent_zip_dates(n: int) -> set[date]:
+    """Return the N most recent zip dates on disk (candidates for re-import)."""
+    all_dates = sorted(
+        d for p in RAW_DIR.glob("**/Daily_*.zip")
+        if (d := date_from_zip(p)) is not None
+    )
+    return set(all_dates[-n:]) if n > 0 and all_dates else set()
+
+
 def find_all_zips() -> list[Path]:
     zips = sorted(RAW_DIR.glob("**/Daily_*.zip"))
     return zips
@@ -124,11 +134,37 @@ def date_from_zip(path: Path) -> date | None:
     return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Step 1: zip → ticks 表")
+    parser.add_argument(
+        "--reimport-recent",
+        type=int,
+        default=2,
+        metavar="N",
+        help="強制重新匯入磁碟上最新 N 個 zip 日期的資料（先刪後插，預設 2）",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = _parse_args()
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     with duckdb.connect(str(DB_PATH)) as conn:
         init_db(conn)
+
+        # 刪除最近 N 個 zip 日期的 ticks，強制重新匯入
+        reimport_dates = get_recent_zip_dates(args.reimport_recent)
+        if reimport_dates:
+            print(f"強制重新匯入最近 {len(reimport_dates)} 個日期：{sorted(reimport_dates)}")
+            for d in sorted(reimport_dates):
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM ticks WHERE trade_date = ?", [d]
+                ).fetchone()[0]
+                if count > 0:
+                    conn.execute("DELETE FROM ticks WHERE trade_date = ?", [d])
+                    print(f"  刪除 {d} 的 {count:,} 筆 ticks")
+
         imported_dates = get_imported_dates(conn)
 
         all_zips = find_all_zips()
