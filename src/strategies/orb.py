@@ -19,6 +19,9 @@ class ORBStrategy(Strategy):
         Take-profit as a multiple of the SL distance (default: 2.0)
     trail_activate_minute : int
         Minutes from 09:00 when trailing stop activates (default: 45 = 09:45)
+    trend_ma_days : int
+        Trend filter – lookback in trading days (0 = disabled).
+        Long entries only when close > MA; short entries only when close < MA.
     """
 
     range_end_minute: int = 60
@@ -26,6 +29,7 @@ class ORBStrategy(Strategy):
     sl_pct: float = 0.005
     tp_multiplier: float = 2.0
     trail_activate_minute: int = 45
+    trend_ma_days: int = 0          # trend MA lookback in days (0 = disabled)
 
     def init(self):
         self._range_end_time = (
@@ -40,6 +44,15 @@ class ORBStrategy(Strategy):
         self._force_exit_time = time(13, 30)
         self._reset_daily()
         self._current_date = None
+
+        # Trend MA indicator
+        if self.trend_ma_days > 0:
+            n_bars = self.trend_ma_days * 301
+            closes = pd.Series(self.data.Close)
+            self._trend_ma = self.I(
+                lambda: closes.rolling(n_bars, min_periods=n_bars).mean(),
+                name="Trend MA", overlay=True,
+            )
 
         # Precompute OR high/low arrays for chart overlay
         or_high_arr, or_low_arr = self._precompute_or_lines()
@@ -115,31 +128,40 @@ class ORBStrategy(Strategy):
         if not self.range_confirmed:
             self.range_confirmed = True
 
-        # D. Entry checks (only within entry window: range_end_time < bar_time < entry_end_time)
+        # D. Entry checks (only within entry window)
         if self.range_confirmed and self.or_high is not None and bar_time < self._entry_end_time:
+            # Resolve trend MA (None = disabled or still in warmup)
+            ma_val = None
+            if self.trend_ma_days > 0:
+                raw = self._trend_ma[-1]
+                if not np.isnan(raw):
+                    ma_val = raw
+
             # Long signal: close breaks above opening range high
             if close > self.or_high and not self.long_entered:
-                if self.position.is_short:
-                    self.position.close()
-                self.buy(size=1)
-                self.long_entered = True
-                self.entry_price = close
-                sl_dist = self.entry_price * self.sl_pct
-                self.sl_price = self.entry_price - sl_dist
-                self.tp_price = self.entry_price + sl_dist * self.tp_multiplier
-                self.trail_peak = self.entry_price
+                if ma_val is None or close > ma_val:
+                    if self.position.is_short:
+                        self.position.close()
+                    self.buy(size=1)
+                    self.long_entered = True
+                    self.entry_price = close
+                    sl_dist = self.entry_price * self.sl_pct
+                    self.sl_price = self.entry_price - sl_dist
+                    self.tp_price = self.entry_price + sl_dist * self.tp_multiplier
+                    self.trail_peak = self.entry_price
 
             # Short signal: close breaks below opening range low
             elif close < self.or_low and not self.short_entered:
-                if self.position.is_long:
-                    self.position.close()
-                self.sell(size=1)
-                self.short_entered = True
-                self.entry_price = close
-                sl_dist = self.entry_price * self.sl_pct
-                self.sl_price = self.entry_price + sl_dist
-                self.tp_price = self.entry_price - sl_dist * self.tp_multiplier
-                self.trail_trough = self.entry_price
+                if ma_val is None or close < ma_val:
+                    if self.position.is_long:
+                        self.position.close()
+                    self.sell(size=1)
+                    self.short_entered = True
+                    self.entry_price = close
+                    sl_dist = self.entry_price * self.sl_pct
+                    self.sl_price = self.entry_price + sl_dist
+                    self.tp_price = self.entry_price - sl_dist * self.tp_multiplier
+                    self.trail_trough = self.entry_price
 
         # E. Exit checks (only when in position)
         if not self.position:
