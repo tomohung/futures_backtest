@@ -211,6 +211,9 @@ __marimo__/
 # backtesting.py 自動產生的圖表（檔名為策略類別名，如 ORBStrategy.html）
 *Strategy.html
 
+# 回測輸出（交易記錄 CSV）
+output/
+
 # DuckDB（從原始資料重建，不納入版控）
 data/*.duckdb
 data/*.duckdb.wal
