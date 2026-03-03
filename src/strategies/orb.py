@@ -1,5 +1,7 @@
 from datetime import time, timedelta
 
+import numpy as np
+import pandas as pd
 from backtesting import Strategy
 
 
@@ -34,6 +36,40 @@ class ORBStrategy(Strategy):
         self._force_exit_time = time(13, 30)
         self._reset_daily()
         self._current_date = None
+
+        # Precompute OR high/low arrays for chart overlay
+        or_high_arr, or_low_arr = self._precompute_or_lines()
+        self._or_high_line = self.I(
+            lambda: or_high_arr, name="OR High", overlay=True, color="lime", scatter=False
+        )
+        self._or_low_line = self.I(
+            lambda: or_low_arr, name="OR Low", overlay=True, color="tomato", scatter=False
+        )
+
+    def _precompute_or_lines(self):
+        idx = pd.DatetimeIndex(self.data.index)
+        highs = np.asarray(self.data.High)
+        lows = np.asarray(self.data.Low)
+        dates = idx.date
+        times = idx.time
+
+        or_high_arr = np.full(len(idx), np.nan)
+        or_low_arr = np.full(len(idx), np.nan)
+
+        for date in np.unique(dates):
+            date_mask = dates == date
+            day_times = times[date_mask]
+            in_range = day_times <= self._range_end_time
+            if not in_range.any():
+                continue
+            or_h = highs[date_mask][in_range].max()
+            or_l = lows[date_mask][in_range].min()
+            # Draw lines only after the range is confirmed
+            post_range = date_mask & (times > self._range_end_time)
+            or_high_arr[post_range] = or_h
+            or_low_arr[post_range] = or_l
+
+        return or_high_arr, or_low_arr
 
     def _reset_daily(self):
         self.or_high = None
