@@ -66,18 +66,19 @@ def get_key_prices():
         """, [SYMBOL, last_day, next_day]).fetchone()
 
         # 30分K 20MA（所有日盤，bucket 對齊 08:45）
+        # 13:45 這根 1分K（日盤真實收盤）合併進 13:15 的 bucket
         ma_row = conn.execute("""
             WITH bars_30m AS (
                 SELECT
-                    time_bucket(
-                        INTERVAL '30 minutes',
-                        timestamp,
-                        TIMESTAMP '2000-01-01 08:45:00'
-                    ) AS ts,
+                    CASE
+                        WHEN time_bucket(INTERVAL '30 minutes', timestamp, TIMESTAMP '2000-01-01 08:45:00')::TIME = '13:45:00'
+                        THEN time_bucket(INTERVAL '30 minutes', timestamp, TIMESTAMP '2000-01-01 08:45:00') - INTERVAL '30 minutes'
+                        ELSE time_bucket(INTERVAL '30 minutes', timestamp, TIMESTAMP '2000-01-01 08:45:00')
+                    END AS ts,
                     arg_max(close, timestamp) AS close
                 FROM ohlcv_1m
                 WHERE symbol = ?
-                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:44:59'
+                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
                 GROUP BY ts
             ),
             ma_calc AS (
@@ -119,35 +120,29 @@ def get_key_prices():
     }
 
 
-def _print_table(rows):
-    print(f"  {'項目':<12} {'價格':>8}  備註")
-    print("  " + "-" * 34)
-    for item, price, note in rows:
-        price_str = f"{price:>8}" if price is not None else f"{'N/A':>8}"
-        print(f"  {item:<12} {price_str}  {note}")
-
-
 def print_report(data):
     d = data
     direction = "↑" if d["ma30_20_up"] else "↓"
 
-    print(f"\n參考日期：{d['last_day']}（昨）")
+    print(f"# 關鍵價格參考 {d['last_day']}（昨）\n")
 
-    print("\n## 夜盤關鍵價格")
-    _print_table([
-        ("昨高", d["night"]["high"], ""),
-        ("昨低", d["night"]["low"], ""),
-        ("收盤", d["night"]["close"], ""),
-    ])
+    print("## 夜盤")
+    print("| 項目 | 價格 |")
+    print("|------|-----:|")
+    print(f"| 昨高 | {d['night']['high']:,} |")
+    print(f"| 昨低 | {d['night']['low']:,} |")
+    print(f"| 收盤 | {d['night']['close']:,} |")
 
-    print("\n## 日盤關鍵價格")
-    _print_table([
-        ("昨高", d["day"]["high"], ""),
-        ("昨低", d["day"]["low"], ""),
-        ("收盤", d["day"]["close"], ""),
-        ("30分K 20MA", d["ma30_20"], f"當前方向：{direction}"),
-    ])
     print()
+    print("## 日盤")
+    print("| 項目 | 價格 | 備註 |")
+    print("|------|-----:|------|")
+    print(f"| 昨高 | {d['day']['high']:,} | |")
+    print(f"| 昨低 | {d['day']['low']:,} | |")
+    print(f"| 收盤 | {d['day']['close']:,} | |")
+    ma = d['ma30_20']
+    ma_str = f"{ma:,}" if ma is not None else "N/A"
+    print(f"| 30分K 20MA | {ma_str} | 當前方向：{direction} |")
 
 
 if __name__ == "__main__":
