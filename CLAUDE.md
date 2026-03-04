@@ -195,6 +195,36 @@ with duckdb.connect("data/futures.duckdb") as conn:
 ```
 DuckDB 同時只允許一個寫入連線；多個 process 同時開啟同一 .duckdb 會報 lock error。
 
+## 策略開發工作流程
+
+**規則：任何新策略或新 Phase 的實作，必須先在 `specs/strategies/` 下建立規格文件，經確認後才開始寫程式碼。**
+
+### 規格文件命名慣例
+```
+specs/strategies/orb_phase<N>.md   ← 策略 Phase 迭代（如 orb_phase6.md）
+specs/strategies/orb_<名稱>.md     ← 獨立策略實驗（如 orb_filters.md）
+```
+
+### 規格文件應包含
+1. **背景與動機** — 上一個 Phase 的結論，本次要解決什麼問題
+2. **假設與方向** — 核心假設，為什麼這個方法可能有效
+3. **Step 0（探索）** — 實作前的資料分析，避免盲目優化
+4. **指標 / 策略設計** — 公式、參數、候選方案
+5. **優化網格** — 測試範圍與固定參數
+6. **成功標準** — 量化目標（PF、win%、年度 PnL 等）
+7. **實作順序** — 需修改 / 新建的檔案清單與順序
+8. **備選方案** — 若主方向失敗的下一步
+
+### 現有規格文件索引
+- `specs/strategies/orb.md` — ORB 策略總覽
+- `specs/strategies/orb_phase2.md` — Phase 2：固定百分比 SL/TP + 趨勢濾網
+- `specs/strategies/orb_phase3.md` — Phase 3：OR-based SL / SuperTrend / 動量出場
+- `specs/strategies/orb_phase4.md` — Phase 4：自適應 TP（OR 寬度 × 乘數）
+- `specs/strategies/orb_filters.md` — 各種濾網實驗紀錄
+- `specs/strategies/orb_phase6.md` — Phase 6：市場機制濾網（ADX / ATR% / 滾動勝率）
+
+---
+
 ## 注意事項
 - 所有時間為台灣時區 (Asia/Taipei)，raw data 本身即為台灣時間，不需轉換
 - 每個 ETL step 都可以獨立重跑（冪等性）

@@ -90,12 +90,68 @@ def load_data(start=None, end=None):
     return df
 
 
-def load_data_with_night_ma(start=None, end=None, trend_ma_days=10):
+def _wilder_smooth(arr: "np.ndarray", period: int) -> "np.ndarray":
+    import numpy as np
+    out = np.full(len(arr), np.nan)
+    for i in range(period - 1, len(arr)):
+        window = arr[i - period + 1: i + 1]
+        if not np.any(np.isnan(window)):
+            out[i] = window.mean()
+            break
+    start_idx = 0
+    for i, v in enumerate(out):
+        if not np.isnan(v):
+            start_idx = i
+            break
+    for i in range(start_idx + 1, len(arr)):
+        if not np.isnan(arr[i]) and not np.isnan(out[i - 1]):
+            out[i] = out[i - 1] * (period - 1) / period + arr[i] / period
+    return out
+
+
+def _compute_daily_adx(df_day: "pd.DataFrame", period: int = 14) -> "pd.Series":
+    """Compute ADX(period) on daily OHLCV and return a Series indexed by trade_date."""
+    import numpy as np
+    import pandas as pd
+
+    high  = df_day["High"].values
+    low   = df_day["Low"].values
+    close = df_day["Close"].values
+    n = len(df_day)
+
+    tr   = np.full(n, np.nan)
+    dm_p = np.full(n, np.nan)
+    dm_m = np.full(n, np.nan)
+    for i in range(1, n):
+        tr[i]   = max(high[i] - low[i],
+                      abs(high[i] - close[i - 1]),
+                      abs(low[i]  - close[i - 1]))
+        up   = high[i] - high[i - 1]
+        down = low[i - 1] - low[i]
+        dm_p[i] = up   if (up > down and up > 0)   else 0.0
+        dm_m[i] = down if (down > up and down > 0) else 0.0
+
+    atr_s = _wilder_smooth(tr,   period)
+    dmp_s = _wilder_smooth(dm_p, period)
+    dmm_s = _wilder_smooth(dm_m, period)
+    di_p  = 100 * dmp_s / (atr_s + 1e-10)
+    di_m  = 100 * dmm_s / (atr_s + 1e-10)
+    dx    = 100 * np.abs(di_p - di_m) / (di_p + di_m + 1e-10)
+    adx   = _wilder_smooth(dx, period)
+    return pd.Series(adx, index=df_day.index)
+
+
+def load_data_with_night_ma(start=None, end=None, trend_ma_days=10, rolling_or_window=0,
+                             adx_period=0):
     """Load day-session OHLCV with TrendMA computed on continuous day+night 1-min bars.
 
     The MA is computed on the full price series (including night session) so that
     overnight price action is reflected. The returned DataFrame contains a 'TrendMA'
     column aligned to day-session timestamps; ORBStrategy will use it automatically.
+
+    rolling_or_window : int
+        If > 0, also compute a N-day rolling average of the OR width (08:45~09:30)
+        and add it as a 'RollingOR' column. Used by the regime filter in Phase 5.
     """
     import pandas as pd
 
@@ -116,12 +172,45 @@ def load_data_with_night_ma(start=None, end=None, trend_ma_days=10):
             ORDER BY timestamp
         """).df().set_index("timestamp")
 
+        if rolling_or_window > 0:
+            df_or = conn.execute("""
+                SELECT CAST(timestamp AS DATE) as trade_date,
+                       MAX(high) - MIN(low)   as or_width
+                FROM ohlcv_1m
+                WHERE symbol = 'TX'
+                  AND CAST(timestamp AS TIME) BETWEEN TIME '08:45:00' AND TIME '09:30:00'
+                GROUP BY 1
+                ORDER BY 1
+            """).df()
+
     df_day.columns = ["Open", "High", "Low", "Close", "Volume"]
 
     # Rolling MA on continuous series, then align to day-session index
     n_bars = trend_ma_days * 301
     ma = df_all["close"].rolling(n_bars, min_periods=n_bars).mean()
     df_day["TrendMA"] = ma.reindex(df_day.index)
+
+    # Rolling OR average (regime filter)
+    if rolling_or_window > 0:
+        df_or["trade_date"] = pd.to_datetime(df_or["trade_date"])
+        df_or = df_or.set_index("trade_date")
+        df_or["rolling_or"] = df_or["or_width"].rolling(rolling_or_window,
+                                                         min_periods=rolling_or_window).mean()
+        day_dates = pd.DatetimeIndex(df_day.index).normalize()
+        df_day["RollingOR"] = df_or["rolling_or"].reindex(day_dates).values
+
+    # Daily ADX filter (for long-only strategy)
+    if adx_period > 0:
+        # Synthesise daily OHLCV from day-session 1-min bars
+        df_daily = df_day.groupby(df_day.index.normalize()).agg(
+            Open=("Open",  "first"),
+            High=("High",  "max"),
+            Low=("Low",    "min"),
+            Close=("Close","last"),
+        )
+        adx_series = _compute_daily_adx(df_daily, period=adx_period)
+        day_dates = pd.DatetimeIndex(df_day.index).normalize()
+        df_day["DailyADX"] = adx_series.reindex(day_dates).values
 
     if start:
         df_day = df_day[df_day.index >= start]
