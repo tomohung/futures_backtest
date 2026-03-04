@@ -47,17 +47,35 @@ futures_backtest/
 │   └── futures.duckdb     ← 自動產生，勿納入版控
 ├── src/
 │   ├── etl/
-│   │   ├── download.py        ← 從期交所自動下載每日 zip
-│   │   ├── daily_update.py    ← 一鍵更新（下載 + 全 ETL）
-│   │   ├── parse_rpt.py       ← zip/rpt → ticks 表
-│   │   ├── build_1m.py        ← ticks → ohlcv_1m（1分K）
+│   │   ├── download.py         ← 從期交所自動下載每日 zip
+│   │   ├── daily_update.py     ← 一鍵更新（下載 + 全 ETL）
+│   │   ├── parse_rpt.py        ← zip/rpt → ticks 表
+│   │   ├── build_1m.py         ← ticks → ohlcv_1m（1分K）
 │   │   ├── build_continuous.py ← Panama 換倉調整
-│   │   └── validate.py        ← 資料正確性驗證
-│   ├── strategies/            ← 策略邏輯（待實作）
-│   └── backtest/              ← 回測執行器（待實作）
+│   │   └── validate.py         ← 資料正確性驗證
+│   ├── strategies/
+│   │   └── orb.py              ← ORBStrategy（Phase 2）、ORBPhase4HybridStrategy（現行最佳）
+│   └── backtest/
+│       ├── runner.py            ← 資料載入、TrendMA/ADX 計算
+│       ├── optimize.py          ← Phase 2 網格搜尋
+│       ├── optimize_phase4_hybrid.py ← Phase 4 Hybrid 網格搜尋
+│       ├── optimize_phase5.py   ← Rolling OR 濾網實驗
+│       ├── optimize_longonly.py ← Long-only + ADX 濾網優化
+│       ├── explore_night_day.py ← 夜盤 vs 日盤相關性探索
+│       ├── explore_regime.py    ← 市場機制指標探索（ADX/ATR%）
+│       ├── analyze.py           ← 交易紀錄分析
+│       └── summary_all.py       ← 所有策略跨年度比較總表
 ├── specs/
-│   └── daily_update.md        ← 每日更新系統規格
-├── notebooks/                 ← Jupyter 探索分析
+│   ├── daily_update.md          ← 每日更新系統規格
+│   └── strategies/              ← 策略規格文件（新策略必須先建規格）
+│       ├── orb.md
+│       ├── orb_phase2.md
+│       ├── orb_phase4.md        ← 現行最佳策略
+│       ├── orb_longonly.md
+│       ├── orb_filters.md
+│       └── orb_phase6.md
+├── output/                      ← 回測結果 CSV、分析報告（勿納入版控）
+├── notebooks/                   ← Jupyter 探索分析
 └── tests/
 ```
 

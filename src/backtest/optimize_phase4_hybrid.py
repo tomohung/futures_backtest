@@ -21,7 +21,7 @@ from backtesting import Backtest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.backtest.runner import load_data_with_night_ma
-from src.strategies.orb import ORBPhase4HybridStrategy, ORBPhase4Strategy, ORBStrategy
+from src.strategies.orb import ORBPhase4HybridStrategy, ORBStrategy
 
 PHASE2_BASE = dict(
     range_end_minute=90, entry_end_minute=120,
@@ -155,15 +155,11 @@ def main():
     print(f"  Train: {len(df_train):,} bars  {df_train.index[0].date()} ~ {df_train.index[-1].date()}")
     print(f"  OOS:   {len(df_test):,} bars  {df_test.index[0].date()} ~ {df_test.index[-1].date()}")
 
-    # Baselines
+    # Baseline
     print("\n" + "─" * 70)
-    base_train = run_single(df_train, ORBStrategy,      PHASE2_BASE)
-    base_test  = run_single(df_test,  ORBStrategy,      PHASE2_BASE)
-    p4_best    = dict(**PHASE4_FIXED, tp_or_multiplier=1.5, sl_pct=0.004)
-    p4_params  = {k: v for k, v in p4_best.items() if k != "tp_multiplier"}
-    p4_train   = run_single(df_train, ORBPhase4Strategy, p4_params)
-    p4_test    = run_single(df_test,  ORBPhase4Strategy, p4_params)
-    print("Baselines (Phase 2 + Phase 4) computed.")
+    base_train = run_single(df_train, ORBStrategy, PHASE2_BASE)
+    base_test  = run_single(df_test,  ORBStrategy, PHASE2_BASE)
+    print("Baseline (Phase 2) computed.")
 
     combos = make_combos()
 
@@ -238,9 +234,8 @@ def main():
     print("\nLoading all-years data...", flush=True)
     df_all = load_data_with_night_ma(trend_ma_days=10)
 
-    total_p2 = total_p4 = total_h = 0.0
+    total_p2 = total_h = 0.0
     hdr = (f"  {'Year':<6}  {'Ph2 tot':>8}  {'Ph2 exp':>8}"
-           f"  {'Ph4 tot':>8}  {'Ph4 exp':>8}"
            f"  {'Hyb tot':>8}  {'Hyb exp':>8}  {'Hyb tp%':>8}  {'Hyb force%':>10}")
     print(hdr)
     print("  " + "-" * (len(hdr) - 2))
@@ -251,65 +246,58 @@ def main():
             df_yr = df_yr[df_yr.index <= end]
 
         m2 = run_single(df_yr, ORBStrategy,             PHASE2_BASE)
-        m4 = run_single(df_yr, ORBPhase4Strategy,      p4_params)
         mh = run_single(df_yr, ORBPhase4HybridStrategy, best_params)
 
         t2 = (m2["total"] if m2 else 0) or 0
-        t4 = (m4["total"] if m4 else 0) or 0
         th = (mh["total"] if mh else 0) or 0
-        total_p2 += t2; total_p4 += t4; total_h += th
+        total_p2 += t2; total_h += th
 
         print(f"  {yr:<6}  {fv(t2):>8}  {fv(m2.get('expectancy') if m2 else None):>8}"
-              f"  {fv(t4):>8}  {fv(m4.get('expectancy') if m4 else None):>8}"
               f"  {fv(th):>8}  {fv(mh.get('expectancy') if mh else None):>8}"
               f"  {fv(mh.get('tp_exit') if mh else None):>7}%"
               f"  {fv(mh.get('force_pct') if mh else None):>9}%")
 
     print(f"  {'TOTAL':<6}  {fv(total_p2):>8}  {'':>8}"
-          f"  {fv(total_p4):>8}  {'':>8}"
           f"  {fv(total_h):>8}")
 
     # ── Final comparison ───────────────────────────────────────────────────
     print(f"\n{'='*70}")
-    print("FINAL COMPARISON — Phase 2 | Phase 4 | Phase 4 Hybrid")
+    print("FINAL COMPARISON — Phase 2 | Phase 4 Hybrid")
     print(f"  Hybrid params: {best_label}")
     print(f"{'='*70}")
 
     for period, df_p in [("Train 2025", df_train), ("OOS 2026", df_test)]:
         m2 = run_single(df_p, ORBStrategy,             PHASE2_BASE) or {}
-        m4 = run_single(df_p, ORBPhase4Strategy,      p4_params)   or {}
         mh = run_single(df_p, ORBPhase4HybridStrategy, best_params) or {}
 
         print(f"\n  Period: {period}")
-        print(f"  {'Metric':<22}  {'Phase2':>14}  {'Phase4':>14}  {'Ph4 Hybrid':>14}")
-        print(f"  {'-'*22}  {'-'*14}  {'-'*14}  {'-'*14}")
+        print(f"  {'Metric':<22}  {'Phase2':>14}  {'Ph4 Hybrid':>14}")
+        print(f"  {'-'*22}  {'-'*14}  {'-'*14}")
 
         rows_disp = [
             ("n_trades (L/S)",
              f"{m2.get('n_trades','—')}({m2.get('n_long','—')}/{m2.get('n_short','—')})",
-             f"{m4.get('n_trades','—')}({m4.get('n_long','—')}/{m4.get('n_short','—')})",
              f"{mh.get('n_trades','—')}({mh.get('n_long','—')}/{mh.get('n_short','—')})"),
-            ("win_rate",    fv(m2.get("win_rate")),    fv(m4.get("win_rate")),    fv(mh.get("win_rate"))),
-            ("avg_wl",      fv(m2.get("avg_wl")),      fv(m4.get("avg_wl")),      fv(mh.get("avg_wl"))),
-            ("pf",          fv(m2.get("pf")),          fv(m4.get("pf")),          fv(mh.get("pf"))),
-            ("expectancy",  fv(m2.get("expectancy")),  fv(m4.get("expectancy")),  fv(mh.get("expectancy"))),
-            ("total PnL",   fv(m2.get("total")),       fv(m4.get("total")),       fv(mh.get("total"))),
-            ("tp_exit %",   fv(m2.get("tp_exit")),     fv(m4.get("tp_exit")),     fv(mh.get("tp_exit"))),
-            ("sl_exit %",   fv(m2.get("sl_exit")),     fv(m4.get("sl_exit")),     fv(mh.get("sl_exit"))),
-            ("force_exit %",fv(m2.get("force_pct")),   fv(m4.get("force_pct")),   fv(mh.get("force_pct"))),
+            ("win_rate",    fv(m2.get("win_rate")),    fv(mh.get("win_rate"))),
+            ("avg_wl",      fv(m2.get("avg_wl")),      fv(mh.get("avg_wl"))),
+            ("pf",          fv(m2.get("pf")),          fv(mh.get("pf"))),
+            ("expectancy",  fv(m2.get("expectancy")),  fv(mh.get("expectancy"))),
+            ("total PnL",   fv(m2.get("total")),       fv(mh.get("total"))),
+            ("tp_exit %",   fv(m2.get("tp_exit")),     fv(mh.get("tp_exit"))),
+            ("sl_exit %",   fv(m2.get("sl_exit")),     fv(mh.get("sl_exit"))),
+            ("force_exit %",fv(m2.get("force_pct")),   fv(mh.get("force_pct"))),
         ]
-        for lbl, b, p4v, hv in rows_disp:
-            print(f"  {lbl:<22}  {b:>14}  {p4v:>14}  {hv:>14}")
+        for lbl, b, hv in rows_disp:
+            print(f"  {lbl:<22}  {b:>14}  {hv:>14}")
 
         for direction in ("long", "short"):
             b  = m2.get(direction) or {}
-            p4d = m4.get(direction) or {}
             hd = mh.get(direction) or {}
             print(f"\n    [{direction.upper()}]")
-            print(f"    {'Metric':<20}  {'Phase2':>14}  {'Phase4':>14}  {'Ph4 Hybrid':>14}")
-            print(f"    {'-'*20}  {'-'*14}  {'-'*14}  {'-'*14}")
+            print(f"    {'Metric':<20}  {'Phase2':>14}  {'Ph4 Hybrid':>14}")
+            print(f"    {'-'*20}  {'-'*14}  {'-'*14}")
             for sub in ["n", "win_rate", "avg_wl", "pf", "expectancy"]:
-                print(f"    {sub:<20}  {fv(b.get(sub)):>14}  {fv(p4d.get(sub)):>14}  {fv(hd.get(sub)):>14}")
+                print(f"    {sub:<20}  {fv(b.get(sub)):>14}  {fv(hd.get(sub)):>14}")
 
     print()
 

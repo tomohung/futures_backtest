@@ -14,12 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.backtest.runner import load_data_with_night_ma
 from src.strategies.orb import (
-    ORBPhase3AStrategy,
-    ORBPhase3BStrategy,
     ORBPhase4HybridStrategy,
-    ORBPhase4Strategy,
-    ORBPlanCHybridStrategy,
-    ORBPlanCStrategy,
     ORBStrategy,
 )
 
@@ -30,31 +25,6 @@ STRATEGIES = {
         dict(range_end_minute=90, entry_end_minute=120, sl_pct=0.005,
              tp_multiplier=1.5, trail_activate_minute=45, trend_ma_days=10),
         "SL=0.5%  TP=1.5×  trail@9:45"
-    ),
-    "Phase3A": (
-        ORBPhase3AStrategy,
-        dict(tp_or_multiplier=2.0, trail_bars=10),
-        "OR SL  TP=2×OR_width  bar-trail(10)"
-    ),
-    "Phase3B": (
-        ORBPhase3BStrategy,
-        dict(atr_period=7, atr_multiplier=3.0),
-        "OR SL  SuperTrend exit (ATR7×3.0)"
-    ),
-    "Plan C": (
-        ORBPlanCStrategy,
-        dict(momentum_window=20),
-        "OR SL  momentum exit (20 min)"
-    ),
-    "Plan C Hybrid": (
-        ORBPlanCHybridStrategy,
-        dict(momentum_window=20, sl_pct=0.007),
-        "Long OR SL / Short 0.7% SL  momentum exit (20 min)"
-    ),
-    "Phase4": (
-        ORBPhase4Strategy,
-        dict(tp_or_multiplier=1.5, sl_pct=0.004),
-        "SL=0.4%  TP=1.5×OR_width  trail@9:45"
     ),
     "Ph4 Hybrid": (
         ORBPhase4HybridStrategy,

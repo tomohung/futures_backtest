@@ -109,7 +109,8 @@ futures_backtest/
 │   ├── raw/              ← 原始 zip 檔（依年份子目錄，不納入版控）
 │   └── futures.duckdb    ← DuckDB 資料庫（不納入版控）
 ├── specs/
-│   └── daily_update.md   ← 每日更新系統規格
+│   ├── daily_update.md   ← 每日更新系統規格
+│   └── strategies/       ← 策略規格文件
 ├── src/
 │   ├── etl/
 │   │   ├── download.py         ← 從期交所自動下載每日 zip ✅
@@ -119,13 +120,19 @@ futures_backtest/
 │   │   ├── build_continuous.py ← 換倉 + Panama adj_close ✅
 │   │   └── validate.py         ← 資料驗證 ✅
 │   ├── strategies/
-│   │   └── (策略邏輯，純函數，不依賴框架)
+│   │   └── orb.py              ← ORBStrategy、ORBPhase4HybridStrategy ✅
 │   └── backtest/
-│       └── runner.py           ← Backtesting.py 膠水碼（待實作）
+│       ├── runner.py            ← 資料載入、TrendMA/ADX 計算 ✅
+│       ├── optimize.py          ← Phase 2 網格搜尋 ✅
+│       ├── optimize_phase4_hybrid.py ← Phase 4 Hybrid 優化 ✅
+│       ├── optimize_phase5.py   ← Rolling OR 濾網 ✅
+│       ├── optimize_longonly.py ← Long-only + ADX 優化 ✅
+│       ├── explore_*.py         ← 探索性分析 ✅
+│       ├── analyze.py           ← 交易分析 ✅
+│       └── summary_all.py       ← 策略跨年度比較 ✅
+├── output/               ← 回測結果 CSV（不納入版控）
 ├── notebooks/
-│   └── (探索性分析用)
 └── tests/
-    └── (驗證資料正確性)
 ```
 
 ## ETL 執行順序
@@ -218,9 +225,9 @@ specs/strategies/orb_<名稱>.md     ← 獨立策略實驗（如 orb_filters.md
 ### 現有規格文件索引
 - `specs/strategies/orb.md` — ORB 策略總覽
 - `specs/strategies/orb_phase2.md` — Phase 2：固定百分比 SL/TP + 趨勢濾網
-- `specs/strategies/orb_phase3.md` — Phase 3：OR-based SL / SuperTrend / 動量出場
-- `specs/strategies/orb_phase4.md` — Phase 4：自適應 TP（OR 寬度 × 乘數）
-- `specs/strategies/orb_filters.md` — 各種濾網實驗紀錄
+- `specs/strategies/orb_phase4.md` — Phase 4：自適應 TP（OR 寬度 × 乘數）；`ORBPhase4HybridStrategy` 為現行最佳
+- `specs/strategies/orb_longonly.md` — Long-only：僅做多 + ADX 進場濾網
+- `specs/strategies/orb_filters.md` — 各種濾網實驗紀錄（Rolling OR、Phase 5/6）
 - `specs/strategies/orb_phase6.md` — Phase 6：市場機制濾網（ADX / ATR% / 滾動勝率）
 
 ---
