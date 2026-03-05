@@ -216,9 +216,13 @@ def main() -> None:
         init_db(conn)
         processed_dates = get_processed_dates(conn)
 
+        # 只取有日盤 ticks（08:45–13:45）的日期，避免夜盤的跨日後半段
+        # （00:00–05:00 的 ticks 其 trade_date 為隔日，若隔日為非交易日
+        # 則該日期不應被視為需要建日盤的交易日）
         all_dates = conn.execute("""
             SELECT DISTINCT trade_date FROM ticks
             WHERE symbol = 'TX'
+              AND trade_time BETWEEN TIME '08:45:00' AND TIME '13:45:00'
             ORDER BY trade_date
         """).fetchall()
         all_dates = [r[0] for r in all_dates]

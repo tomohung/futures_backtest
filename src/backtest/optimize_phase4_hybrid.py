@@ -21,7 +21,7 @@ from backtesting import Backtest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.backtest.runner import load_data_with_night_ma
-from src.strategies.orb import ORBPhase4HybridStrategy, ORBStrategy
+from src.strategies.orb import ORBLongStrategy, ORBStrategy
 
 PHASE2_BASE = dict(
     range_end_minute=90, entry_end_minute=120,
@@ -123,7 +123,7 @@ def run_grid(df, combos: list[dict], label: str) -> pd.DataFrame:
     rows = []
     t0 = _time.time()
     for i, params in enumerate(combos, 1):
-        m = run_single(df, ORBPhase4HybridStrategy, params)
+        m = run_single(df, ORBLongStrategy, params)
         if m:
             flat = {k: v for k, v in m.items() if k not in ("long", "short")}
             rows.append({**params, **flat})
@@ -246,7 +246,7 @@ def main():
             df_yr = df_yr[df_yr.index <= end]
 
         m2 = run_single(df_yr, ORBStrategy,             PHASE2_BASE)
-        mh = run_single(df_yr, ORBPhase4HybridStrategy, best_params)
+        mh = run_single(df_yr, ORBLongStrategy, best_params)
 
         t2 = (m2["total"] if m2 else 0) or 0
         th = (mh["total"] if mh else 0) or 0
@@ -268,7 +268,7 @@ def main():
 
     for period, df_p in [("Train 2025", df_train), ("OOS 2026", df_test)]:
         m2 = run_single(df_p, ORBStrategy,             PHASE2_BASE) or {}
-        mh = run_single(df_p, ORBPhase4HybridStrategy, best_params) or {}
+        mh = run_single(df_p, ORBLongStrategy, best_params) or {}
 
         print(f"\n  Period: {period}")
         print(f"  {'Metric':<22}  {'Phase2':>14}  {'Ph4 Hybrid':>14}")

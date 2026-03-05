@@ -54,7 +54,7 @@ futures_backtest/
 │   │   ├── build_continuous.py ← Panama 換倉調整
 │   │   └── validate.py         ← 資料正確性驗證
 │   ├── strategies/
-│   │   └── orb.py              ← ORBStrategy（Phase 2）、ORBPhase4HybridStrategy（現行最佳）
+│   │   └── orb.py              ← ORBStrategy（Phase 2 基準）、ORBLongStrategy（現行最佳）
 │   └── backtest/
 │       ├── runner.py            ← 資料載入、TrendMA/ADX 計算
 │       ├── optimize.py          ← Phase 2 網格搜尋

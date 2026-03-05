@@ -22,7 +22,7 @@ from backtesting import Backtest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.backtest.runner import load_data_with_night_ma
-from src.strategies.orb import ORBPhase4HybridStrategy
+from src.strategies.orb import ORBLongStrategy
 
 # ── Fixed base (Ph4 Hybrid structure) ────────────────────────────────────────
 BASE_FIXED = dict(
@@ -77,7 +77,7 @@ def year_sweep(df_all, params, long_only=True):
         df = df_all[df_all.index >= start]
         if end:
             df = df[df.index <= end]
-        bt = Backtest(df, ORBPhase4HybridStrategy, cash=200_000,
+        bt = Backtest(df, ORBLongStrategy, cash=200_000,
                       commission=0.0, trade_on_close=True)
         trades = bt.run(**params)["_trades"]
         if len(trades) == 0:

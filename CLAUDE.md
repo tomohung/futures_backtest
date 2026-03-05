@@ -225,7 +225,7 @@ specs/strategies/orb_<名稱>.md     ← 獨立策略實驗（如 orb_filters.md
 ### 現有規格文件索引
 - `specs/strategies/orb.md` — ORB 策略總覽
 - `specs/strategies/orb_phase2.md` — Phase 2：固定百分比 SL/TP + 趨勢濾網
-- `specs/strategies/orb_phase4.md` — Phase 4：自適應 TP（OR 寬度 × 乘數）；`ORBPhase4HybridStrategy` 為現行最佳
+- `specs/strategies/orb_phase4.md` — Phase 4：自適應 TP（OR 寬度 × 乘數）；`ORBLongStrategy` 為現行最佳
 - `specs/strategies/orb_longonly.md` — Long-only：僅做多 + ADX 進場濾網
 - `specs/strategies/orb_filters.md` — 各種濾網實驗紀錄（Rolling OR、Phase 5/6）
 - `specs/strategies/orb_phase6.md` — Phase 6：市場機制濾網（ADX / ATR% / 滾動勝率）

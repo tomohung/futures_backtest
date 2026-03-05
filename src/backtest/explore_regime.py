@@ -26,7 +26,7 @@ from backtesting import Backtest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.backtest.runner import load_data_with_night_ma
-from src.strategies.orb import ORBPhase4HybridStrategy
+from src.strategies.orb import ORBLongStrategy
 
 DB_PATH = "data/futures.duckdb"
 
@@ -158,7 +158,7 @@ def compute_indicators(df_daily: pd.DataFrame,
 def get_ph4h_trades() -> pd.DataFrame:
     """Run Ph4 Hybrid on full history and return trades with entry date."""
     df = load_data_with_night_ma(trend_ma_days=10)
-    bt = Backtest(df, ORBPhase4HybridStrategy, cash=200_000,
+    bt = Backtest(df, ORBLongStrategy, cash=200_000,
                   commission=0.0, trade_on_close=True)
     trades = bt.run(**PH4H_PARAMS)["_trades"].copy()
     trades["entry_date"] = pd.to_datetime(trades["EntryTime"]).dt.normalize()

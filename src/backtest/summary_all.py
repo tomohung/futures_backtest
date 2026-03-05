@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.backtest.runner import load_data_with_night_ma
 from src.strategies.orb import (
-    ORBPhase4HybridStrategy,
+    ORBLongStrategy,
     ORBStrategy,
 )
 
@@ -27,12 +27,12 @@ STRATEGIES = {
         "SL=0.5%  TP=1.5×  trail@9:45"
     ),
     "Ph4 Hybrid": (
-        ORBPhase4HybridStrategy,
+        ORBLongStrategy,
         dict(tp_or_multiplier=1.5, sl_pct=0.004),
         "Long TP=1.5×OR_width / Short TP=Phase2  SL=0.4%"
     ),
     "Ph4 Long-only": (
-        ORBPhase4HybridStrategy,
+        ORBLongStrategy,
         dict(tp_or_multiplier=1.5, sl_pct=0.004, long_only=1),
         "Long-only  TP=1.5×OR_width  SL=0.4%"
     ),
