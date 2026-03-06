@@ -65,6 +65,29 @@ def get_key_prices():
             WHERE contract = (SELECT contract FROM dominant)
         """, [SYMBOL, last_day, next_day]).fetchone()
 
+        # 當日與前一日的成本（VWAP = sum(close*volume)/sum(volume)，日盤）
+        prev_day = conn.execute("""
+            SELECT MAX(timestamp::DATE)
+            FROM ohlcv_1m
+            WHERE symbol = ?
+              AND timestamp::DATE < ?
+              AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+        """, [SYMBOL, last_day]).fetchone()[0]
+
+        vwap_rows = conn.execute("""
+            SELECT
+                timestamp::DATE AS date,
+                ROUND(SUM(close * volume) / SUM(volume))::INT AS vwap
+            FROM ohlcv_1m
+            WHERE symbol = ?
+              AND timestamp::DATE IN (?, ?)
+              AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+            GROUP BY date
+            ORDER BY date DESC
+        """, [SYMBOL, last_day, prev_day]).fetchall()
+
+        vwap = {row[0]: row[1] for row in vwap_rows}
+
         # 30分K 20MA（所有日盤，bucket 對齊 08:45）
         # 13:45 這根 1分K（日盤真實收盤）合併進 13:15 的 bucket
         ma_row = conn.execute("""
@@ -111,10 +134,13 @@ def get_key_prices():
             LIMIT 1
         """, [SYMBOL]).fetchone()
 
+    has_night = night and night[0] is not None
     return {
         "last_day": last_day,
+        "prev_day": prev_day,
         "day": {"high": day[0], "low": day[1], "close": day[2]},
-        "night": {"high": night[0], "low": night[1], "close": night[2]},
+        "night": {"high": night[0], "low": night[1], "close": night[2]} if has_night else None,
+        "vwap": vwap,
         "ma30_20": ma_row[0] if ma_row else None,
         "ma30_20_up": ma_row[1] if ma_row else None,
     }
@@ -129,9 +155,12 @@ def print_report(data):
     print("## 夜盤")
     print("| 項目 | 價格 |")
     print("|------|-----:|")
-    print(f"| 昨高 | {d['night']['high']:,} |")
-    print(f"| 昨低 | {d['night']['low']:,} |")
-    print(f"| 收盤 | {d['night']['close']:,} |")
+    if d["night"]:
+        print(f"| 昨高 | {d['night']['high']:,} |")
+        print(f"| 昨低 | {d['night']['low']:,} |")
+        print(f"| 收盤 | {d['night']['close']:,} |")
+    else:
+        print("| （無夜盤資料） | — |")
 
     print()
     print("## 日盤")
@@ -143,6 +172,12 @@ def print_report(data):
     ma = d['ma30_20']
     ma_str = f"{ma:,}" if ma is not None else "N/A"
     print(f"| 30分K 20MA | {ma_str} | 當前方向：{direction} |")
+    vwap_today = d['vwap'].get(d['last_day'])
+    vwap_prev  = d['vwap'].get(d['prev_day'])
+    vwap_today_str = f"{vwap_today:,}" if vwap_today else "N/A"
+    vwap_prev_str  = f"{vwap_prev:,}"  if vwap_prev  else "N/A"
+    print(f"| 成本 {d['last_day']} | {vwap_today_str} | VWAP |")
+    print(f"| 成本 {d['prev_day']} | {vwap_prev_str} | VWAP |")
 
 
 if __name__ == "__main__":
