@@ -37,18 +37,13 @@ def taiwan_today() -> date:
     return date.today()  # system clock — assume server runs in TST or caller adjusts
 
 
-def detect_start_date() -> date:
-    """Return the day after the latest zip found on disk, or a sensible default."""
-    zips = sorted(RAW_DIR.glob("**/Daily_*.zip"))
-    dates: list[date] = []
-    for p in zips:
-        d = _date_from_filename(p.name)
-        if d:
-            dates.append(d)
-    if dates:
-        return max(dates) + timedelta(days=1)
-    # fallback: start from yesterday
-    return taiwan_today() - timedelta(days=1)
+def detect_start_date(backfill_days: int = 30) -> date:
+    """Return start date for downloading, covering the last `backfill_days` days.
+
+    Always scans back `backfill_days` days so mid-range gaps are caught.
+    Existing zips are skipped instantly (no sleep), so overhead is minimal.
+    """
+    return taiwan_today() - timedelta(days=backfill_days)
 
 
 def existing_zip_dates() -> set[date]:
@@ -228,6 +223,13 @@ def _parse_args() -> argparse.Namespace:
         metavar="N",
         help="強制重新下載磁碟上最新 N 個 zip（可能是不完整的早期上傳，預設 2）",
     )
+    parser.add_argument(
+        "--backfill-days",
+        type=int,
+        default=30,
+        metavar="N",
+        help="未指定 --start 時，往前掃描 N 天補漏（預設 30，期交所最多保留 30 個交易日）",
+    )
     return parser.parse_args()
 
 
@@ -238,7 +240,7 @@ def main() -> None:
     if args.start:
         start = date.fromisoformat(args.start)
     else:
-        start = detect_start_date()
+        start = detect_start_date(backfill_days=args.backfill_days)
 
     print(f"下載範圍：{start} ~ {end}")
     if args.dry_run:

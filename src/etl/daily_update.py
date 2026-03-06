@@ -105,6 +105,13 @@ def _parse_args() -> argparse.Namespace:
         metavar="N",
         help="強制重新匯入最新 N 個 zip 日期的 ticks（預設 2）",
     )
+    parser.add_argument(
+        "--backfill-days",
+        type=int,
+        default=30,
+        metavar="N",
+        help="未指定 --start 時，往前掃描 N 天補漏（預設 30）",
+    )
     return parser.parse_args()
 
 
@@ -121,6 +128,7 @@ def main() -> None:
             "--end", args.end,
             "--delay", str(args.delay),
             "--redownload-recent", str(args.redownload_recent),
+            "--backfill-days", str(args.backfill_days),
         ]
         if args.start:
             download_args += ["--start", args.start]
