@@ -68,6 +68,19 @@ def _zip_path(target_date: date) -> Path:
     return year_dir / f"Daily_{target_date:%Y_%m_%d}.zip"
 
 
+def _marker_path(target_date: date) -> Path:
+    """Path for non-trading day marker file."""
+    year_dir = RAW_DIR / str(target_date.year)
+    return year_dir / f"Daily_{target_date:%Y_%m_%d}.non_trading"
+
+
+def _is_known_non_trading(target_date: date) -> bool:
+    """Return True if date is a weekend or has a cached non-trading marker."""
+    if target_date.weekday() >= 5:  # Saturday=5, Sunday=6
+        return True
+    return _marker_path(target_date).exists()
+
+
 # ---------------------------------------------------------------------------
 # Core download logic
 # ---------------------------------------------------------------------------
@@ -79,13 +92,18 @@ def download_one(target_date: date, delay: float = 1.0, force: bool = False) -> 
         'saved'        — zip written to disk (new file)
         'updated'      — zip re-downloaded and overwritten (force=True)
         'skipped'      — file already exists on disk and force=False
-        'non_trading'  — server returned non-zip content (HTML)
+        'non_trading'  — weekend or server returned non-zip content (HTML)
         'error'        — HTTP error or network failure
     """
     dest = _zip_path(target_date)
 
+    # Fast path: zip exists
     if dest.exists() and not force:
         return "skipped"
+
+    # Fast path: known non-trading (weekend or cached marker)
+    if not force and _is_known_non_trading(target_date):
+        return "non_trading"
 
     was_existing = dest.exists()
 
@@ -103,6 +121,9 @@ def download_one(target_date: date, delay: float = 1.0, force: bool = False) -> 
             content: bytes = resp.read()
     except urllib.error.HTTPError as e:
         if e.code == 404:
+            marker = _marker_path(target_date)
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.touch()
             return "non_trading"
         print(f"  [error] HTTP {e.code} for {target_date}")
         return "error"
@@ -112,6 +133,10 @@ def download_one(target_date: date, delay: float = 1.0, force: bool = False) -> 
 
     # magic-byte check: real zip starts with PK\x03\x04
     if content[:4] != ZIP_MAGIC:
+        # Cache the result so future runs skip this date without HTTP
+        marker = _marker_path(target_date)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
         return "non_trading"
 
     # atomic write: .tmp → rename
@@ -161,7 +186,14 @@ def download_range(
         force = to_process[target]
         dest = _zip_path(target)
         if dry_run:
-            label = "force" if force else ("skipped" if dest.exists() else "would_download")
+            if force:
+                label = "force"
+            elif dest.exists():
+                label = "skipped"
+            elif _is_known_non_trading(target):
+                label = "non_trading"
+            else:
+                label = "would_download"
             print(f"  [dry-run] {target}  →  {label}")
         else:
             status = download_one(target, delay=delay, force=force)
