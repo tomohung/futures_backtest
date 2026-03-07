@@ -88,6 +88,39 @@ def get_key_prices():
 
         vwap = {row[0]: row[1] for row in vwap_rows}
 
+        # 大戶成本：1分K volume >= 20MA(volume) 的 bar 才計入，再算 VWAP
+        big_rows = conn.execute("""
+            WITH vol_ma AS (
+                SELECT
+                    timestamp::DATE AS date,
+                    timestamp,
+                    close,
+                    volume,
+                    AVG(volume) OVER (
+                        PARTITION BY timestamp::DATE
+                        ORDER BY timestamp
+                        ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
+                    ) AS ma20_vol
+                FROM ohlcv_1m
+                WHERE symbol = ?
+                  AND timestamp::DATE IN (?, ?)
+                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+            ),
+            filtered AS (
+                SELECT date, close, volume
+                FROM vol_ma
+                WHERE volume >= ma20_vol
+            )
+            SELECT
+                date,
+                ROUND(SUM(close * volume) / SUM(volume))::INT AS big_cost
+            FROM filtered
+            GROUP BY date
+            ORDER BY date DESC
+        """, [SYMBOL, last_day, prev_day]).fetchall()
+
+        big_cost = {row[0]: row[1] for row in big_rows}
+
         # 30分K 20MA（所有日盤，bucket 對齊 08:45）
         # 13:45 這根 1分K（日盤真實收盤）合併進 13:15 的 bucket
         ma_row = conn.execute("""
@@ -141,6 +174,7 @@ def get_key_prices():
         "day": {"high": day[0], "low": day[1], "close": day[2]},
         "night": {"high": night[0], "low": night[1], "close": night[2]} if has_night else None,
         "vwap": vwap,
+        "big_cost": big_cost,
         "ma30_20": ma_row[0] if ma_row else None,
         "ma30_20_up": ma_row[1] if ma_row else None,
     }
@@ -176,8 +210,14 @@ def print_report(data):
     vwap_prev  = d['vwap'].get(d['prev_day'])
     vwap_today_str = f"{vwap_today:,}" if vwap_today else "N/A"
     vwap_prev_str  = f"{vwap_prev:,}"  if vwap_prev  else "N/A"
-    print(f"| 成本 {d['last_day']} | {vwap_today_str} | VWAP |")
-    print(f"| 成本 {d['prev_day']} | {vwap_prev_str} | VWAP |")
+    print(f"| 平均成本 {d['last_day']} | {vwap_today_str} | VWAP |")
+    print(f"| 平均成本 {d['prev_day']} | {vwap_prev_str} | VWAP |")
+    big_today = d['big_cost'].get(d['last_day'])
+    big_prev  = d['big_cost'].get(d['prev_day'])
+    big_today_str = f"{big_today:,}" if big_today else "N/A"
+    big_prev_str  = f"{big_prev:,}"  if big_prev  else "N/A"
+    print(f"| 大戶成本 {d['last_day']} | {big_today_str} | vol≥20MA |")
+    print(f"| 大戶成本 {d['prev_day']} | {big_prev_str} | vol≥20MA |")
 
 
 if __name__ == "__main__":
