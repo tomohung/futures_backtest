@@ -121,6 +121,22 @@ def get_key_prices():
 
         big_cost = {row[0]: row[1] for row in big_rows}
 
+        # 前天 10點前 15分K 收盤（扣底值，08:45~09:59）
+        bars_15m_pre10 = conn.execute("""
+            WITH bars_15m AS (
+                SELECT
+                    time_bucket(INTERVAL '15 minutes', timestamp, TIMESTAMP '2000-01-01 08:45:00') AS ts,
+                    arg_max(close, timestamp)::INT AS close
+                FROM ohlcv_1m
+                WHERE symbol = ?
+                  AND timestamp::DATE = ?
+                  AND timestamp::TIME BETWEEN '08:45:00' AND '09:59:00'
+                GROUP BY ts
+            )
+            SELECT MAX(close), MIN(close), ROUND(AVG(close))::INT
+            FROM bars_15m
+        """, [SYMBOL, prev_day]).fetchone()
+
         # 30分K 20MA（所有日盤，bucket 對齊 08:45）
         # 13:45 這根 1分K（日盤真實收盤）合併進 13:15 的 bucket
         ma_row = conn.execute("""
@@ -177,47 +193,93 @@ def get_key_prices():
         "big_cost": big_cost,
         "ma30_20": ma_row[0] if ma_row else None,
         "ma30_20_up": ma_row[1] if ma_row else None,
+        "bars_15m_pre10": bars_15m_pre10,
     }
 
 
 def print_report(data):
     d = data
-    direction = "↑" if d["ma30_20_up"] else "↓"
+    ld = d["last_day"]
+    pd_ = d["prev_day"]
+    night = d["night"]
+    ma = d["ma30_20"]
+    ref = night["close"] if night else None
 
-    print(f"# 關鍵價格參考 {d['last_day']}（昨）\n")
+    # ── helpers ──────────────────────────────────────────
+    def n(v):
+        return f"{v:,}" if v is not None else "—"
 
-    print("## 夜盤")
-    print("| 項目 | 價格 |")
-    print("|------|-----:|")
-    if d["night"]:
-        print(f"| 昨高 | {d['night']['high']:,} |")
-        print(f"| 昨低 | {d['night']['low']:,} |")
-        print(f"| 收盤 | {d['night']['close']:,} |")
-    else:
-        print("| （無夜盤資料） | — |")
+    def ud(price, benchmark):
+        if price is None or benchmark is None:
+            return "-"
+        return "↑ up" if price > benchmark else "↓ down"
+
+    # ── header ───────────────────────────────────────────
+    ref_label = f"夜收 {ref:,}" if ref else "（無夜盤）"
+    print(f"# 關鍵價格參考｜{ld}（昨）  基準：{ref_label}\n")
+
+    # ── 昨日行情：日盤 vs 夜盤並排 ───────────────────────
+    print("### 昨日行情")
+    print(f"|      |    日盤 |    夜盤 |")
+    print(f"|------|--------:|--------:|")
+    print(f"| 高   | {n(d['day']['high'])} | {n(night['high'] if night else None)} |")
+    print(f"| 低   | {n(d['day']['low'])}  | {n(night['low']  if night else None)} |")
+    print(f"| 收盤 | {n(d['day']['close'])} | {n(night['close'] if night else None)} |")
+
+    # ── 成本：昨 vs 前天並排 ─────────────────────────────
+    vwap_last = d["vwap"].get(ld)
+    vwap_prev = d["vwap"].get(pd_)
+    big_last  = d["big_cost"].get(ld)
+    big_prev  = d["big_cost"].get(pd_)
 
     print()
-    print("## 日盤")
-    print("| 項目 | 價格 | 備註 |")
-    print("|------|-----:|------|")
-    print(f"| 昨高 | {d['day']['high']:,} | |")
-    print(f"| 昨低 | {d['day']['low']:,} | |")
-    print(f"| 收盤 | {d['day']['close']:,} | |")
-    ma = d['ma30_20']
-    ma_str = f"{ma:,}" if ma is not None else "N/A"
-    print(f"| 30分K 20MA | {ma_str} | 當前方向：{direction} |")
-    vwap_today = d['vwap'].get(d['last_day'])
-    vwap_prev  = d['vwap'].get(d['prev_day'])
-    vwap_today_str = f"{vwap_today:,}" if vwap_today else "N/A"
-    vwap_prev_str  = f"{vwap_prev:,}"  if vwap_prev  else "N/A"
-    print(f"| 平均成本 {d['last_day']} | {vwap_today_str} | VWAP |")
-    print(f"| 平均成本 {d['prev_day']} | {vwap_prev_str} | VWAP |")
-    big_today = d['big_cost'].get(d['last_day'])
-    big_prev  = d['big_cost'].get(d['prev_day'])
-    big_today_str = f"{big_today:,}" if big_today else "N/A"
-    big_prev_str  = f"{big_prev:,}"  if big_prev  else "N/A"
-    print(f"| 大戶成本 {d['last_day']} | {big_today_str} | vol≥20MA |")
-    print(f"| 大戶成本 {d['prev_day']} | {big_prev_str} | vol≥20MA |")
+    print("### 成本")
+    print(f"|               | 昨 {ld.strftime('%m/%d')} | 前天 {pd_.strftime('%m/%d')} |")
+    print(f"|---------------|--------:|----------:|")
+    print(f"| 平均成本 VWAP | {n(vwap_last)} | {n(vwap_prev)} |")
+    print(f"| 大戶成本      | {n(big_last)}  | {n(big_prev)}  |")
+
+    # ── 趨勢 ─────────────────────────────────────────────
+    ma_dir = ud(ref, ma)
+    pre10 = d.get("bars_15m_pre10")
+
+    print()
+    print("### 趨勢")
+    print(f"| 項目              | 數值   | 備註 |")
+    print(f"|-------------------|-------:|------|")
+    ma_str = n(ma)
+    print(f"| 30分K 20MA        | {ma_str} | 方向 {ma_dir}，夜收 {n(ref)} |")
+    if pre10 and pre10[0] is not None:
+        h, l, avg = pre10
+        print(f"| 前天10點前扣底    | {n(h)} / {n(l)} | 均 {n(avg)}（{pd_.strftime('%m/%d')}） |")
+
+    # ── 評估 ─────────────────────────────────────────────
+    if ref is not None:
+        if ref > d["day"]["high"]:
+            two_day = f"新高（昨高 {n(d['day']['high'])}）"
+        elif ref < d["day"]["low"]:
+            two_day = f"新低（昨低 {n(d['day']['low'])}）"
+        else:
+            two_day = "-"
+    else:
+        two_day = "-"
+
+    if ref is not None and ma is not None:
+        dist_pct = abs(ref - ma) / ma * 100
+        risk = "高" if dist_pct < 0.3 else ("中" if dist_pct < 1.5 else "低")
+        reversal_risk = f"{risk}（距 {dist_pct:.1f}%）"
+    else:
+        reversal_risk = "-"
+
+    print()
+    print(f"### 評估")
+    print(f"| 項目                      | 結果 |")
+    print(f"|---------------------------|------|")
+    print(f"| 夜收 vs 昨成本 {n(vwap_last)} | {ud(ref, vwap_last)} |")
+    print(f"| 夜收 vs 前天成本 {n(vwap_prev)} | {ud(ref, vwap_prev)} |")
+    print(f"| 二日高低突破              | {two_day} |")
+    print(f"| 30分K 20MA 方向           | {ma_dir} |")
+    print(f"| 均線轉向風險              | {reversal_risk} |")
 
 
 if __name__ == "__main__":
