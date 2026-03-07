@@ -6,8 +6,10 @@
     uv run python src/analysis/key_prices.py
 """
 import duckdb
+import numpy as np
 from datetime import timedelta
 from pathlib import Path
+from scipy.signal import find_peaks
 
 DB_PATH = Path(__file__).parents[2] / "data" / "futures.duckdb"
 SYMBOL = "TX"
@@ -184,7 +186,7 @@ def get_key_prices():
         """, [SYMBOL]).fetchone()
 
     has_night = night and night[0] is not None
-    return {
+    result = {
         "last_day": last_day,
         "prev_day": prev_day,
         "day": {"high": day[0], "low": day[1], "close": day[2]},
@@ -195,6 +197,86 @@ def get_key_prices():
         "ma30_20_up": ma_row[1] if ma_row else None,
         "bars_15m_pre10": bars_15m_pre10,
     }
+    result["sr"] = _calc_sr(SYMBOL)
+    return result
+
+
+def _calc_sr(symbol, lookback_days=30, bin_size=50, swing_window=3, cluster_dist=100):
+    """計算支撐壓力：① Swing High/Low 聚類  ② Volume Profile HVN"""
+    with duckdb.connect(str(DB_PATH), read_only=True) as conn:
+        bars = conn.execute("""
+        WITH bars_30m AS (
+            SELECT
+                CASE
+                    WHEN time_bucket(INTERVAL '30 minutes', timestamp, TIMESTAMP '2000-01-01 08:45:00')::TIME = '13:45:00'
+                    THEN time_bucket(INTERVAL '30 minutes', timestamp, TIMESTAMP '2000-01-01 08:45:00') - INTERVAL '30 minutes'
+                    ELSE time_bucket(INTERVAL '30 minutes', timestamp, TIMESTAMP '2000-01-01 08:45:00')
+                END AS ts,
+                MAX(high)::INT AS high,
+                MIN(low)::INT  AS low,
+                SUM(volume)    AS volume
+            FROM ohlcv_1m
+            WHERE symbol = ?
+              AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+              AND timestamp::DATE >= (SELECT MAX(timestamp::DATE) FROM ohlcv_1m WHERE symbol=?) - ? * INTERVAL '1 day'
+            GROUP BY ts
+        )
+        SELECT high, low, volume FROM bars_30m ORDER BY ts
+    """, [symbol, symbol, lookback_days]).fetchall()
+
+    if not bars:
+        return {"swing": [], "vp": []}
+
+    highs = np.array([r[0] for r in bars], dtype=float)
+    lows  = np.array([r[1] for r in bars], dtype=float)
+    vols  = np.array([r[2] for r in bars], dtype=float)
+    n = len(bars)
+
+    # ① Swing High/Low 聚類
+    swing_highs, swing_lows = [], []
+    for i in range(swing_window, n - swing_window):
+        if highs[i] == max(highs[i-swing_window:i+swing_window+1]):
+            swing_highs.append(float(highs[i]))
+        if lows[i] == min(lows[i-swing_window:i+swing_window+1]):
+            swing_lows.append(float(lows[i]))
+
+    def cluster(levels):
+        if not levels:
+            return []
+        levels = sorted(levels)
+        groups = [[levels[0]]]
+        for lv in levels[1:]:
+            if lv - groups[-1][-1] <= cluster_dist:
+                groups[-1].append(lv)
+            else:
+                groups.append([lv])
+        return [(round(np.mean(g)), len(g)) for g in groups]
+
+    swing_res = {"highs": cluster(swing_highs), "lows": cluster(swing_lows)}
+
+    # ② Volume Profile HVN
+    price_min = int(min(lows) // bin_size * bin_size)
+    price_max = int(max(highs) // bin_size * bin_size + bin_size)
+    bins = np.arange(price_min, price_max + bin_size, bin_size)
+    vp = np.zeros(len(bins))
+
+    for i in range(n):
+        lo, hi, vol = lows[i], highs[i], vols[i]
+        idx = [j for j, b in enumerate(bins) if b < hi and b + bin_size > lo]
+        if idx:
+            per = vol / len(idx)
+            for j in idx:
+                vp[j] += per
+
+    peaks, props = find_peaks(vp, prominence=vp.max() * 0.1, distance=2)
+    max_v = vp.max() if vp.max() > 0 else 1
+    vp_res = sorted(
+        [(int(bins[p]), int(bins[p] + bin_size), vp[p], props["prominences"][i])
+         for i, p in enumerate(peaks)],
+        key=lambda x: -x[2]
+    )
+
+    return {"swing": swing_res, "vp": vp_res, "vp_max": max_v}
 
 
 def print_report(data):
@@ -280,6 +362,65 @@ def print_report(data):
     print(f"| 二日高低突破              | {two_day} |")
     print(f"| 30分K 20MA 方向           | {ma_dir} |")
     print(f"| 均線轉向風險              | {reversal_risk} |")
+
+    # 支撐壓力
+    sr = d.get("sr", {})
+    ref_price = ref if ref is not None else d["day"]["close"]
+    RANGE = 1500
+
+    swing_highs = sorted(
+        [(p, c) for p, c in sr.get("swing", {}).get("highs", []) if ref_price < p <= ref_price + RANGE],
+        key=lambda x: x[0]
+    )
+    swing_lows = sorted(
+        [(p, c) for p, c in sr.get("swing", {}).get("lows", []) if ref_price - RANGE <= p < ref_price],
+        key=lambda x: -x[0]
+    )
+    vp_max = sr.get("vp_max", 1)
+    vp_res = sr.get("vp", [])
+    vp_above = sorted(
+        [(lo, hi, v) for lo, hi, v, _ in vp_res if lo >= ref_price - 25 and lo < ref_price + RANGE],
+        key=lambda x: x[0]
+    )
+    vp_below = sorted(
+        [(lo, hi, v) for lo, hi, v, _ in vp_res if hi <= ref_price + 25 and hi > ref_price - RANGE],
+        key=lambda x: -x[0]
+    )
+
+    def vol_bar(v): return '█' * max(1, int(v / vp_max * 10))
+
+    print()
+    print(f"### 支撐壓力（近 30 日，±{RANGE}pt，基準 {ref_price:,}）")
+
+    print()
+    print("**壓力**")
+    print("| 價位 | Swing | VP 量 |")
+    print("|------|-------|-------|")
+    all_res_prices = sorted(set(
+        [p for p, _ in swing_highs] +
+        [lo + 25 for lo, hi, v in vp_above]  # 用 mid 代表
+    ))
+    # 合併顯示：以 swing 為主，VP 對照
+    for p, cnt in sorted(swing_highs, key=lambda x: x[0]):
+        vp_match = next(((lo, hi, v) for lo, hi, v in vp_above if lo <= p <= hi), None)
+        vp_str = f"{int(vp_match[2]):,} {vol_bar(vp_match[2])}" if vp_match else "—"
+        print(f"| {p:,} | {'★'*cnt} | {vp_str} |")
+    # VP only（沒有 swing 對應）
+    for lo, hi, v in vp_above:
+        if not any(lo <= p <= hi for p, _ in swing_highs):
+            print(f"| {lo:,}~{hi:,} | — | {int(v):,} {vol_bar(v)} |")
+
+    print()
+    print("**支撐**")
+    print("| 價位 | Swing | VP 量 |")
+    print("|------|-------|-------|")
+    for p, cnt in sorted(swing_lows, key=lambda x: -x[0]):
+        vp_match = next(((lo, hi, v) for lo, hi, v in vp_below if lo <= p <= hi), None)
+        vp_str = f"{int(vp_match[2]):,} {vol_bar(vp_match[2])}" if vp_match else "—"
+        print(f"| {p:,} | {'★'*cnt} | {vp_str} |")
+    for lo, hi, v in vp_below:
+        if not any(lo <= p <= hi for p, _ in swing_lows):
+            print(f"| {lo:,}~{hi:,} | — | {int(v):,} {vol_bar(v)} |")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ dependencies = [
     "pandas>=2.0.0",
     "numpy>=1.26.0",
     "backtesting>=0.3.3",
+    "scipy>=1.17.1",
 ]
 
 [build-system]
