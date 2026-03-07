@@ -74,11 +74,19 @@ def _marker_path(target_date: date) -> Path:
     return year_dir / f"Daily_{target_date:%Y_%m_%d}.non_trading"
 
 
-def _is_known_non_trading(target_date: date) -> bool:
-    """Return True if date is a weekend or has a cached non-trading marker."""
+def _is_known_non_trading(target_date: date, trust_marker_days: int = 7) -> bool:
+    """Return True if date is a weekend or has a cached non-trading marker.
+
+    Markers within the last `trust_marker_days` calendar days are ignored so
+    that recently-published data (e.g. Friday night session appearing under
+    the next Monday's date) can be retried on subsequent runs.
+    """
     if target_date.weekday() >= 5:  # Saturday=5, Sunday=6
         return True
-    return _marker_path(target_date).exists()
+    if not _marker_path(target_date).exists():
+        return False
+    cutoff = taiwan_today() - timedelta(days=trust_marker_days)
+    return target_date < cutoff
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +241,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--end",
         metavar="YYYY-MM-DD",
-        default=today.isoformat(),
-        help=f"結束日期（預設：今天 {today}）",
+        default=(today + timedelta(days=4)).isoformat(),
+        help=f"結束日期（預設：今天 +4 天 {today + timedelta(days=4)}，涵蓋週末後的下一個交易日）",
     )
     parser.add_argument(
         "--delay",

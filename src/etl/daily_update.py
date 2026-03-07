@@ -71,8 +71,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--end",
         metavar="YYYY-MM-DD",
-        default=today.isoformat(),
-        help=f"下載結束日期（預設：今天 {today}）",
+        default=(today + timedelta(days=4)).isoformat(),
+        help=f"下載結束日期（預設：今天 +4 天 {today + timedelta(days=4)}，涵蓋週末後的下一個交易日）",
     )
     parser.add_argument(
         "--skip-download",
