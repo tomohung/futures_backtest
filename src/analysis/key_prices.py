@@ -424,5 +424,25 @@ def print_report(data):
 
 
 if __name__ == "__main__":
+    import io
+    import subprocess
+
     data = get_key_prices()
+
+    # Capture output
+    buf = io.StringIO()
+    import sys
+    _stdout = sys.stdout
+    sys.stdout = buf
     print_report(data)
+    sys.stdout = _stdout
+    output = buf.getvalue()
+
+    print(output, end="")
+
+    # Copy to clipboard (macOS)
+    try:
+        subprocess.run(["pbcopy"], input=output.encode(), check=True)
+        print("\n已複製到剪貼簿，可直接 Cmd+V 貼上")
+    except Exception:
+        pass
