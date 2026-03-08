@@ -393,7 +393,7 @@ def print_report(data):
     print(f"### 支撐壓力（近 30 日，±{RANGE}pt，基準 {ref_price:,}）")
 
     print()
-    print("**壓力**")
+    print("#### 壓力")
     print("| 價位 | Swing | VP 量 |")
     print("|------|-------|-------|")
     all_res_prices = sorted(set(
@@ -411,7 +411,7 @@ def print_report(data):
             print(f"| {lo:,}~{hi:,} | — | {int(v):,} {vol_bar(v)} |")
 
     print()
-    print("**支撐**")
+    print("#### 支撐")
     print("| 價位 | Swing | VP 量 |")
     print("|------|-------|-------|")
     for p, cnt in sorted(swing_lows, key=lambda x: -x[0]):
