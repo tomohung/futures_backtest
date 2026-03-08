@@ -427,6 +427,41 @@ def print_report(data):
             print(f"| {lo:,}~{hi:,} | — | {int(v):,} {vol_bar(v)} |")
 
 
+def get_30m_bars(n_days=20):
+    """取近 n_days 個交易日的日盤 30 分K（08:45~13:45，含 MA20 所需歷史）。"""
+    with duckdb.connect(str(DB_PATH), read_only=True) as conn:
+        rows = conn.execute("""
+            WITH last_day AS (
+                SELECT MAX(timestamp::DATE) AS d
+                FROM ohlcv_1m WHERE symbol = ?
+                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+            ),
+            bars_30m AS (
+                SELECT
+                    CASE
+                        WHEN time_bucket(INTERVAL '30 minutes', timestamp, TIMESTAMP '2000-01-01 08:45:00')::TIME = '13:45:00'
+                        THEN time_bucket(INTERVAL '30 minutes', timestamp, TIMESTAMP '2000-01-01 08:45:00') - INTERVAL '30 minutes'
+                        ELSE time_bucket(INTERVAL '30 minutes', timestamp, TIMESTAMP '2000-01-01 08:45:00')
+                    END AS ts,
+                    FIRST(open  ORDER BY timestamp) AS open,
+                    MAX(high)                        AS high,
+                    MIN(low)                         AS low,
+                    LAST(close ORDER BY timestamp)   AS close,
+                    SUM(volume)                      AS volume
+                FROM ohlcv_1m, last_day
+                WHERE symbol = ?
+                  AND timestamp::DATE >= (SELECT d FROM last_day) - (? + 10) * INTERVAL '1 day'
+                  AND timestamp::DATE <= (SELECT d FROM last_day)
+                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+                GROUP BY ts
+            )
+            SELECT ts, open, high, low, close, volume
+            FROM bars_30m
+            ORDER BY ts
+        """, [SYMBOL, SYMBOL, n_days]).fetchall()
+    return rows
+
+
 def get_1h_bars(n_days=20):
     """取近 n_days 個交易日的 1 小時 K（日盤 + 夜盤），連續排列（去除無交易空檔）。"""
     with duckdb.connect(str(DB_PATH), read_only=True) as conn:
@@ -629,6 +664,141 @@ def plot_sr_chart(data, n_days=20):
     plt.show()
 
 
+def plot_30m_chart(data, n_days=20):
+    """畫日盤 30 分K + 20MA + 大戶成本（昨、前天），存 PNG 並複製到剪貼簿。"""
+    import subprocess
+
+    bars = get_30m_bars(n_days)
+    if not bars:
+        print("[WARN] 無 30 分 K 資料，跳過圖表")
+        return
+
+    ts_list = [r[0] for r in bars]
+    opens   = np.array([float(r[1]) for r in bars])
+    highs   = np.array([float(r[2]) for r in bars])
+    lows    = np.array([float(r[3]) for r in bars])
+    closes  = np.array([float(r[4]) for r in bars])
+    n = len(bars)
+
+    # 20MA
+    ma20 = np.full(n, np.nan)
+    for i in range(19, n):
+        ma20[i] = closes[i-19:i+1].mean()
+
+    # 只顯示最後 n_days 個交易日的 bar（前面的是 MA 預熱期）
+    # 找最後 n_days 個不同日期
+    dates_seen = []
+    for ts in ts_list:
+        d = ts.date()
+        if not dates_seen or dates_seen[-1] != d:
+            dates_seen.append(d)
+    cutoff_date = dates_seen[-n_days] if len(dates_seen) >= n_days else dates_seen[0]
+    display_mask = [ts.date() >= cutoff_date for ts in ts_list]
+    display_idx  = [i for i, m in enumerate(display_mask) if m]
+
+    x_disp = np.arange(len(display_idx))
+    opens_d  = opens[display_idx]
+    highs_d  = highs[display_idx]
+    lows_d   = lows[display_idx]
+    closes_d = closes[display_idx]
+    ma20_d   = ma20[display_idx]
+    ts_disp  = [ts_list[i] for i in display_idx]
+
+    # 大戶成本
+    big_cost  = data.get("big_cost", {})
+    last_day  = data["last_day"]
+    prev_day  = data["prev_day"]
+    big_last  = big_cost.get(last_day)
+    big_prev  = big_cost.get(prev_day)
+
+    _setup_font()
+    fig, ax = plt.subplots(figsize=(16, 7))
+    fig.patch.set_facecolor("#1a1a2e")
+    ax.set_facecolor("#16213e")
+    ax.tick_params(colors="#cccccc")
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#444466")
+
+    # K 線
+    W = 0.4
+    nd = len(display_idx)
+    for i in range(nd):
+        bull = closes_d[i] >= opens_d[i]
+        color = "#26a69a" if bull else "#ef5350"
+        body_lo = min(opens_d[i], closes_d[i])
+        body_hi = max(opens_d[i], closes_d[i])
+        ax.add_patch(mpatches.Rectangle(
+            (i - W, body_lo), 2 * W, max(body_hi - body_lo, 1),
+            color=color, zorder=3,
+        ))
+        ax.plot([i, i], [lows_d[i], body_lo], color=color, linewidth=0.8, zorder=2)
+        ax.plot([i, i], [body_hi, highs_d[i]], color=color, linewidth=0.8, zorder=2)
+
+    # 20MA
+    valid = ~np.isnan(ma20_d)
+    if valid.any():
+        ax.plot(x_disp[valid], ma20_d[valid], color="#f9ca24", linewidth=1.5,
+                label="20MA", zorder=4)
+
+    # 大戶成本水平線
+    if big_last is not None:
+        ax.axhline(big_last, color="#ff9f43", linewidth=1.5, linestyle="-.", alpha=0.9, zorder=5)
+        ax.text(nd - 0.5, big_last, f" 昨大戶 {big_last:,} ({last_day.strftime('%m/%d')})",
+                color="#ff9f43", fontsize=8, va="bottom", zorder=6)
+    if big_prev is not None:
+        ax.axhline(big_prev, color="#a29bfe", linewidth=1.5, linestyle="-.", alpha=0.9, zorder=5)
+        ax.text(nd - 0.5, big_prev, f" 前天大戶 {big_prev:,} ({prev_day.strftime('%m/%d')})",
+                color="#a29bfe", fontsize=8, va="bottom", zorder=6)
+
+    # 夜盤收盤線
+    night = data.get("night")
+    night_close = night.get("close") if night else None
+    if night_close is not None:
+        ax.axhline(night_close, color="#00cec9", linewidth=1.5, linestyle="--", alpha=0.9, zorder=5)
+        ax.text(nd - 0.5, night_close, f" 夜收 {night_close:,}",
+                color="#00cec9", fontsize=8, va="bottom", zorder=6)
+
+    # X 軸：每日第一根標日期
+    tick_pos, tick_lbl = [], []
+    prev_date = None
+    for i, ts in enumerate(ts_disp):
+        d = ts.date()
+        if d != prev_date:
+            tick_pos.append(i)
+            tick_lbl.append(d.strftime("%m/%d"))
+            prev_date = d
+    ax.set_xticks(tick_pos)
+    ax.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8, color="#cccccc")
+    ax.set_xlim(-1, nd)
+    price_range = highs_d.max() - lows_d.min()
+    ax.set_ylim(lows_d.min() - price_range * 0.05, highs_d.max() + price_range * 0.1)
+    ax.yaxis.set_tick_params(labelcolor="#cccccc")
+    ax.set_title(
+        f"TX 日盤 30 分K + 20MA（近 {n_days} 日）",
+        color="#eeeeee", fontsize=12, pad=8,
+    )
+    ax.grid(axis="y", color="#333355", linewidth=0.5, zorder=0)
+    ax.legend(loc="upper left", fontsize=9, facecolor="#1a1a2e",
+              labelcolor="#cccccc", edgecolor="#444466")
+
+    plt.tight_layout()
+    out_path = Path(__file__).parents[2] / "output" / "30m_chart.png"
+    out_path.parent.mkdir(exist_ok=True)
+    plt.savefig(out_path, dpi=150, facecolor=fig.get_facecolor())
+    print(f"30 分 K 圖表已儲存：{out_path}")
+
+    try:
+        subprocess.run(
+            ["osascript", "-e",
+             f'set the clipboard to (read (POSIX file "{out_path.absolute()}") as «class PNGf»)'],
+            check=True, capture_output=True,
+        )
+    except Exception:
+        pass
+
+    plt.show()
+
+
 if __name__ == "__main__":
     import io
     import subprocess
@@ -654,3 +824,4 @@ if __name__ == "__main__":
         pass
 
     plot_sr_chart(data)
+    plot_30m_chart(data)
