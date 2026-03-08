@@ -10,7 +10,7 @@ Step 2: ticks → ohlcv_1m
 """
 
 from pathlib import Path
-from datetime import time, timedelta, date
+from datetime import time, timedelta, date, datetime
 
 import duckdb
 import pandas as pd
@@ -240,10 +240,20 @@ def main() -> None:
             new_day_bars += len(df)
 
         # --- 夜盤 ---
-        # 只對有日盤資料的日期建夜盤（跳過最後一個，夜盤可能尚未結束）
+        # 夜盤結束時間：prev_date + 1 日 05:00
+        # 若現在已超過該時間，最後一個交易日的夜盤視為完成，納入處理
         day_dates = sorted(get_processed_dates(conn))
         processed_night = get_processed_night_sessions(conn)
-        pending_night = [d for d in day_dates[:-1] if d not in processed_night]
+        now = datetime.now()
+
+        def night_session_ended(d: date) -> bool:
+            night_end = datetime(d.year, d.month, d.day) + timedelta(days=1, hours=5)
+            return now >= night_end
+
+        pending_night = [
+            d for d in day_dates
+            if d not in processed_night and night_session_ended(d)
+        ]
         print(f"夜盤待處理 {len(pending_night)} 個 session")
 
         new_night_bars = 0

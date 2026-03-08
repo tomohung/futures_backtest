@@ -7,6 +7,9 @@
 """
 import duckdb
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import matplotlib.font_manager as fm
 from datetime import timedelta
 from pathlib import Path
 from scipy.signal import find_peaks
@@ -22,6 +25,7 @@ def get_key_prices():
             SELECT MAX(timestamp::DATE)
             FROM ohlcv_1m
             WHERE symbol = ?
+              AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
         """, [SYMBOL]).fetchone()[0]
 
         # 日盤：昨高 / 昨低 / 收盤（from ohlcv_1m）
@@ -423,6 +427,208 @@ def print_report(data):
             print(f"| {lo:,}~{hi:,} | — | {int(v):,} {vol_bar(v)} |")
 
 
+def get_1h_bars(n_days=20):
+    """取近 n_days 個交易日的 1 小時 K（日盤 + 夜盤），連續排列（去除無交易空檔）。"""
+    with duckdb.connect(str(DB_PATH), read_only=True) as conn:
+        rows = conn.execute("""
+            WITH last_day AS (
+                SELECT MAX(timestamp::DATE) AS d
+                FROM ohlcv_1m WHERE symbol = ?
+                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+            ),
+            recent AS (
+                SELECT timestamp::DATE AS td
+                FROM ohlcv_1m
+                WHERE symbol = ?
+                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+                  AND timestamp::DATE >= (SELECT d FROM last_day) - ? * INTERVAL '1 day'
+                GROUP BY td
+                ORDER BY td
+            ),
+            bounds AS (
+                SELECT MIN(td) AS start_d, (SELECT d FROM last_day) AS end_d FROM recent
+            ),
+            bars AS (
+                SELECT
+                    time_bucket(INTERVAL '1 hour', timestamp) AS ts,
+                    FIRST(open  ORDER BY timestamp) AS open,
+                    MAX(high)                        AS high,
+                    MIN(low)                         AS low,
+                    LAST(close ORDER BY timestamp)   AS close,
+                    SUM(volume)                      AS volume
+                FROM ohlcv_1m, bounds
+                WHERE symbol = ?
+                  AND timestamp::DATE BETWEEN start_d AND end_d
+                  AND (
+                      timestamp::TIME BETWEEN '08:00:00' AND '13:59:00'
+                      OR timestamp::TIME >= '15:00:00'
+                      OR timestamp::TIME < '05:01:00'
+                  )
+                GROUP BY ts
+            )
+            SELECT ts, open, high, low, close, volume
+            FROM bars
+            ORDER BY ts
+        """, [SYMBOL, SYMBOL, n_days, SYMBOL]).fetchall()
+    return rows  # list of (ts, open, high, low, close, volume)
+
+
+def _setup_font():
+    for f in [
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Unicode MS.ttf",
+    ]:
+        if Path(f).exists():
+            fp = fm.FontProperties(fname=f)
+            plt.rcParams["font.family"] = fp.get_name()
+            return
+
+
+def plot_sr_chart(data, n_days=20):
+    """畫 1 小時 K 線 + 支撐壓力 + Volume Profile，存 PNG 並複製到剪貼簿。"""
+    import subprocess
+
+    bars = get_1h_bars(n_days)
+    if not bars:
+        print("[WARN] 無 K 線資料，跳過圖表")
+        return
+
+    ts_list   = [r[0] for r in bars]
+    opens     = np.array([float(r[1]) for r in bars])
+    highs     = np.array([float(r[2]) for r in bars])
+    lows      = np.array([float(r[3]) for r in bars])
+    closes    = np.array([float(r[4]) for r in bars])
+    volumes   = np.array([float(r[5]) for r in bars])
+    n = len(bars)
+    x = np.arange(n)
+
+    sr     = data.get("sr", {})
+    ref    = (data["night"] or {}).get("close") or data["day"]["close"]
+    RANGE  = 1500
+
+    swing_highs = [(p, c) for p, c in sr.get("swing", {}).get("highs", [])
+                   if ref < p <= ref + RANGE]
+    swing_lows  = [(p, c) for p, c in sr.get("swing", {}).get("lows", [])
+                   if ref - RANGE <= p < ref]
+    vp_res  = sr.get("vp", [])
+    vp_max  = sr.get("vp_max", 1) or 1
+    vp_above = [(lo, hi, v) for lo, hi, v, _ in vp_res
+                if lo < ref + RANGE and hi > ref - 25]
+    vp_below = [(lo, hi, v) for lo, hi, v, _ in vp_res
+                if hi > ref - RANGE and lo < ref + 25]
+
+    _setup_font()
+    fig, (ax, ax_vp) = plt.subplots(
+        1, 2, figsize=(16, 8),
+        gridspec_kw={"width_ratios": [5, 1]},
+        sharey=True,
+    )
+    fig.patch.set_facecolor("#1a1a2e")
+    for a in (ax, ax_vp):
+        a.set_facecolor("#16213e")
+        a.tick_params(colors="#cccccc")
+        for spine in a.spines.values():
+            spine.set_edgecolor("#444466")
+
+    # ── K 線 ──────────────────────────────────────────────
+    W = 0.4
+    for i in range(n):
+        bull = closes[i] >= opens[i]
+        color = "#26a69a" if bull else "#ef5350"
+        body_lo = min(opens[i], closes[i])
+        body_hi = max(opens[i], closes[i])
+        ax.add_patch(mpatches.Rectangle(
+            (i - W, body_lo), 2 * W, max(body_hi - body_lo, 1),
+            color=color, zorder=3,
+        ))
+        ax.plot([i, i], [lows[i], body_lo], color=color, linewidth=0.8, zorder=2)
+        ax.plot([i, i], [body_hi, highs[i]], color=color, linewidth=0.8, zorder=2)
+
+    # ── 支撐壓力水平線 ────────────────────────────────────
+    for p, cnt in swing_highs:
+        lw = 1 + cnt * 0.4
+        ax.axhline(p, color="#ff6b6b", linewidth=lw, linestyle="--", alpha=0.8, zorder=4)
+        ax.text(n - 0.5, p, f" R {p:,} {'★'*cnt}",
+                color="#ff6b6b", fontsize=7, va="bottom", zorder=5)
+    for p, cnt in swing_lows:
+        lw = 1 + cnt * 0.4
+        ax.axhline(p, color="#4ecdc4", linewidth=lw, linestyle="--", alpha=0.8, zorder=4)
+        ax.text(n - 0.5, p, f" S {p:,} {'★'*cnt}",
+                color="#4ecdc4", fontsize=7, va="top", zorder=5)
+    for lo, hi, v, *_ in vp_res:
+        mid = (lo + hi) / 2
+        if ref - RANGE <= mid <= ref + RANGE:
+            alpha = 0.15 + 0.25 * (v / vp_max)
+            ax.axhspan(lo, hi, color="#f9ca24", alpha=alpha, zorder=1)
+
+    # 現價基準線
+    ax.axhline(ref, color="#ffffff", linewidth=1, linestyle=":", alpha=0.6, zorder=4)
+    ax.text(0, ref, f" 基準 {ref:,}", color="#ffffff", fontsize=8, va="bottom", zorder=5)
+
+    # ── X 軸標籤（每日第一根 08:xx bar 標日期）────────────
+    tick_pos, tick_lbl = [], []
+    prev_date = None
+    for i, ts in enumerate(ts_list):
+        d = ts.date()
+        if d != prev_date:
+            tick_pos.append(i)
+            tick_lbl.append(d.strftime("%m/%d"))
+            prev_date = d
+    ax.set_xticks(tick_pos)
+    ax.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8, color="#cccccc")
+    ax.set_xlim(-1, n)
+    price_range = highs.max() - lows.min()
+    ax.set_ylim(lows.min() - price_range * 0.05, highs.max() + price_range * 0.1)
+    ax.yaxis.set_tick_params(labelcolor="#cccccc")
+    ax.set_title(
+        f"TX 1H K線 + 支撐壓力（近 {n_days} 日，基準 {ref:,}）",
+        color="#eeeeee", fontsize=12, pad=8,
+    )
+    ax.grid(axis="y", color="#333355", linewidth=0.5, zorder=0)
+
+    # ── Volume Profile（右側）────────────────────────────
+    bin_size = 50
+    price_min = int(lows.min() // bin_size * bin_size)
+    price_max = int(highs.max() // bin_size * bin_size + bin_size)
+    bins = np.arange(price_min, price_max + bin_size, bin_size)
+    vp_hist = np.zeros(len(bins))
+    for i in range(n):
+        lo, hi, vol = lows[i], highs[i], volumes[i]
+        idx = [j for j, b in enumerate(bins) if b < hi and b + bin_size > lo]
+        if idx:
+            per = vol / len(idx)
+            for j in idx:
+                vp_hist[j] += per
+
+    ax_vp.barh(
+        bins + bin_size / 2, vp_hist,
+        height=bin_size * 0.9,
+        color="#f9ca24", alpha=0.6,
+    )
+    ax_vp.axhline(ref, color="#ffffff", linewidth=1, linestyle=":", alpha=0.6)
+    ax_vp.set_xlabel("Volume", color="#cccccc", fontsize=8)
+    ax_vp.set_title("VP", color="#eeeeee", fontsize=10)
+    ax_vp.xaxis.set_tick_params(labelcolor="#cccccc", labelsize=7)
+
+    plt.tight_layout()
+    out_path = Path(__file__).parents[2] / "output" / "sr_chart.png"
+    out_path.parent.mkdir(exist_ok=True)
+    plt.savefig(out_path, dpi=150, facecolor=fig.get_facecolor())
+    print(f"圖表已儲存：{out_path}")
+
+    try:
+        subprocess.run(
+            ["osascript", "-e",
+             f'set the clipboard to (read (POSIX file "{out_path.absolute()}") as «class PNGf»)'],
+            check=True, capture_output=True,
+        )
+        print("已複製到剪貼簿")
+    except Exception:
+        pass
+
+    plt.show()
+
+
 if __name__ == "__main__":
     import io
     import subprocess
@@ -440,9 +646,11 @@ if __name__ == "__main__":
 
     print(output, end="")
 
-    # Copy to clipboard (macOS)
+    # Copy text to clipboard (macOS)
     try:
         subprocess.run(["pbcopy"], input=output.encode(), check=True)
         print("\n已複製到剪貼簿，可直接 Cmd+V 貼上")
     except Exception:
         pass
+
+    plot_sr_chart(data)
