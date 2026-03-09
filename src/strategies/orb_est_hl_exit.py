@@ -20,6 +20,8 @@ Parameters:
   bigcost_days    : int   = 2      Days of BigCost history to take max of (1–5)
   long_only       : bool  = True   Disable short trades
   adx_min         : float = 0.0   Min daily ADX14 to trade (0 = disabled)
+  or_end_min      : int   = 537    OR end time as minutes since midnight (default 8:57)
+  entry_end_min   : int   = 545    Entry window end as minutes since midnight (default 9:05)
 
 Backtest results (2021–2026-03, long-only, bigcost_days=2, OR-width filter):
   2021–2024 : 125 trades  WR 58.4%  PF 1.90  EV +15.5 pts/trade
@@ -36,9 +38,6 @@ from backtesting import Strategy
 from src.strategies.estimate_hl_exit import EstimateHLExitMixin
 
 _OR_START  = dtime(8, 45)
-_OR_END    = dtime(8, 57)
-_ENTRY_START = dtime(8, 58)
-_ENTRY_END   = dtime(9, 5)
 _TRAIL_START = dtime(9, 45)
 _FORCE_EXIT  = dtime(13, 30)
 
@@ -50,10 +49,17 @@ class ORBWithEstHLExitStrategy(EstimateHLExitMixin, Strategy):
     adx_min: float = 0.0    # 0 = disabled; e.g. 20 to require ADX > 20
     long_only: bool = True
     bigcost_days: int = 2   # lookback window for BigCost filter (1–5)
+    or_end_min: int = 537   # OR end time in minutes since midnight (default 8:57)
+    entry_end_min: int = 545  # entry window end in minutes since midnight (default 9:05)
 
     def init(self):
         self._init_estimate_hl_exit()
         self._prev_date = None
+        # Precompute time objects from integer params
+        self._or_end = dtime(self.or_end_min // 60, self.or_end_min % 60)
+        h, m = divmod(self.or_end_min + 1, 60)
+        self._entry_start = dtime(h, m)
+        self._entry_end = dtime(self.entry_end_min // 60, self.entry_end_min % 60)
         self._reset_daily()
 
     def _reset_daily(self):
@@ -79,14 +85,14 @@ class ORBWithEstHLExitStrategy(EstimateHLExitMixin, Strategy):
         # Always record bar for SatZone mixin
         self._record_bar()
 
-        # ── Build Opening Range (8:45–8:57) ───────────────────────────
-        if _OR_START <= cur_time <= _OR_END:
+        # ── Build Opening Range (8:45–or_end) ─────────────────────────
+        if _OR_START <= cur_time <= self._or_end:
             self._or_high = max(self._or_high, float(self.data.High[-1]))
             self._or_low  = min(self._or_low,  float(self.data.Low[-1]))
 
-        # ── Entry window (8:58–9:05), at most once per day ────────────
+        # ── Entry window (or_end+1min – entry_end), at most once per day ──
         if (not self._entered
-                and _ENTRY_START <= cur_time <= _ENTRY_END
+                and self._entry_start <= cur_time <= self._entry_end
                 and self._or_high != -np.inf):
 
             ema_hl  = float(self.data.EmaHL[-1])
