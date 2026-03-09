@@ -1,15 +1,30 @@
 """
 ORB with Estimated H-L Exit Strategy.
 
-Entry: ORB breakout (8:45–8:57 range, 8:58–9:05 window) filtered by
-  - 30m 20MA direction (Close30 vs MA30_20)
-  - BigCost institutional cost filter (OR breakout must be on correct side)
+Entry: ORB breakout (8:45–8:57 range, 8:58–9:05 window), long-only by default.
+
+Entry filters (all must pass):
+  1. Close > or_high (upward breakout)
+  2. Close30 > MA30_20 (30m 20MA uptrend, from continuous day+night series)
+  3. or_high > max(BigCost1..N) + 0.5 × sl_dist  (breakout above institutional cost)
+  4. 0.5 × RollingOR ≤ ORWidth ≤ 1.5 × RollingOR (normal opening range width)
 
 Exit priority (highest to lowest):
-  1. Fixed SL: entry ± 0.25 × EmaHL
+  1. Fixed SL: entry - sl_ema_fraction × EmaHL  (default 0.25)
   2. SatZone two-phase exit (from EstimateHLExitMixin)
-  3. Dow Theory pivot trailing stop (active after 9:45)
+  3. Dow Theory pivot trailing stop (5-bar lookback, 2-bar confirmation, active after 9:45)
   4. Force exit at 13:30
+
+Parameters:
+  sl_ema_fraction : float = 0.25   SL distance as fraction of EmaHL
+  bigcost_days    : int   = 2      Days of BigCost history to take max of (1–5)
+  long_only       : bool  = True   Disable short trades
+  adx_min         : float = 0.0   Min daily ADX14 to trade (0 = disabled)
+
+Backtest results (2021–2026-03, long-only, bigcost_days=2, OR-width filter):
+  2021–2024 : 125 trades  WR 58.4%  PF 1.90  EV +15.5 pts/trade
+  2025      :  38 trades  WR 50.0%  PF 1.50  EV +16.7 pts/trade  +634 pts
+  2026 YTD  :   6 trades  WR 50.0%  PF 2.74  EV +47.2 pts/trade  +283 pts
 """
 
 from collections import deque
