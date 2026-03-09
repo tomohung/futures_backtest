@@ -277,6 +277,11 @@ def load_data_for_orb_est_hl(start=None, end=None):
     from src.backtest.estimate_hl import compute_estimate_hl_zones
     df_day = compute_estimate_hl_zones(df_day)
 
+    # 10-day TrendMA from continuous series (same logic as load_data_with_night_ma)
+    n_bars = 10 * 301
+    trend_ma = df_all["close"].rolling(n_bars, min_periods=n_bars).mean()
+    df_day["TrendMA"] = trend_ma.reindex(df_day.index)
+
     # 30m 20MA from continuous series (day + night)
     # Default 30min grid: 8:00, 8:30, 9:00, ... so 8:30–8:59 bar labeled 8:30
     s30 = df_all["close"].resample("30min").last()
