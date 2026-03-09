@@ -366,6 +366,17 @@ def load_data_for_orb_est_hl(start=None, end=None):
     for i in range(1, 6):
         df_day[f"BigCost{i}"] = df_bigcost[f"BigCost{i}"].reindex(day_dates).values
 
+    # Back-fill EmaHL and related columns within each day so that pre-9:00 bars
+    # (which fall in the 08:45 slot and receive NaN from compute_estimate_hl_zones)
+    # get the same values as the 09:00 bar.  These are pure prior-day EMA values
+    # (the 08:45 slot finalises at 09:00) — no lookahead involved.
+    _hl_cols = ["EmaHL", "EmaVol", "SatZoneUpper", "SatZoneLower",
+                "EstHL", "EstHighLevel", "EstLowLevel"]
+    for col in _hl_cols:
+        df_day[col] = df_day.groupby(df_day.index.normalize())[col].transform(
+            lambda s: s.bfill()
+        )
+
     if start:
         df_day = df_day[df_day.index >= start]
     if end:

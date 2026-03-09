@@ -1,7 +1,7 @@
 """
 ORB with Estimated H-L Exit Strategy.
 
-Entry: ORB breakout (8:45–8:57 range, 8:58–9:05 window), long-only by default.
+Entry: ORB breakout (8:45–8:57 range, 8:58–9:15 window), long-only by default.
 
 Entry filters (all must pass):
   1. Close > or_high (upward breakout)
@@ -21,12 +21,20 @@ Parameters:
   long_only       : bool  = True   Disable short trades
   adx_min         : float = 0.0   Min daily ADX14 to trade (0 = disabled)
   or_end_min      : int   = 537    OR end time as minutes since midnight (default 8:57)
-  entry_end_min   : int   = 545    Entry window end as minutes since midnight (default 9:05)
+  entry_end_min   : int   = 555    Entry window end as minutes since midnight (default 9:15)
 
-Backtest results (2021–2026-03, long-only, bigcost_days=2, OR-width filter):
-  2021–2024 : 125 trades  WR 58.4%  PF 1.90  EV +15.5 pts/trade
-  2025      :  38 trades  WR 50.0%  PF 1.50  EV +16.7 pts/trade  +634 pts
-  2026 YTD  :   6 trades  WR 50.0%  PF 2.74  EV +47.2 pts/trade  +283 pts
+Note: load_data_for_orb_est_hl() back-fills EmaHL to pre-9:00 bars within each day.
+  EmaHL at 9:00 is a pure prior-day EMA (no lookahead), so back-filling to 8:58/8:59
+  is valid and enables early breakout entries that were previously blocked by NaN.
+
+Backtest results (2021–2026-03, long-only, bigcost_days=2, OR-width filter,
+                  entry_end=9:15, EmaHL bfill):
+  2021 :  58 trades  WR 55.2%  PF 1.48  EV  +9.2 pts/trade  +535 pts
+  2022 :  39 trades  WR 61.5%  PF 2.67  EV +21.3 pts/trade  +831 pts
+  2023 :  45 trades  WR 57.8%  PF 1.93  EV +12.0 pts/trade  +542 pts
+  2024 :  45 trades  WR 60.0%  PF 2.33  EV +25.6 pts/trade  +1153 pts
+  2025 :  49 trades  WR 49.0%  PF 1.32  EV +11.1 pts/trade  +542 pts
+  2026 YTD : 10 trades  WR 40.0%  PF 1.33  EV +11.7 pts/trade  +117 pts
 """
 
 from collections import deque
@@ -50,7 +58,7 @@ class ORBWithEstHLExitStrategy(EstimateHLExitMixin, Strategy):
     long_only: bool = True
     bigcost_days: int = 2   # lookback window for BigCost filter (1–5)
     or_end_min: int = 537   # OR end time in minutes since midnight (default 8:57)
-    entry_end_min: int = 545  # entry window end in minutes since midnight (default 9:05)
+    entry_end_min: int = 555  # entry window end in minutes since midnight (default 9:15)
 
     def init(self):
         self._init_estimate_hl_exit()
