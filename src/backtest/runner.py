@@ -142,7 +142,7 @@ def _compute_daily_adx(df_day: "pd.DataFrame", period: int = 14) -> "pd.Series":
 
 
 def load_data_with_night_ma(start=None, end=None, trend_ma_days=10, rolling_or_window=0,
-                             adx_period=0):
+                             adx_period=0, estimate_hl=False):
     """Load day-session OHLCV with TrendMA computed on continuous day+night 1-min bars.
 
     The MA is computed on the full price series (including night session) so that
@@ -211,6 +211,90 @@ def load_data_with_night_ma(start=None, end=None, trend_ma_days=10, rolling_or_w
         adx_series = _compute_daily_adx(df_daily, period=adx_period)
         day_dates = pd.DatetimeIndex(df_day.index).normalize()
         df_day["DailyADX"] = adx_series.reindex(day_dates).values
+
+    # Estimated H-L zones (must run on full history BEFORE date filtering)
+    if estimate_hl:
+        from src.backtest.estimate_hl import compute_estimate_hl_zones
+        df_day = compute_estimate_hl_zones(df_day)
+
+    if start:
+        df_day = df_day[df_day.index >= start]
+    if end:
+        df_day = df_day[df_day.index <= end]
+
+    return df_day
+
+
+def load_data_for_orb_est_hl(start=None, end=None):
+    """Load day-session data with Estimate H-L zones, 30m 20MA, and BigCost columns.
+
+    Columns added:
+        EmaHL, SatZoneUpper, SatZoneLower, EstHL, EstHighLevel, EstLowLevel, EmaVol
+            — from compute_estimate_hl_zones()
+        MA30_20  — 20-period MA of 30m closes (continuous day+night), 1-slot delayed
+        Close30  — last 30m close, 1-slot delayed (for direction comparison)
+        BigCost  — yesterday's institutional cost (heavy-volume VWAP)
+    """
+    import pandas as pd
+
+    with duckdb.connect(DB_PATH, read_only=True) as conn:
+        df_all = conn.execute("""
+            SELECT timestamp, close FROM ohlcv_1m
+            WHERE symbol = 'TX'
+            ORDER BY timestamp
+        """).df().set_index("timestamp")
+
+        df_day = conn.execute("""
+            SELECT timestamp, open, high, low, close, volume
+            FROM ohlcv_1m
+            WHERE symbol = 'TX'
+              AND CAST(timestamp AS TIME) BETWEEN TIME '08:45:00' AND TIME '13:45:00'
+            ORDER BY timestamp
+        """).df().set_index("timestamp")
+
+        df_bigcost = conn.execute("""
+            WITH vol_ma AS (
+                SELECT timestamp::DATE AS date, timestamp, close, volume,
+                       AVG(volume) OVER (
+                           PARTITION BY timestamp::DATE
+                           ORDER BY timestamp
+                           ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
+                       ) AS vol_20ma
+                FROM ohlcv_1m
+                WHERE symbol = 'TX'
+                  AND timestamp::TIME BETWEEN TIME '08:45:00' AND TIME '13:45:00'
+            ),
+            filtered AS (
+                SELECT date, close, volume FROM vol_ma WHERE volume >= vol_20ma
+            )
+            SELECT date, ROUND(SUM(close * volume) / SUM(volume))::INT AS big_cost
+            FROM filtered GROUP BY date ORDER BY date
+        """).df()
+
+    df_day.columns = ["Open", "High", "Low", "Close", "Volume"]
+
+    # Estimate H-L zones (must run on full history before date filtering)
+    from src.backtest.estimate_hl import compute_estimate_hl_zones
+    df_day = compute_estimate_hl_zones(df_day)
+
+    # 30m 20MA from continuous series (day + night)
+    # Default 30min grid: 8:00, 8:30, 9:00, ... so 8:30–8:59 bar labeled 8:30
+    s30 = df_all["close"].resample("30min").last()
+    ma30_20 = s30.rolling(20, min_periods=20).mean()
+    # shift(1): value at label T reflects the closed bar ending at T-30min (no lookahead)
+    ma30_20_shifted = ma30_20.shift(1)
+    close30_shifted = s30.shift(1)
+    df_day["MA30_20"] = ma30_20_shifted.reindex(df_day.index, method="ffill")
+    df_day["Close30"] = close30_shifted.reindex(df_day.index, method="ffill")
+
+    # BigCost: yesterday (shift 1) and day-before-yesterday (shift 2)
+    df_bigcost["date"] = pd.to_datetime(df_bigcost["date"])
+    df_bigcost = df_bigcost.set_index("date")
+    df_bigcost["BigCost1"] = df_bigcost["big_cost"].shift(1)
+    df_bigcost["BigCost2"] = df_bigcost["big_cost"].shift(2)
+    day_dates = pd.DatetimeIndex(df_day.index).normalize()
+    df_day["BigCost1"] = df_bigcost["BigCost1"].reindex(day_dates).values
+    df_day["BigCost2"] = df_bigcost["BigCost2"].reindex(day_dates).values
 
     if start:
         df_day = df_day[df_day.index >= start]
