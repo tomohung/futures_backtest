@@ -79,9 +79,17 @@ class ORBWithEstHLExitStrategy(EstimateHLExitMixin, Strategy):
                 close30 = float(self.data.Close30[-1])
                 bc1 = float(self.data.BigCost1[-1])
                 bc2 = float(self.data.BigCost2[-1])
+                or_width   = float(self.data.ORWidth[-1])
+                rolling_or = float(self.data.RollingOR[-1])
                 sl_dist = self.sl_ema_fraction * ema_hl
 
                 trend_nan = np.isnan(ma30) or np.isnan(close30)
+
+                # OR width filter: must be 0.5–1.5× rolling average (skip if no warmup)
+                if not np.isnan(rolling_or):
+                    if not (0.5 * rolling_or <= or_width <= 1.5 * rolling_or):
+                        return
+
 
                 if close > self._or_high:
                     trend_ok = trend_nan or (close30 > ma30)

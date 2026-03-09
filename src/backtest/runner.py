@@ -287,6 +287,62 @@ def load_data_for_orb_est_hl(start=None, end=None):
     df_day["MA30_20"] = ma30_20_shifted.reindex(df_day.index, method="ffill")
     df_day["Close30"] = close30_shifted.reindex(df_day.index, method="ffill")
 
+    # Gap: today's first bar open minus yesterday's day-session last close
+    with duckdb.connect(DB_PATH, read_only=True) as conn:
+        df_gap = conn.execute("""
+            SELECT
+                timestamp::DATE AS date,
+                FIRST(open ORDER BY timestamp) AS day_open,
+                LAST(close  ORDER BY timestamp) AS day_close
+            FROM ohlcv_1m
+            WHERE symbol = 'TX'
+              AND timestamp::TIME BETWEEN TIME '08:45:00' AND TIME '13:45:00'
+            GROUP BY 1 ORDER BY 1
+        """).df()
+    df_gap["date"] = pd.to_datetime(df_gap["date"])
+    df_gap = df_gap.set_index("date")
+    df_gap["GapSize"] = df_gap["day_open"] - df_gap["day_close"].shift(1)
+    day_dates = pd.DatetimeIndex(df_day.index).normalize()
+    df_day["GapSize"] = df_gap["GapSize"].reindex(day_dates).values
+
+    # Night session direction: prev-day close vs prev-day night open (15:00 bar)
+    # night_return > 0 → overnight bullish; < 0 → bearish
+    with duckdb.connect(DB_PATH, read_only=True) as conn:
+        df_night = conn.execute("""
+            SELECT
+                timestamp::DATE AS date,
+                FIRST(close ORDER BY timestamp) AS night_open,
+                LAST(close  ORDER BY timestamp) AS night_close
+            FROM ohlcv_1m
+            WHERE symbol = 'TX'
+              AND timestamp::TIME >= TIME '15:00:00'
+            GROUP BY 1 ORDER BY 1
+        """).df()
+    df_night["date"] = pd.to_datetime(df_night["date"])
+    df_night = df_night.set_index("date")
+    # night_return for date D = close of night session that STARTS on D
+    # available the NEXT trading day (shift 1)
+    df_night["NightReturn"] = (df_night["night_close"] - df_night["night_open"]).shift(1)
+    day_dates = pd.DatetimeIndex(df_day.index).normalize()
+    df_day["NightReturn"] = df_night["NightReturn"].reindex(day_dates).values
+
+    # OR width (8:45–8:57) and 20-day rolling average
+    with duckdb.connect(DB_PATH, read_only=True) as conn:
+        df_or = conn.execute("""
+            SELECT timestamp::DATE AS date,
+                   MAX(high) - MIN(low) AS or_width
+            FROM ohlcv_1m
+            WHERE symbol = 'TX'
+              AND timestamp::TIME BETWEEN TIME '08:45:00' AND TIME '08:57:00'
+            GROUP BY 1 ORDER BY 1
+        """).df()
+    df_or["date"] = pd.to_datetime(df_or["date"])
+    df_or = df_or.set_index("date")
+    df_or["RollingOR"] = df_or["or_width"].rolling(20, min_periods=20).mean()
+    day_dates = pd.DatetimeIndex(df_day.index).normalize()
+    df_day["ORWidth"]   = df_or["or_width"].reindex(day_dates).values
+    df_day["RollingOR"] = df_or["RollingOR"].reindex(day_dates).values
+
     # BigCost: yesterday (shift 1) and day-before-yesterday (shift 2)
     df_bigcost["date"] = pd.to_datetime(df_bigcost["date"])
     df_bigcost = df_bigcost.set_index("date")
