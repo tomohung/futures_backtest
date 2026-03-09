@@ -569,7 +569,7 @@ def plot_sr_chart(data, n_days=20):
     W = 0.4
     for i in range(n):
         bull = closes[i] >= opens[i]
-        color = "#26a69a" if bull else "#ef5350"
+        color = "#ef5350" if bull else "#26a69a"
         body_lo = min(opens[i], closes[i])
         body_hi = max(opens[i], closes[i])
         ax.add_patch(mpatches.Rectangle(
@@ -724,7 +724,7 @@ def plot_30m_chart(data, n_days=20):
     nd = len(display_idx)
     for i in range(nd):
         bull = closes_d[i] >= opens_d[i]
-        color = "#26a69a" if bull else "#ef5350"
+        color = "#ef5350" if bull else "#26a69a"
         body_lo = min(opens_d[i], closes_d[i])
         body_hi = max(opens_d[i], closes_d[i])
         ax.add_patch(mpatches.Rectangle(
