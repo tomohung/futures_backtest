@@ -32,6 +32,9 @@ class ORBWithEstHLExitStrategy(EstimateHLExitMixin, Strategy):
     """ORB entry + SatZone / Dow trailing stop exits."""
 
     sl_ema_fraction: float = 0.25
+    adx_min: float = 0.0    # 0 = disabled; e.g. 20 to require ADX > 20
+    long_only: bool = True
+    bigcost_days: int = 2   # lookback window for BigCost filter (1–5)
 
     def init(self):
         self._init_estimate_hl_exit()
@@ -77,8 +80,8 @@ class ORBWithEstHLExitStrategy(EstimateHLExitMixin, Strategy):
             else:
                 ma30    = float(self.data.MA30_20[-1])
                 close30 = float(self.data.Close30[-1])
-                bc1 = float(self.data.BigCost1[-1])
-                bc2 = float(self.data.BigCost2[-1])
+                bc_vals = [float(getattr(self.data, f"BigCost{i}")[-1])
+                           for i in range(1, self.bigcost_days + 1)]
                 or_width   = float(self.data.ORWidth[-1])
                 rolling_or = float(self.data.RollingOR[-1])
                 sl_dist = self.sl_ema_fraction * ema_hl
@@ -90,28 +93,27 @@ class ORBWithEstHLExitStrategy(EstimateHLExitMixin, Strategy):
                     if not (0.5 * rolling_or <= or_width <= 1.5 * rolling_or):
                         return
 
+                # ADX filter
+                if self.adx_min > 0:
+                    adx = float(self.data.DailyADX[-1])
+                    if not np.isnan(adx) and adx < self.adx_min:
+                        return
+
+                valid_bc = [v for v in bc_vals if not np.isnan(v)]
 
                 if close > self._or_high:
                     trend_ok = trend_nan or (close30 > ma30)
-                    # long: compare against the higher of the two recent costs
-                    if np.isnan(bc1) and np.isnan(bc2):
-                        cost_ok = True
-                    else:
-                        cost_ref = max(v for v in (bc1, bc2) if not np.isnan(v))
-                        cost_ok = self._or_high > cost_ref + 0.5 * sl_dist
+                    cost_ok  = (not valid_bc
+                                or self._or_high > max(valid_bc) + 0.5 * sl_dist)
                     if trend_ok and cost_ok:
                         self.buy(size=1)
                         self._sl_price = close - sl_dist
                         self._entered = True
 
-                elif close < self._or_low:
+                elif close < self._or_low and not self.long_only:
                     trend_ok = trend_nan or (close30 < ma30)
-                    # short: compare against the lower of the two recent costs
-                    if np.isnan(bc1) and np.isnan(bc2):
-                        cost_ok = True
-                    else:
-                        cost_ref = min(v for v in (bc1, bc2) if not np.isnan(v))
-                        cost_ok = self._or_low < cost_ref - 0.5 * sl_dist
+                    cost_ok  = (not valid_bc
+                                or self._or_low < min(valid_bc) - 0.5 * sl_dist)
                     if trend_ok and cost_ok:
                         self.sell(size=1)
                         self._sl_price = close + sl_dist

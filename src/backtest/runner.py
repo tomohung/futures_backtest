@@ -343,14 +343,23 @@ def load_data_for_orb_est_hl(start=None, end=None):
     df_day["ORWidth"]   = df_or["or_width"].reindex(day_dates).values
     df_day["RollingOR"] = df_or["RollingOR"].reindex(day_dates).values
 
+    # Daily ADX(14) — synthesise daily OHLCV from day-session bars
+    df_daily = df_day.groupby(df_day.index.normalize()).agg(
+        Open=("Open", "first"), High=("High", "max"),
+        Low=("Low", "min"),   Close=("Close", "last"),
+    )
+    adx_series = _compute_daily_adx(df_daily, period=14)
+    day_dates = pd.DatetimeIndex(df_day.index).normalize()
+    df_day["DailyADX"] = adx_series.reindex(day_dates).values
+
     # BigCost: yesterday (shift 1) and day-before-yesterday (shift 2)
     df_bigcost["date"] = pd.to_datetime(df_bigcost["date"])
     df_bigcost = df_bigcost.set_index("date")
-    df_bigcost["BigCost1"] = df_bigcost["big_cost"].shift(1)
-    df_bigcost["BigCost2"] = df_bigcost["big_cost"].shift(2)
+    for i in range(1, 6):
+        df_bigcost[f"BigCost{i}"] = df_bigcost["big_cost"].shift(i)
     day_dates = pd.DatetimeIndex(df_day.index).normalize()
-    df_day["BigCost1"] = df_bigcost["BigCost1"].reindex(day_dates).values
-    df_day["BigCost2"] = df_bigcost["BigCost2"].reindex(day_dates).values
+    for i in range(1, 6):
+        df_day[f"BigCost{i}"] = df_bigcost[f"BigCost{i}"].reindex(day_dates).values
 
     if start:
         df_day = df_day[df_day.index >= start]

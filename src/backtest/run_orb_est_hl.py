@@ -31,6 +31,12 @@ def main():
     parser.add_argument("--end",   default=None, metavar="YYYY-MM-DD")
     parser.add_argument("--sl-fraction", type=float, default=0.25,
                         help="SL = fraction × EmaHL (default 0.25)")
+    parser.add_argument("--adx-min", type=float, default=0.0,
+                        help="Minimum daily ADX to trade (0 = disabled)")
+    parser.add_argument("--bigcost-days", type=int, default=2,
+                        help="BigCost lookback days 1–5 (default 2)")
+    parser.add_argument("--short", action="store_true",
+                        help="Also take short trades (default: long-only)")
     parser.add_argument("--plot", action="store_true",
                         help="Show backtesting.py chart after run")
     args = parser.parse_args()
@@ -47,7 +53,10 @@ def main():
         trade_on_close=True,
     )
 
-    stats = bt.run(sl_ema_fraction=args.sl_fraction)
+    stats = bt.run(sl_ema_fraction=args.sl_fraction,
+                   adx_min=args.adx_min,
+                   long_only=not args.short,
+                   bigcost_days=args.bigcost_days)
     print_summary(stats)
 
     OUTPUT_DIR.mkdir(exist_ok=True)
