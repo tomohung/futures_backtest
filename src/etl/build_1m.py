@@ -42,8 +42,11 @@ def init_db(conn: duckdb.DuckDBPyConnection) -> None:
 
 
 def get_processed_dates(conn: duckdb.DuckDBPyConnection) -> set:
+    """Return dates that already have day session bars (08:45~13:45) in ohlcv_1m."""
     rows = conn.execute("""
-        SELECT DISTINCT timestamp::date FROM ohlcv_1m WHERE symbol = 'TX'
+        SELECT DISTINCT timestamp::date FROM ohlcv_1m
+        WHERE symbol = 'TX'
+          AND CAST(timestamp AS TIME) BETWEEN TIME '08:45:00' AND TIME '13:45:00'
     """).fetchall()
     return {r[0] for r in rows}
 
