@@ -493,11 +493,15 @@ def get_1h_bars(n_days=20):
                     SUM(volume)                      AS volume
                 FROM ohlcv_1m, bounds
                 WHERE symbol = ?
-                  AND timestamp::DATE BETWEEN start_d AND end_d
                   AND (
-                      timestamp::TIME BETWEEN '08:00:00' AND '13:59:00'
-                      OR timestamp::TIME >= '15:00:00'
-                      OR timestamp::TIME < '05:01:00'
+                      -- 日盤 + 夜盤前半（當日 15:00~23:59）
+                      (timestamp::DATE BETWEEN start_d AND end_d
+                       AND (timestamp::TIME BETWEEN '08:00:00' AND '13:59:00'
+                            OR timestamp::TIME >= '15:00:00'))
+                      OR
+                      -- 夜盤後半：隔日 00:00~05:00（timestamp::DATE = end_d + 1）
+                      (timestamp::DATE = end_d + INTERVAL '1 day'
+                       AND timestamp::TIME < '05:01:00')
                   )
                 GROUP BY ts
             )
@@ -612,8 +616,6 @@ def plot_sr_chart(data, n_days=20):
     ax.set_xticks(tick_pos)
     ax.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8, color="#cccccc")
     ax.set_xlim(-1, n)
-    price_range = highs.max() - lows.min()
-    ax.set_ylim(lows.min() - price_range * 0.05, highs.max() + price_range * 0.1)
     ax.yaxis.set_tick_params(labelcolor="#cccccc")
     ax.set_title(
         f"TX 1H K線 + 支撐壓力（近 {n_days} 日，基準 {ref:,}）",
@@ -644,6 +646,10 @@ def plot_sr_chart(data, n_days=20):
     ax_vp.set_xlabel("Volume", color="#cccccc", fontsize=8)
     ax_vp.set_title("VP", color="#eeeeee", fontsize=10)
     ax_vp.xaxis.set_tick_params(labelcolor="#cccccc", labelsize=7)
+
+    # 在所有繪圖完成後才設定 ylim，避免被 barh 自動縮放覆蓋（sharey=True）
+    price_range = highs.max() - lows.min()
+    ax.set_ylim(lows.min() - price_range * 0.05, highs.max() + price_range * 0.1)
 
     plt.tight_layout()
     out_path = Path(__file__).parents[2] / "output" / "sr_chart.png"
