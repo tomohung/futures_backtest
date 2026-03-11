@@ -71,5 +71,11 @@ Best recommendation: accept Ph4 Hybrid (+5,653 total) or Long-only (+4,509) as f
 - `optimize_phase4_hybrid.py`: strip tp_multiplier before passing to ORBPhase4Strategy
 - `ORBPhase4HybridStrategy` entry block: signals must be inside `if _regime_ok:` scope
 
+## TradingView indicator
+- Output file: `indicators/tradingview/orb_long_tx.pine`
+- Always use `//@version=6`
+- Script type: `indicator` (not `strategy`) — tracks position state manually for reliable signal detection
+- OR% filter: 0.3%–1.0% (relative to day open), guards displayed with gray bgcolor when filtered out
+
 ## Workflow rule (from CLAUDE.md)
 Any new strategy or phase MUST have a spec in specs/strategies/ BEFORE writing code.

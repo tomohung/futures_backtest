@@ -267,6 +267,8 @@ class ORBLongStrategy(Strategy):
     tp_multiplier: float = 1.5      # 做空止盈乘數（long_only=0 時才生效）
     min_rolling_or: float = 0.0     # 滾動 OR 寬度下限濾網（0 = 停用）
     long_adx_min: float = 0.0       # ADX 進場門檻（0 = 停用；實驗結論：無顯著效益）
+    or_pct_min: float = 0.0         # OR% 下限（0 = 停用）；OR% = OR寬度 / 開盤價 × 100
+    or_pct_max: float = 0.0         # OR% 上限（0 = 停用）；建議範圍：0.3–1.0%
 
     def init(self):
         # ── 計算各關鍵時間點 ────────────────────────────────────────────
@@ -359,7 +361,9 @@ class ORBLongStrategy(Strategy):
         """每日重置所有日內狀態。"""
         self.or_high = None
         self.or_low = None
+        self.day_open = None
         self.range_confirmed = False
+        self.or_filter_pass = True  # OR% 濾網：預設通過（未啟用時恆為 True）
         self.long_entered = False
         self.short_entered = False
         self.entry_price = None
@@ -387,6 +391,7 @@ class ORBLongStrategy(Strategy):
             if self.or_high is None:
                 self.or_high = high
                 self.or_low = low
+                self.day_open = self.data.Open[-1]  # 第一根 bar 的開盤價
             else:
                 self.or_high = max(self.or_high, high)
                 self.or_low = min(self.or_low, low)
@@ -395,6 +400,13 @@ class ORBLongStrategy(Strategy):
         # C. 開盤區間確認
         if not self.range_confirmed:
             self.range_confirmed = True
+            # OR% 濾網：OR% = OR寬度 / 開盤價 × 100，與指數水位無關
+            if (self.or_pct_min > 0 or self.or_pct_max > 0) and self.day_open:
+                or_pct = (self.or_high - self.or_low) / self.day_open * 100
+                if self.or_pct_min > 0 and or_pct < self.or_pct_min:
+                    self.or_filter_pass = False
+                if self.or_pct_max > 0 and or_pct > self.or_pct_max:
+                    self.or_filter_pass = False
 
         # D. 進場邏輯（09:30–11:00）
         if self.range_confirmed and self.or_high is not None and bar_time < self._entry_end_time:
@@ -427,8 +439,8 @@ class ORBLongStrategy(Strategy):
                 )
 
                 # ── 做多進場 ────────────────────────────────────────────
-                # 條件：突破 OR 高點 + 趨勢向上 + ADX 達標（若啟用）
-                if close > self.or_high and not self.long_entered and _adx_ok:
+                # 條件：突破 OR 高點 + 趨勢向上 + ADX 達標（若啟用）+ OR% 濾網通過
+                if close > self.or_high and not self.long_entered and _adx_ok and self.or_filter_pass:
                     if ma_val is None or close > ma_val:
                         if self.position.is_short:
                             self.position.close()

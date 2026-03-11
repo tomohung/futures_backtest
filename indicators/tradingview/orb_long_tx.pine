@@ -1,0 +1,226 @@
+// ============================================================
+// ORBLong TX — TradingView Indicator v6
+// 台指期（TAIFEX TX）開盤區間突破：只做多（訊號確認用）
+//
+// 線條顏色說明：
+//   Teal  ── OR High（開盤區間高點 08:45–09:30）
+//   Orange── OR Low （開盤區間低點 08:45–09:30）
+//   Blue  ── TrendMA（10 日連續 K 棒均線，含夜盤）
+//   Green ── TP（止盈線，持倉中顯示）
+//   Red   ── SL（停損線，持倉中顯示）
+//   Pink  ── Trail SL（移動停損線，09:45 後啟動）
+//
+// 底色說明：
+//   黃色  = OR 窗口（08:45–09:30）
+//   藍色  = 進場窗口（09:30–11:00）
+//   紫色  = Trailing 區段（09:45–13:30）
+//   灰色  = OR% 濾網淘汰（當日不進場）
+//
+// 進場訊號：綠色 ▲ IN（K 棒下方）
+// 出場訊號：紅色 ▼ OUT（K 棒上方）
+// ============================================================
+//@version=6
+indicator(
+    title   = "ORBLong TX (Portfolio Best)",
+    overlay = true
+)
+
+// ============================================================
+// Inputs
+// ============================================================
+var string GRP_SL_TP = "停損 / 止盈"
+sl_pct       = input.float(0.004, "停損 % (SL)",      step=0.001, minval=0.001, group=GRP_SL_TP)
+tp_mult      = input.float(1.5,   "止盈 OR 乘數",      step=0.1,   minval=0.5,  group=GRP_SL_TP)
+or_min_width = input.float(20.0,  "OR 寬度下限 (pts)", step=1.0,   minval=1.0,  group=GRP_SL_TP)
+
+var string GRP_OR_FILTER = "OR% 濾網（相對開盤價）"
+use_or_filter  = input.bool(true,  "啟用 OR% 濾網",    group=GRP_OR_FILTER,
+                             tooltip="OR% = OR寬度 / 當日開盤價，與指數水位無關")
+or_pct_min     = input.float(0.3,  "OR% 下限",         step=0.05, minval=0.0,  group=GRP_OR_FILTER,
+                             tooltip="低於此值表示開盤太安靜，假突破多（建議 0.3%）")
+or_pct_max     = input.float(1.0,  "OR% 上限",         step=0.05, minval=0.0,  group=GRP_OR_FILTER,
+                             tooltip="高於此值表示過度波動日，勝率下滑（建議 1.0%）")
+
+var string GRP_TIME = "時間參數"
+or_end_h    = input.int(9,  "OR 結束 時",    minval=8, maxval=12, group=GRP_TIME)
+or_end_m    = input.int(30, "OR 結束 分",    minval=0, maxval=59, group=GRP_TIME)
+entry_end_h = input.int(11, "進場截止 時",   minval=9, maxval=13, group=GRP_TIME)
+entry_end_m = input.int(0,  "進場截止 分",   minval=0, maxval=59, group=GRP_TIME)
+trail_h     = input.int(9,  "Trail 啟動 時", minval=9, maxval=13, group=GRP_TIME)
+trail_m     = input.int(45, "Trail 啟動 分", minval=0, maxval=59, group=GRP_TIME)
+
+var string GRP_MA = "趨勢均線"
+trend_ma_len = input.int(3010, "TrendMA 長度 (bars)", minval=100, step=100, group=GRP_MA,
+                          tooltip="10 日 × 301 bars/日（含夜盤）≈ 3010")
+
+var string GRP_VIZ = "顯示"
+show_or    = input.bool(true, "顯示 OR 高低線",   group=GRP_VIZ)
+show_ma    = input.bool(true, "顯示 TrendMA",     group=GRP_VIZ)
+show_sl_tp = input.bool(true, "顯示 SL/TP/Trail", group=GRP_VIZ)
+show_bg    = input.bool(true, "顯示時段底色",      group=GRP_VIZ)
+
+// ============================================================
+// Time Windows（Asia/Taipei = UTC+8）
+// ============================================================
+t_sess_open  = timestamp("Asia/Taipei", year, month, dayofmonth, 8,           45)
+t_or_end     = timestamp("Asia/Taipei", year, month, dayofmonth, or_end_h,    or_end_m)
+t_entry_end  = timestamp("Asia/Taipei", year, month, dayofmonth, entry_end_h, entry_end_m)
+t_trail_on   = timestamp("Asia/Taipei", year, month, dayofmonth, trail_h,     trail_m)
+t_force_exit = timestamp("Asia/Taipei", year, month, dayofmonth, 13,          30)
+
+in_or_window  = time >= t_sess_open and time <= t_or_end
+in_entry_win  = time >  t_or_end    and time <  t_entry_end
+in_trail_zone = time >= t_trail_on  and time <  t_force_exit
+at_force_exit = (time >= t_force_exit and
+                 time <  timestamp("Asia/Taipei", year, month, dayofmonth, 13, 45))
+
+// ============================================================
+// OR Window Transition Detection
+// ============================================================
+var bool prev_in_or    = false
+entering_or_window = in_or_window     and not prev_in_or
+leaving_or_window  = not in_or_window and prev_in_or
+prev_in_or        := in_or_window
+
+// ============================================================
+// Opening Range（08:45–09:30）
+// ============================================================
+var float or_high   = na
+var float or_low    = na
+var float day_open  = na    // 08:45 第一根 bar 的開盤價
+var bool  or_done   = false
+var float or_pct    = na    // OR寬度 / 開盤價 × 100
+
+if entering_or_window
+    or_high  := na
+    or_low   := na
+    day_open := open        // 當日第一根 bar 的開盤價
+    or_done  := false
+    or_pct   := na
+
+if in_or_window
+    or_high := na(or_high) ? high : math.max(or_high, high)
+    or_low  := na(or_low)  ? low  : math.min(or_low,  low)
+
+if leaving_or_window
+    or_done := true
+    or_pct  := (not na(day_open) and day_open > 0) ? (or_high - or_low) / day_open * 100 : na
+
+// OR% 濾網：OR 結束後判斷當日是否符合條件
+or_filter_pass = (not use_or_filter or
+                  (not na(or_pct) and
+                   or_pct >= or_pct_min and
+                   or_pct <= or_pct_max))
+
+// ============================================================
+// Trend MA（10 日連續 1m，含夜盤）
+// ============================================================
+trend_ma = ta.sma(close, trend_ma_len)
+
+// ============================================================
+// Position State（手動追蹤）
+// ============================================================
+var bool  in_pos     = false
+var bool  day_traded = false
+var float sl_price   = na
+var float tp_price   = na
+var float trail_peak = na
+
+if entering_or_window
+    day_traded := false
+    if in_pos
+        in_pos     := false
+        sl_price   := na
+        tp_price   := na
+        trail_peak := na
+
+// ── 更新 trail_peak
+if in_pos and in_trail_zone
+    trail_peak := math.max(trail_peak, close)
+
+// ── 出場條件
+exit_sl    = in_pos and not in_trail_zone and not na(sl_price)  and close <= sl_price
+exit_tp    = in_pos and not na(tp_price)  and close >= tp_price
+exit_trail = (in_pos and in_trail_zone    and not na(trail_peak) and
+              close <= trail_peak * (1.0 - sl_pct))
+exit_force  = in_pos and at_force_exit
+exit_signal = exit_sl or exit_tp or exit_trail or exit_force
+
+// ── 進場條件（加入 OR% 濾網）
+can_enter   = (not in_pos and not day_traded and
+               or_done and not na(or_high) and in_entry_win and or_filter_pass)
+long_signal = (can_enter and
+               not na(trend_ma) and
+               close > or_high  and
+               close > trend_ma)
+
+// ── 套用狀態變更（出場優先）
+if exit_signal
+    in_pos     := false
+    sl_price   := na
+    tp_price   := na
+    trail_peak := na
+
+if long_signal
+    or_width   = or_high - or_low
+    eff_or     = math.max(or_width, or_min_width)
+    in_pos     := true
+    day_traded := true
+    sl_price   := close - close * sl_pct
+    tp_price   := close + tp_mult * eff_or
+    trail_peak := close
+
+// ============================================================
+// Plots
+// ============================================================
+atr14 = ta.atr(14)
+
+// 濾網淘汰日：OR 結束後 or_filter_pass = false
+day_filtered = or_done and not or_filter_pass and in_entry_win
+
+// ── 時段底色 ──────────────────────────────────────────────
+bgcolor(show_bg and in_or_window  ? color.new(color.yellow, 88) : na, title="OR 視窗（黃）")
+bgcolor(show_bg and in_entry_win and or_filter_pass  ? color.new(color.blue,  92) : na, title="進場視窗（藍）")
+bgcolor(show_bg and day_filtered  ? color.new(color.gray,   88) : na, title="OR%濾網淘汰（灰）")
+bgcolor(show_bg and in_trail_zone ? color.new(color.purple, 94) : na, title="Trail 區段（紫）")
+
+// ── TrendMA（藍線）────────────────────────────────────────
+plot(show_ma ? trend_ma : na, "TrendMA (10d)",
+     color=color.new(color.blue, 20), linewidth=2)
+
+// ── OR 高低線（形成中 + 進場窗口，11:00 後隱藏）─────────
+show_or_line = show_or and not na(or_high) and (in_or_window or (or_done and in_entry_win))
+plot(show_or_line ? or_high : na, "OR High (Teal)",
+     color=color.teal,   linewidth=2, style=plot.style_linebr)
+plot(show_or_line ? or_low  : na, "OR Low  (Orange)",
+     color=color.orange, linewidth=2, style=plot.style_linebr)
+
+// ── SL / TP / Trail（持倉中顯示）─────────────────────────
+plot((show_sl_tp and in_pos) ? sl_price : na, "SL (Red)",
+     color=color.red,   linewidth=2, style=plot.style_linebr)
+plot((show_sl_tp and in_pos) ? tp_price : na, "TP (Green)",
+     color=color.green, linewidth=2, style=plot.style_linebr)
+
+trail_val = (in_pos and in_trail_zone) ? trail_peak * (1.0 - sl_pct) : na
+plot(show_sl_tp ? trail_val : na, "Trail SL (Pink)",
+     color=color.new(color.red, 50), linewidth=1, style=plot.style_linebr)
+
+// ── OR% 標籤（OR 結束時顯示在 OR High 上方）──────────────
+if leaving_or_window and not na(or_pct)
+    pass_str = or_filter_pass ? "✓" : "✗"
+    label_color = or_filter_pass ? color.teal : color.gray
+    label.new(bar_index, or_high, str.format("OR {0,number,#.##}% {1}", or_pct, pass_str),
+              style=label.style_label_down, size=size.small,
+              color=label_color, textcolor=color.white)
+
+// ── 進場箭頭（綠色 ▲ IN，K 棒下方 1.5 ATR）──────────────
+entry_y = long_signal ? low - atr14 * 1.5 : na
+plotshape(entry_y, title="Entry ▲ IN",
+          style=shape.triangleup, location=location.absolute,
+          size=size.small, color=color.lime, text="IN", textcolor=color.lime)
+
+// ── 出場箭頭（紅色 ▼ OUT，K 棒上方 1.5 ATR）─────────────
+exit_y = exit_signal ? high + atr14 * 1.5 : na
+plotshape(exit_y, title="Exit ▼ OUT",
+          style=shape.triangledown, location=location.absolute,
+          size=size.small, color=color.red, text="OUT", textcolor=color.red)
