@@ -168,13 +168,12 @@ class ORBLongWithEstHLExitStrategy(EstimateHLExitMixin, Strategy):
 _A_OR_START    = dtime(8, 45)
 _A_OR_END      = dtime(8, 57)   # EstHL uses 08:45–08:57 opening range
 _A_ENTRY_START = dtime(8, 58)
-_A_ENTRY_END   = dtime(9, 5)
 _A_TRAIL_START = dtime(9, 45)
 _A_FORCE_EXIT  = dtime(13, 30)
 
 
 class EstHLEntryORBLongExitStrategy(Strategy):
-    """EstHL strict entry (08:58–09:05) + ORBLong fixed % SL / OR-width TP exits.
+    """EstHL strict entry (08:58–entry_end_minute) + ORBLong fixed % SL / OR-width TP exits.
 
     Entry filters (all must pass):
       1. Close > or_high (upward breakout of 08:45–08:57 range)
@@ -190,26 +189,30 @@ class EstHLEntryORBLongExitStrategy(Strategy):
       4. Force exit at 13:30
 
     Parameters:
-      sl_pct           : float = 0.004   fixed SL percentage (0.4%)
-      tp_or_multiplier : float = 3.0     TP = entry + N * max(ORWidth, or_min_width)
-      or_min_width     : float = 20.0    minimum effective OR width for TP calc
-      bigcost_days     : int   = 2       BigCost lookback days (1-5)
-      long_only        : bool  = True    disable short trades
+      sl_pct             : float = 0.004   fixed SL percentage (0.4%)
+      tp_or_multiplier   : float = 3.0     TP = entry + N * max(ORWidth, or_min_width)
+      or_min_width       : float = 20.0    minimum effective OR width for TP calc
+      bigcost_days       : int   = 2       BigCost lookback days (1-5)
+      entry_end_minute   : int   = 5       entry window end = 09:HH (minutes past 09:00)
+                                           e.g. 5 → 09:05, 15 → 09:15
+      long_only          : bool  = True    disable short trades
 
-    Backtest results (2021-2026 YTD, long-only, bigcost_days=2, tp_or_multiplier=3.0):
-      2021 : 38 trades  PF 1.54  +612 pts   (vs ORBLong -498, EstHL +404)
-      2022 : 22 trades  PF 1.66  +330 pts   (vs ORBLong +228, EstHL +445)
-      2023 : 31 trades  PF 1.27  +220 pts   (vs ORBLong +302, EstHL +317)
-      2024 : 30 trades  PF 1.85  +864 pts   (vs ORBLong +1037, EstHL +774)
-      2025 : 42 trades  PF 1.38  +714 pts   (vs ORBLong +1823, EstHL +634)
-      2026 :  6 trades  PF 4.77  +872 pts   (vs ORBLong +1723, EstHL +283)
-      All years positive — no losing year across 2021-2026.
+    Backtest results (2021-2026 YTD, long-only, bigcost_days=2, tp_or_multiplier=3.0,
+                      entry_end_minute=15):
+      2021 : 53 trades  PF 1.59  +867 pts   (vs ORBLong -498, EstHL +535)
+      2022 : 37 trades  PF 1.52  +484 pts   (vs ORBLong +228, EstHL +831)
+      2023 : 41 trades  PF 1.37  +389 pts   (vs ORBLong +302, EstHL +542)
+      2024 : 39 trades  PF 1.72  +980 pts   (vs ORBLong +1037, EstHL +1153)
+      2025 : 48 trades  PF 1.25  +523 pts   (vs ORBLong +1823, EstHL +542)
+      2026 : 10 trades  PF 3.30  +978 pts   (vs ORBLong +1723, EstHL +117)
+      Total: +4,221 pts — all years positive, no losing year across 2021-2026.
     """
 
     sl_pct: float = 0.004           # fixed SL percentage (0.4%)
     tp_or_multiplier: float = 3.0   # TP = entry + mult × max(ORWidth, or_min_width)
     or_min_width: float = 20.0      # minimum effective OR width for TP calc
     bigcost_days: int = 2           # BigCost lookback days (1–5)
+    entry_end_minute: int = 15      # entry window end = 09:XX (minutes past 09:00)
     long_only: bool = True
 
     def init(self):
@@ -241,9 +244,10 @@ class EstHLEntryORBLongExitStrategy(Strategy):
             self._or_high = max(self._or_high, float(self.data.High[-1]))
             self._or_low  = min(self._or_low,  float(self.data.Low[-1]))
 
-        # ── Entry window (08:58–09:05) ─────────────────────────────────
+        # ── Entry window (08:58–09:XX) ─────────────────────────────────
+        entry_end = dtime(9, self.entry_end_minute)
         if (not self._entered
-                and _A_ENTRY_START <= cur_time <= _A_ENTRY_END
+                and _A_ENTRY_START <= cur_time <= entry_end
                 and self._or_high != -np.inf):
 
             or_width   = float(self.data.ORWidth[-1])

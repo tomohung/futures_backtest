@@ -44,6 +44,8 @@ def main():
                         help="Direction A: TP = entry + mult × OR width (default 3.0)")
     parser.add_argument("--bigcost-days", type=int, default=2,
                         help="Direction A: BigCost lookback days (default 2)")
+    parser.add_argument("--entry-end", type=int, default=15,
+                        help="Direction A: entry window end minute past 09:00 (default 15 → 09:15)")
     parser.add_argument("--short", action="store_true",
                         help="Also take short trades (default: long-only)")
     parser.add_argument("--plot", action="store_true",
@@ -58,7 +60,8 @@ def main():
         bt = Backtest(df, EstHLEntryORBLongExitStrategy,
                       cash=200_000, commission=0.0, trade_on_close=True)
         stats = bt.run(sl_pct=args.sl_pct, tp_or_multiplier=args.tp_multiplier,
-                       bigcost_days=args.bigcost_days, long_only=not args.short)
+                       bigcost_days=args.bigcost_days, entry_end_minute=args.entry_end,
+                       long_only=not args.short)
         label = "a"
     else:
         bt = Backtest(df, ORBLongWithEstHLExitStrategy,

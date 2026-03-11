@@ -229,7 +229,9 @@ specs/strategies/orb_<名稱>.md     ← 獨立策略實驗（如 orb_filters.md
 - `specs/strategies/2026-03-04-orb_longonly.md` — Long-only：僅做多 + ADX 進場濾網
 - `specs/strategies/2026-03-03-orb_filters.md` — 各種濾網實驗紀錄（Rolling OR、Phase 5/6）
 - `specs/strategies/2026-03-04-orb_phase6.md` — Phase 6：市場機制濾網（ADX / ATR% / 滾動勝率）
-- `specs/strategies/2026-03-09-orb-with-est-high-low-exit.md` — **現行最佳策略**：ORBWithEstHLExitStrategy，entry_end=9:15，EmaHL bfill，2021–2026 總損益 +3720
+- `specs/strategies/2026-03-09-orb-with-est-high-low-exit.md` — ORBWithEstHLExitStrategy，entry_end=9:15，EmaHL bfill，2021–2026 總損益 +3720
+- `specs/strategies/2026-03-09-orb-exit-crossover.md` — Direction A：EstHL進 × ORBLong出，entry_end=9:15，tp×3.0，2021–2026 總損益 +4221
+- `specs/strategies/2026-03-11-portfolio-allocation.md` — **最佳組合**：EstHL + ORBLong 各½口，Sharpe 3.12，固定資金下優於三策略均分
 
 ---
 
