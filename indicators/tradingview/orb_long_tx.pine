@@ -13,7 +13,7 @@
 // 底色說明：
 //   黃色  = OR 窗口（08:45–09:30）
 //   藍色  = 進場窗口（09:30–11:00）
-//   紫色  = Trailing 區段（09:45–13:30）
+//   紫色  = Trailing 區段（09:45–13:00）
 //   灰色  = OR% 濾網淘汰（當日不進場）
 //
 // 進場訊號：綠色 ▲ IN（K 棒下方）
@@ -66,13 +66,13 @@ t_sess_open  = timestamp("Asia/Taipei", year, month, dayofmonth, 8,           45
 t_or_end     = timestamp("Asia/Taipei", year, month, dayofmonth, or_end_h,    or_end_m)
 t_entry_end  = timestamp("Asia/Taipei", year, month, dayofmonth, entry_end_h, entry_end_m)
 t_trail_on   = timestamp("Asia/Taipei", year, month, dayofmonth, trail_h,     trail_m)
-t_force_exit = timestamp("Asia/Taipei", year, month, dayofmonth, 13,          30)
+t_force_exit = timestamp("Asia/Taipei", year, month, dayofmonth, 13,          0)
 
 in_or_window  = time >= t_sess_open and time <= t_or_end
 in_entry_win  = time >  t_or_end    and time <  t_entry_end
 in_trail_zone = time >= t_trail_on  and time <  t_force_exit
 at_force_exit = (time >= t_force_exit and
-                 time <  timestamp("Asia/Taipei", year, month, dayofmonth, 13, 45))
+                 time <  timestamp("Asia/Taipei", year, month, dayofmonth, 13, 15))
 
 // ============================================================
 // OR Window Transition Detection
@@ -224,3 +224,9 @@ exit_y = exit_signal ? high + atr14 * 1.5 : na
 plotshape(exit_y, title="Exit ▼ OUT",
           style=shape.triangledown, location=location.absolute,
           size=size.small, color=color.red, text="OUT", textcolor=color.red)
+
+// ============================================================
+// Alerts
+// ============================================================
+alertcondition(long_signal,  title="ORB Long Entry", message="ORBLong TX — Entry signal ({{ticker}} {{close}})")
+alertcondition(exit_signal,  title="ORB Long Exit",  message="ORBLong TX — Exit signal ({{ticker}} {{close}})")

@@ -253,6 +253,7 @@ class ORBLongStrategy(Strategy):
     range_end_minute: int = 90      # 開盤區間結束（距 08:00 分鐘數）；90 = 09:30
     entry_end_minute: int = 120     # 進場截止（距 08:00 分鐘數）；120 = 11:00
     trail_activate_minute: int = 45 # 啟動移動停損（距 09:00 分鐘數）；45 = 09:45
+    force_exit_minute: int = 300    # 強制出場（距 08:00 分鐘數）；300 = 13:00（sweep 最佳）
 
     # ── 停損／止盈參數 ──────────────────────────────────────────────────
     sl_pct: float = 0.004           # 停損百分比（0.4%）
@@ -281,7 +282,9 @@ class ORBLongStrategy(Strategy):
         self._trail_activate_time = (
             datetime_from_time(time(9, 0)) + timedelta(minutes=self.trail_activate_minute)
         ).time()
-        self._force_exit_time = time(13, 30)  # 13:30 強制出場，不持倉過夜
+        self._force_exit_time = (
+            datetime_from_time(time(8, 0)) + timedelta(minutes=self.force_exit_minute)
+        ).time()
         self._reset_daily()
         self._current_date = None
 
