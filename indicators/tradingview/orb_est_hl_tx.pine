@@ -390,9 +390,9 @@ bgcolor(show_bg and in_trail_zone                     ? color.new(color.purple, 
 
 // ── BigCost 線（黃色虛線，參考用）────────────────────────
 plot(show_bigcost ? bigcost1 : na, "BigCost1（昨日）",
-     color=color.new(color.yellow, 0), linewidth=1, style=plot.style_linebr)
+     color=color.new(color.yellow, 0),  linewidth=2, style=plot.style_linebr)
 plot(show_bigcost ? bigcost2 : na, "BigCost2（前日）",
-     color=color.new(color.yellow, 50), linewidth=1, style=plot.style_linebr)
+     color=color.new(color.orange, 50), linewidth=1, style=plot.style_linebr)
 
 // ── OR 高低線（OR 窗口 + 進場窗口，進場窗口結束後隱藏）──
 show_or_line = show_or and not na(or_high) and (in_or_window or (or_done and in_entry_win))
