@@ -386,14 +386,15 @@ if in_or_window and not na(or_high) and not na(or_low) and not na(day_open) and 
 if leaving_or and not na(or_high) and not na(or_low) and not na(day_open) and day_open > 0
     fin_pct   = (or_high - or_low) / day_open * 100
     day_pass  = or_filter_pass and wd_ok
-    wd_suffix = (skip_thu and dayofweek == dayofweek.thursday ? "(THU)" :
-                 skip_fri and dayofweek == dayofweek.friday   ? "(FRI)" : "")
-    reason    = day_pass ? " ✓" : (" " + wd_suffix + "✗")
-    lbl_color = (day_pass        ? color.teal :
-                 wd_suffix != "" ? color.orange : color.gray)
+    is_thu_skip = skip_thu and dayofweek == dayofweek.thursday
+    is_fri_skip = skip_fri and dayofweek == dayofweek.friday
+    wd_prefix   = is_thu_skip ? "Thu  " : is_fri_skip ? "Fri  " : ""
+    lbl_color   = (day_pass                        ? color.teal :
+                   is_thu_skip or is_fri_skip      ? color.orange : color.gray)
+    reason      = day_pass ? " ✓" : " ✗"
     label.delete(live_lbl)
     label.new(bar_index, or_high,
-        str.format("OR {0,number,#.##}%{1}", fin_pct, reason),
+        str.format("{0}OR {1,number,#.##}%{2}", wd_prefix, fin_pct, reason),
         style=label.style_label_down, size=size.small,
         color=lbl_color, textcolor=color.white)
 
