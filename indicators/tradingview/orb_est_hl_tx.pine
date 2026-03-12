@@ -416,10 +416,10 @@ plot(show_or_line ? or_high : na, "OR High (Teal)",
 plot(show_or_line ? or_low  : na, "OR Low (Orange)",
      color=color.orange, linewidth=2, style=plot.style_linebr)
 
-// ── SatZone Upper（常駐顯示，方便驗算；持倉中加粗）──────
+// ── SatZone Upper（常駐顯示；持倉中不透明，無持倉半透明）
 plot(show_sat ? sat_upper : na, "SatZone Upper (Purple)",
-     color=color.new(color.purple, in_pos ? 0 : 50),
-     linewidth=in_pos ? 2 : 1, style=plot.style_linebr)
+     color=color.new(color.purple, in_pos ? 0 : 60),
+     linewidth=2, style=plot.style_linebr)
 
 // ── SL 線（持倉中顯示）──────────────────────────────────
 plot(show_sl_ln and in_pos ? sl_price : na, "SL (Red)",
