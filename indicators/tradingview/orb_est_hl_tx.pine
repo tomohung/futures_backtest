@@ -197,8 +197,8 @@ if in_session and volume > vol_sma20
 
 // BigCost 濾網：突破點需高於最近 N 日大戶成本 + 0.5 × sl_dist
 // （sl_dist 在此先用 EmaHL 暫估；進場時以實際 ema_hl_d 計算）
-_bc_max = bigcost_days >= 2 and not na(bigcost1) and not na(bigcost2) ? math.max(bigcost1, bigcost2) :
-          not na(bigcost1) ? bigcost1 : float(na)
+_bc_max = (bigcost_days >= 2 and not na(bigcost1) and not na(bigcost2) ? math.max(bigcost1, bigcost2) :
+           not na(bigcost1) ? bigcost1 : float(na))
 
 bigcost_ok(or_h, ema_hl) =>
     not use_bigcost or na(_bc_max) or (or_h > _bc_max + 0.5 * sl_fraction * ema_hl)
@@ -226,7 +226,7 @@ _m   = minute(time, "Asia/Taipei")
 _t   = _h * 60 + _m
 
 // Cumulative time factor for completed slots up to and including current slot
-_slot_cum =
+_slot_cum = (
     _t <  9*60     ? 0.089 :
     _t <  9*60+15  ? 0.203 :
     _t <  9*60+30  ? 0.280 :
@@ -246,7 +246,7 @@ _slot_cum =
     _t < 13*60     ? 0.834 :
     _t < 13*60+15  ? 0.874 :
     _t < 13*60+30  ? 0.926 :
-    1.001
+    1.001)
 
 var float prev_slot_cum = na
 var float est_avg       = na
