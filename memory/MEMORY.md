@@ -60,6 +60,28 @@ All approaches to fix 2021 cost more than they save. 2021 is a statistical regim
 (mean-reverting bull, low vol, narrow OR) that cannot be prospectively identified.
 Best recommendation: accept Ph4 Hybrid (+5,653 total) or Long-only (+4,509) as final.
 
+## ORBLongStrategy current best params (2021–2026)
+```python
+sl_pct           = 0.004
+tp_or_multiplier = 1.5
+or_min_width     = 20.0
+trend_ma_days    = 10
+or_pct_min       = 0.3    # OR% filter sweet spot
+or_pct_max       = 1.0
+force_exit_minute = 300   # 13:00 (sweep best; 13:30 was baseline)
+skip_thursday    = 0      # use thu_or_pct_min instead
+thu_or_pct_min   = 0.7   # skip Thu only when OR%<0.7%
+```
+Results (2021–2026): trades=232, win=58.6%, Sharpe=3.96, total=+5,649
+2021:-51  2022:+351  2023:+490  2024:+672  2025:+2,290  2026:+1,897
+
+## Filter sweep results (ORBLong, 2021–2026)
+- force_exit: 13:00 best (Sharpe 3.23), 13:45 highest pts but worst Sharpe
+- OR% filter 0.3–1.0: Sharpe 1.36→1.54, total +4,615→+5,262, 2021 -499→-123
+- skip_thursday=1: Sharpe 3.23→4.05, total +5,368→+5,580
+- thu_or_pct_min=0.7 (skip Thu OR%<0.7 only): Sharpe 3.96, total +5,649 (best)
+- Thursday win rate only 43%; 0.7–1.0% bucket is 55.6% win rate (+69 total)
+
 ## Data notes
 - Train: 2025-01-01 ~ 2025-12-31
 - OOS: 2026-01-01 ~ 2026-03-02 (~34 trading days)
@@ -75,7 +97,9 @@ Best recommendation: accept Ph4 Hybrid (+5,653 total) or Long-only (+4,509) as f
 - Output file: `indicators/tradingview/orb_long_tx.pine`
 - Always use `//@version=6`
 - Script type: `indicator` (not `strategy`) — tracks position state manually for reliable signal detection
-- OR% filter: 0.3%–1.0% (relative to day open), guards displayed with gray bgcolor when filtered out
+- OR% filter: 0.3%–1.0%; live label during OR window (yellow, updates each bar)
+- OR% label: teal ✓ = pass, gray ✗ = OR% filtered, orange 週四✗ = Thursday filtered
+- Thursday filter: skip_thursday + thu_or_pct_min=0.7 (allow Thu when OR%≥0.7%)
 
 ## Workflow rule (from CLAUDE.md)
 Any new strategy or phase MUST have a spec in specs/strategies/ BEFORE writing code.
