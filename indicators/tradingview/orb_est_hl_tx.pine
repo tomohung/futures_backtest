@@ -1,0 +1,381 @@
+// ============================================================
+// EstHL TX — TradingView Indicator v6
+// 台指期（TAIFEX TX）ORB + Estimated H-L Satisfaction Zone
+//
+// 進場邏輯（08:45–08:57 OR，08:58–09:15 進場窗口，只做多）：
+//   1. Close > OR High（向上突破）
+//   2. 30m 20MA 趨勢向上（Close30 > MA30_20）
+//   3. OR 寬度在 0.5–1.5× RollingOR 內
+//   4. 非週四、非週五（weekday 效應）
+//   ⚠️  BigCost 濾網（or_high > max(BigCost1,2) + 0.5 × sl_dist）
+//       在 Pine 裡難以精確重現，本指標略去。
+//
+// 出場優先順序：
+//   1. 固定停損（SL = entry - sl_fraction × EmaHL）
+//   2. SatZone 兩段式出場
+//        Phase 1：High ≥ SatZoneUpper → 標記觸及
+//        Phase 2：觸及後 Close < 5MA → 出場
+//   3. Dow Theory 追蹤停損（09:45 後，5根K，2根確認）
+//   4. 強制平倉 13:30
+//
+// SatZone 演算法（對應 src/backtest/estimate_hl.py）：
+//   - EmaHL  = 20日 EMA（前一日收盤後的日波動幅度）
+//   - EmaVol = 20日 EMA（前一日成交量）
+//   - 每 15 分鐘 slot 邊界，以當時累計成交量 ÷ 時間因子 推估全日量，
+//     再換算 EstHL，帶入下降懲罰 (×1.414) 的 running average
+//   - SatZoneUpper = session_low + running_avg_EstHL - EmaHL / 8
+//   - 延遲一個 slot（08:45 slot 的資料在 09:00 bar 才廣播）
+//
+// 線條顏色說明：
+//   Teal    ── OR High（開盤區間高點 08:45–08:57）
+//   Orange  ── OR Low （開盤區間低點）
+//   Purple  ── SatZone Upper（滿足區上緣，持倉中顯示）
+//   Red     ── SL（固定停損線）
+//   Pink    ── Dow Theory 追蹤停損（09:45 後）
+//
+// 底色說明：
+//   黃色  = OR 窗口（08:45–08:57）
+//   藍色  = 進場窗口（08:58–09:15，且通過濾網）
+//   紫色  = Trailing 區段（09:45–13:30）
+//   灰色  = 當日濾網淘汰（OR寬度不符或週四/五）
+// ============================================================
+//@version=6
+indicator(
+    title   = "EstHL TX (ORB + SatZone Exit)",
+    overlay = true
+)
+
+// ============================================================
+// Inputs
+// ============================================================
+var string GRP_SL    = "停損"
+var string GRP_OR    = "OR / 進場"
+var string GRP_TREND = "趨勢濾網（30m 20MA）"
+var string GRP_DOW   = "星期濾網"
+var string GRP_VIZ   = "顯示"
+
+sl_fraction  = input.float(0.25, "SL = EmaHL ×",                  step=0.05, minval=0.05, group=GRP_SL,
+                            tooltip="固定停損 = 進場價 - sl_fraction × EmaHL")
+use_or_width = input.bool (true, "啟用 OR 寬度濾網（0.5–1.5× RollingOR）", group=GRP_OR)
+use_trend    = input.bool (true, "啟用 30m 20MA 趨勢濾網",          group=GRP_TREND)
+skip_thu     = input.bool (true, "跳過週四（weekday 效應）",          group=GRP_DOW)
+skip_fri     = input.bool (true, "跳過週五（weekday 效應）",          group=GRP_DOW)
+show_or      = input.bool (true, "OR 高低線",                       group=GRP_VIZ)
+show_sat     = input.bool (true, "SatZone 線（紫色）",               group=GRP_VIZ)
+show_sl_ln   = input.bool (true, "SL 線（紅色）",                    group=GRP_VIZ)
+show_dow_ln  = input.bool (true, "Dow Trail 線（粉紅）",              group=GRP_VIZ)
+show_bg      = input.bool (true, "時段底色",                         group=GRP_VIZ)
+
+// ============================================================
+// Time Windows (Asia/Taipei = UTC+8)
+// ============================================================
+t_or_start    = timestamp("Asia/Taipei", year, month, dayofmonth,  8, 45)
+t_or_end      = timestamp("Asia/Taipei", year, month, dayofmonth,  8, 57)
+t_entry_start = timestamp("Asia/Taipei", year, month, dayofmonth,  8, 58)
+t_entry_end   = timestamp("Asia/Taipei", year, month, dayofmonth,  9, 15)
+t_trail_on    = timestamp("Asia/Taipei", year, month, dayofmonth,  9, 45)
+t_force_exit  = timestamp("Asia/Taipei", year, month, dayofmonth, 13, 30)
+t_day_end     = timestamp("Asia/Taipei", year, month, dayofmonth, 13, 45)
+
+in_or_window  = time >= t_or_start    and time <= t_or_end
+in_entry_win  = time >= t_entry_start and time <= t_entry_end
+in_trail_zone = time >= t_trail_on    and time <  t_force_exit
+at_force_exit = time >= t_force_exit  and time <  t_day_end
+in_session    = time >= t_or_start    and time <  t_day_end
+
+// ============================================================
+// OR Window Transitions
+// ============================================================
+var bool prev_in_or = false
+entering_or = in_or_window     and not prev_in_or
+leaving_or  = not in_or_window and prev_in_or
+prev_in_or := in_or_window
+
+// ============================================================
+// Opening Range (08:45–08:57)
+// ============================================================
+var float or_high  = na
+var float or_low   = na
+var float day_open = na
+var bool  or_done  = false
+
+if entering_or
+    or_high  := na
+    or_low   := na
+    day_open := open
+    or_done  := false
+
+if in_or_window
+    or_high := na(or_high) ? high : math.max(or_high, high)
+    or_low  := na(or_low)  ? low  : math.min(or_low,  low)
+
+if leaving_or
+    or_done := true
+
+// ============================================================
+// Rolling OR (EMA-20 of daily OR widths)
+// ============================================================
+var float rolling_or = na
+
+if leaving_or and not na(or_high) and not na(or_low)
+    w = or_high - or_low
+    rolling_or := na(rolling_or) ? w : rolling_or + (2.0 / 21.0) * (w - rolling_or)
+
+or_width      = or_done and not na(or_high) ? or_high - or_low : float(na)
+or_filter_pass = not use_or_width or na(rolling_or) or
+                 (not na(or_width) and
+                  or_width >= 0.5 * rolling_or and
+                  or_width <= 1.5 * rolling_or)
+
+// ============================================================
+// EmaHL and EmaVol  (daily, prior-day value — no lookahead)
+// ============================================================
+ema_hl_d  = request.security(syminfo.tickerid, "D", ta.ema(high - low, 20)[1])
+ema_vol_d = request.security(syminfo.tickerid, "D", ta.ema(volume,     20)[1])
+
+// ============================================================
+// 30m 20MA Trend Filter
+// ============================================================
+[close30, ma30_20] = request.security(syminfo.tickerid, "30",
+    [close[1], ta.sma(close, 20)[1]],
+    lookahead = barmerge.lookahead_off)
+trend_ok = not use_trend or na(close30) or na(ma30_20) or close30 > ma30_20
+
+// ============================================================
+// Session High/Low and Cumulative Volume (for SatZone)
+// ============================================================
+var float sess_high = na
+var float sess_low  = na
+var float cum_vol   = 0.0
+
+if entering_or
+    sess_high := na
+    sess_low  := na
+    cum_vol   := 0.0
+
+if in_session
+    sess_high := na(sess_high) ? high : math.max(sess_high, high)
+    sess_low  := na(sess_low)  ? low  : math.min(sess_low,  low)
+    cum_vol   += volume
+
+// ============================================================
+// SatZone Computation
+//
+// TIME_FACTORS per 15-min slot (fraction of daily volume expected):
+//   08:45→0.089  09:00→0.114  09:15→0.077  09:30→0.073  09:45→0.061
+//   10:00→0.055  10:15→0.046  10:30→0.042  10:45→0.038  11:00→0.036
+//   11:15→0.031  11:30→0.030  11:45→0.027  12:00→0.028  12:15→0.026
+//   12:30→0.030  12:45→0.031  13:00→0.040  13:15→0.052  13:30→0.075
+//
+// Cumulative factor at slot start (sum of prior slots):
+//   before 09:00 = 0.089
+//   before 09:15 = 0.203  before 09:30 = 0.280  before 09:45 = 0.353
+//   before 10:00 = 0.414  before 10:15 = 0.469  before 10:30 = 0.515
+//   before 10:45 = 0.557  before 11:00 = 0.595  before 11:15 = 0.631
+//   before 11:30 = 0.662  before 11:45 = 0.692  before 12:00 = 0.719
+//   before 12:15 = 0.747  before 12:30 = 0.773  before 12:45 = 0.803
+//   before 13:00 = 0.834  before 13:15 = 0.874  before 13:30 = 0.926
+// ============================================================
+_h   = hour(time,   "Asia/Taipei")
+_m   = minute(time, "Asia/Taipei")
+_t   = _h * 60 + _m
+
+// Cumulative time factor for completed slots up to and including current slot
+_slot_cum =
+    _t <  9*60     ? 0.089 :
+    _t <  9*60+15  ? 0.203 :
+    _t <  9*60+30  ? 0.280 :
+    _t <  9*60+45  ? 0.353 :
+    _t < 10*60     ? 0.414 :
+    _t < 10*60+15  ? 0.469 :
+    _t < 10*60+30  ? 0.515 :
+    _t < 10*60+45  ? 0.557 :
+    _t < 11*60     ? 0.595 :
+    _t < 11*60+15  ? 0.631 :
+    _t < 11*60+30  ? 0.662 :
+    _t < 11*60+45  ? 0.692 :
+    _t < 12*60     ? 0.719 :
+    _t < 12*60+15  ? 0.747 :
+    _t < 12*60+30  ? 0.773 :
+    _t < 12*60+45  ? 0.803 :
+    _t < 13*60     ? 0.834 :
+    _t < 13*60+15  ? 0.874 :
+    _t < 13*60+30  ? 0.926 :
+    1.001
+
+var float prev_slot_cum = na
+var float est_avg       = na
+var int   est_count     = 0
+var float sat_upper     = na   // SatZoneUpper（進場後的目標）
+
+slot_changed = not na(prev_slot_cum) and _slot_cum != prev_slot_cum
+
+if entering_or
+    prev_slot_cum := na
+    est_avg       := na
+    est_count     := 0
+    sat_upper     := na
+
+// Compute new sat_upper at each slot boundary (1-slot delayed)
+if slot_changed and in_session and
+   not na(ema_vol_d) and ema_vol_d > 0 and
+   not na(ema_hl_d)  and
+   not na(prev_slot_cum) and prev_slot_cum > 0 and
+   cum_vol > 0
+    est_vol = cum_vol / prev_slot_cum
+    est_hl  = est_vol / ema_vol_d * ema_hl_d
+
+    if na(est_avg)
+        est_avg   := est_hl
+        est_count := 1
+    else if est_count == 1
+        est_avg   := (est_avg + est_hl) / 2.0
+        est_count := 2
+    else
+        adj        = est_hl < est_avg ? est_hl - (est_avg - est_hl) * 1.414 : est_hl
+        est_count += 1
+        est_avg   := (est_avg * (est_count - 1) + adj) / float(est_count)
+
+    if not na(sess_low) and not na(sess_high)
+        sat_upper := sess_low + est_avg - ema_hl_d / 8.0
+
+prev_slot_cum := _slot_cum
+
+// ============================================================
+// Weekday Filter
+// ============================================================
+wd_ok = not (skip_thu and dayofweek == dayofweek.thursday) and
+        not (skip_fri and dayofweek == dayofweek.friday)
+
+// ============================================================
+// Position State
+// ============================================================
+var bool  in_pos      = false
+var bool  day_traded  = false
+var float sl_price    = na
+var bool  sat_touched = false   // SatZone Phase 1 triggered
+var float dow_stop    = na      // Dow Theory trailing stop
+
+if entering_or
+    day_traded := false
+    if in_pos
+        in_pos      := false
+        sl_price    := na
+        sat_touched := false
+        dow_stop    := na
+
+// Dow Theory trailing stop (active after 09:45)
+// Pivot low: low[2] is min of 5-bar window (low[4]..low[0])
+if in_pos and in_trail_zone and not na(low[4])
+    if low[2] <= low[4] and low[2] <= low[3] and low[2] <= low[1] and low[2] <= low[0]
+        dow_stop := na(dow_stop) ? low[2] : math.max(dow_stop, low[2])
+
+// SatZone Phase 1: zone touched?
+if in_pos and not sat_touched and not na(sat_upper) and high >= sat_upper
+    sat_touched := true
+
+// ============================================================
+// Exit Conditions (priority: SL > SatZone > Dow > Force)
+// ============================================================
+exit_sl    = in_pos and not na(sl_price)  and close <= sl_price
+exit_sat   = in_pos and sat_touched       and close < ta.sma(close, 5)
+exit_dow   = in_pos and in_trail_zone     and not na(dow_stop) and close < dow_stop
+exit_force = in_pos and at_force_exit
+exit_signal = exit_sl or exit_sat or exit_dow or exit_force
+
+// ============================================================
+// Entry Condition
+// ============================================================
+can_enter   = not in_pos and not day_traded and or_done and
+              in_entry_win and or_filter_pass and wd_ok and
+              not na(ema_hl_d)
+long_signal = can_enter and trend_ok and close > or_high
+
+// ============================================================
+// Apply State Changes (exit first, then entry)
+// ============================================================
+if exit_signal
+    in_pos      := false
+    sl_price    := na
+    sat_touched := false
+    dow_stop    := na
+
+if long_signal
+    in_pos      := true
+    day_traded  := true
+    sl_price    := close - sl_fraction * ema_hl_d
+    sat_touched := false
+    dow_stop    := na
+
+// ============================================================
+// OR% Label
+// ============================================================
+var label live_lbl = na
+
+if in_or_window and not na(or_high) and not na(or_low) and not na(day_open) and day_open > 0
+    live_pct = (or_high - or_low) / day_open * 100
+    label.delete(live_lbl)
+    live_lbl := label.new(bar_index, or_high,
+        str.format("OR {0,number,#.##}%…", live_pct),
+        style=label.style_label_down, size=size.small,
+        color=color.new(color.yellow, 40), textcolor=color.black)
+
+if leaving_or and not na(or_high) and not na(or_low) and not na(day_open) and day_open > 0
+    fin_pct   = (or_high - or_low) / day_open * 100
+    day_pass  = or_filter_pass and wd_ok
+    reason    = day_pass ? " ✓" : " ✗"
+    lbl_color = day_pass ? color.teal : color.gray
+    label.delete(live_lbl)
+    label.new(bar_index, or_high,
+        str.format("OR {0,number,#.##}%{1}", fin_pct, reason),
+        style=label.style_label_down, size=size.small,
+        color=lbl_color, textcolor=color.white)
+
+// ============================================================
+// Plots
+// ============================================================
+atr14 = ta.atr(14)
+
+// ── 時段底色 ─────────────────────────────────────────────
+day_filtered = or_done and (not or_filter_pass or not wd_ok)
+bgcolor(show_bg and in_or_window                      ? color.new(color.yellow, 88) : na, title="OR 窗口（黃）")
+bgcolor(show_bg and in_entry_win and not day_filtered ? color.new(color.blue,   92) : na, title="進場窗口（藍）")
+bgcolor(show_bg and in_entry_win and day_filtered     ? color.new(color.gray,   88) : na, title="濾網淘汰（灰）")
+bgcolor(show_bg and in_trail_zone                     ? color.new(color.purple, 94) : na, title="Trail 區段（紫）")
+
+// ── OR 高低線（OR 窗口 + 進場窗口，進場窗口結束後隱藏）──
+show_or_line = show_or and not na(or_high) and (in_or_window or (or_done and in_entry_win))
+plot(show_or_line ? or_high : na, "OR High (Teal)",
+     color=color.teal,   linewidth=2, style=plot.style_linebr)
+plot(show_or_line ? or_low  : na, "OR Low (Orange)",
+     color=color.orange, linewidth=2, style=plot.style_linebr)
+
+// ── SatZone Upper（持倉中顯示，整日延伸）─────────────────
+plot(show_sat and in_pos ? sat_upper : na, "SatZone Upper (Purple)",
+     color=color.new(color.purple, 0), linewidth=2, style=plot.style_linebr)
+
+// ── SL 線（持倉中顯示）──────────────────────────────────
+plot(show_sl_ln and in_pos ? sl_price : na, "SL (Red)",
+     color=color.red, linewidth=2, style=plot.style_linebr)
+
+// ── Dow Theory 追蹤停損（09:45 後，持倉中顯示）──────────
+plot(show_dow_ln and in_pos and in_trail_zone ? dow_stop : na, "Dow Trail (Pink)",
+     color=color.new(color.red, 50), linewidth=1, style=plot.style_linebr)
+
+// ── 進場箭頭（綠色 ▲ IN）────────────────────────────────
+plotshape(long_signal ? low - atr14 * 1.5 : na,
+          title="Entry ▲ IN", style=shape.triangleup,
+          location=location.absolute, size=size.small,
+          color=color.lime, text="IN", textcolor=color.lime)
+
+// ── 出場箭頭（紅色 ▼ OUT）───────────────────────────────
+plotshape(exit_signal ? high + atr14 * 1.5 : na,
+          title="Exit ▼ OUT", style=shape.triangledown,
+          location=location.absolute, size=size.small,
+          color=color.red, text="OUT", textcolor=color.red)
+
+// ============================================================
+// Alerts
+// ============================================================
+alertcondition(long_signal, title="EstHL Entry", message="EstHL TX — Entry ({{ticker}} {{close}})")
+alertcondition(exit_signal, title="EstHL Exit",  message="EstHL TX — Exit ({{ticker}} {{close}})")
