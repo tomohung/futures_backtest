@@ -63,8 +63,6 @@ class EstimateHLExitMixin:
         self._close_buffer: deque = deque(maxlen=5)
         self._target_upper: float | None = None
         self._target_lower: float | None = None
-        self._day_sat_zone_uppers: set = set()
-        self._day_sat_zone_lowers: set = set()
 
     # ------------------------------------------------------------------
     # Per-bar update (call this every bar from next())
@@ -83,14 +81,6 @@ class EstimateHLExitMixin:
             self._reset_estimate_hl_exit()
             self._hl_prev_date = cur_date
 
-        # Accumulate sat-zone values seen today
-        sat_upper = self.data.SatZoneUpper[-1]
-        sat_lower = self.data.SatZoneLower[-1]
-        if not np.isnan(sat_upper):
-            self._day_sat_zone_uppers.add(float(sat_upper))
-        if not np.isnan(sat_lower):
-            self._day_sat_zone_lowers.add(float(sat_lower))
-
         # Rolling close buffer (max 5)
         self._close_buffer.append(float(self.data.Close[-1]))
 
@@ -99,20 +89,26 @@ class EstimateHLExitMixin:
     # ------------------------------------------------------------------
 
     def _update_long_target(self) -> None:
-        """Pick the lowest SatZoneUpper that is still above current close."""
+        """Use the current bar's SatZoneUpper as the target (if above close)."""
         if self._hl_zone_touched:
             return  # keep the target fixed once touched
-        price = float(self.data.Close[-1])
-        candidates = [z for z in self._day_sat_zone_uppers if z > price]
-        self._target_upper = min(candidates) if candidates else None
+        sat_upper = float(self.data.SatZoneUpper[-1])
+        if np.isnan(sat_upper):
+            self._target_upper = None
+        else:
+            price = float(self.data.Close[-1])
+            self._target_upper = sat_upper if sat_upper > price else None
 
     def _update_short_target(self) -> None:
-        """Pick the highest SatZoneLower that is still below current close."""
+        """Use the current bar's SatZoneLower as the target (if below close)."""
         if self._hl_zone_touched:
             return
-        price = float(self.data.Close[-1])
-        candidates = [z for z in self._day_sat_zone_lowers if z < price]
-        self._target_lower = max(candidates) if candidates else None
+        sat_lower = float(self.data.SatZoneLower[-1])
+        if np.isnan(sat_lower):
+            self._target_lower = None
+        else:
+            price = float(self.data.Close[-1])
+            self._target_lower = sat_lower if sat_lower < price else None
 
     # ------------------------------------------------------------------
     # 5-bar MA helper
