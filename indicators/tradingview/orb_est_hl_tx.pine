@@ -430,17 +430,17 @@ plot(show_sl_ln and in_pos ? sl_price : na, "SL (Red)",
 plot(show_dow_ln and in_pos and in_trail_zone ? dow_stop : na, "Dow Trail (Pink)",
      color=color.new(color.red, 50), linewidth=1, style=plot.style_circles)
 
-// ── 進場箭頭（綠色 ▲ IN）────────────────────────────────
+// ── 進場箭頭（紅色 ▲ IN）────────────────────────────────
 plotshape(long_signal,
           title="Entry ▲ IN", style=shape.triangleup,
           location=location.belowbar, size=size.small,
-          color=color.lime, text="IN", textcolor=color.lime)
+          color=color.red, text="IN", textcolor=color.red)
 
-// ── 出場箭頭（紅色 ▼ OUT）───────────────────────────────
+// ── 出場箭頭（綠色 ▼ OUT）───────────────────────────────
 plotshape(exit_signal,
           title="Exit ▼ OUT", style=shape.triangledown,
           location=location.abovebar, size=size.small,
-          color=color.red, text="OUT", textcolor=color.red)
+          color=color.lime, text="OUT", textcolor=color.lime)
 
 // ============================================================
 // Alerts
