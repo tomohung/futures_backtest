@@ -219,8 +219,20 @@ trail_val = (in_pos and in_trail_zone) ? trail_peak * (1.0 - sl_pct) : na
 plot(show_sl_tp ? trail_val : na, "Trail SL (Pink)",
      color=color.new(color.red, 50), linewidth=1, style=plot.style_linebr)
 
-// ── OR% 標籤（OR 結束時顯示在 OR High 上方）──────────────
+// ── OR% 標籤 ─────────────────────────────────────────────
+// 即時標籤：OR 窗口內每根 bar 更新（顯示目前累計 OR%）
+var label live_or_label = na
+if in_or_window and not na(or_high) and not na(day_open) and day_open > 0
+    live_pct = (or_high - or_low) / day_open * 100
+    label.delete(live_or_label)
+    live_or_label := label.new(bar_index, or_high,
+                               str.format("OR {0,number,#.##}%…", live_pct),
+                               style=label.style_label_down, size=size.small,
+                               color=color.new(color.yellow, 40), textcolor=color.black)
+
+// 定案標籤：OR 結束後顯示最終 OR% + 過濾結果
 if leaving_or_window and not na(or_pct)
+    label.delete(live_or_label)   // 移除即時標籤，換成定案標籤
     thu_filtered = skip_thursday and _is_thu and not _thu_or_ok
     day_ok = or_filter_pass and not thu_filtered
     reason = thu_filtered ? " 週四✗" : (or_filter_pass ? " ✓" : " ✗")
