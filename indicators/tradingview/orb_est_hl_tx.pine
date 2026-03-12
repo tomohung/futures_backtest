@@ -397,8 +397,6 @@ if leaving_or and not na(or_high) and not na(or_low) and not na(day_open) and da
 // ============================================================
 // Plots
 // ============================================================
-atr14 = ta.atr(14)
-
 // ── 時段底色 ─────────────────────────────────────────────
 day_filtered = or_done and (not or_filter_pass or not wd_ok)
 bgcolor(show_bg and in_or_window                      ? color.new(color.yellow, 88) : na, title="OR 窗口（黃）")
@@ -433,15 +431,15 @@ plot(show_dow_ln and in_pos and in_trail_zone ? dow_stop : na, "Dow Trail (Pink)
      color=color.new(color.red, 50), linewidth=1, style=plot.style_circles)
 
 // ── 進場箭頭（綠色 ▲ IN）────────────────────────────────
-plotshape(long_signal ? low - atr14 * 1.5 : na,
+plotshape(long_signal,
           title="Entry ▲ IN", style=shape.triangleup,
-          location=location.absolute, size=size.small,
+          location=location.belowbar, size=size.small,
           color=color.lime, text="IN", textcolor=color.lime)
 
 // ── 出場箭頭（紅色 ▼ OUT）───────────────────────────────
-plotshape(exit_signal ? high + atr14 * 1.5 : na,
+plotshape(exit_signal,
           title="Exit ▼ OUT", style=shape.triangledown,
-          location=location.absolute, size=size.small,
+          location=location.abovebar, size=size.small,
           color=color.red, text="OUT", textcolor=color.red)
 
 // ============================================================
