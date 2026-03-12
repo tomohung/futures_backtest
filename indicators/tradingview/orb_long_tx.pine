@@ -49,6 +49,10 @@ entry_end_m = input.int(0,  "進場截止 分",   minval=0, maxval=59, group=GRP
 trail_h     = input.int(9,  "Trail 啟動 時", minval=9, maxval=13, group=GRP_TIME)
 trail_m     = input.int(45, "Trail 啟動 分", minval=0, maxval=59, group=GRP_TIME)
 
+var string GRP_DOW = "星期濾網"
+skip_thursday = input.bool(true, "跳過週四（結算後第一天，勝率僅 43%）", group=GRP_DOW,
+                            tooltip="週四為台指期結算後首日，假突破頻繁，建議跳過")
+
 var string GRP_MA = "趨勢均線"
 trend_ma_len = input.int(3010, "TrendMA 長度 (bars)", minval=100, step=100, group=GRP_MA,
                           tooltip="10 日 × 301 bars/日（含夜盤）≈ 3010")
@@ -146,9 +150,10 @@ exit_trail = (in_pos and in_trail_zone    and not na(trail_peak) and
 exit_force  = in_pos and at_force_exit
 exit_signal = exit_sl or exit_tp or exit_trail or exit_force
 
-// ── 進場條件（加入 OR% 濾網）
+// ── 進場條件（加入 OR% 濾網 + 星期濾網）
+dow_ok      = not (skip_thursday and dayofweek == dayofweek.thursday)
 can_enter   = (not in_pos and not day_traded and
-               or_done and not na(or_high) and in_entry_win and or_filter_pass)
+               or_done and not na(or_high) and in_entry_win and or_filter_pass and dow_ok)
 long_signal = (can_enter and
                not na(trend_ma) and
                close > or_high  and
