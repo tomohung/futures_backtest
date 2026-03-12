@@ -339,8 +339,9 @@ if in_pos and not sat_touched and not na(sat_upper) and high >= sat_upper
 // ============================================================
 // Exit Conditions (priority: SL > SatZone > Dow > Force)
 // ============================================================
+ma5 = ta.sma(close, 5)   // must be computed globally (Pine requires consistent execution)
 exit_sl    = in_pos and not na(sl_price)  and close <= sl_price
-exit_sat   = in_pos and sat_touched       and close < ta.sma(close, 5)
+exit_sat   = in_pos and sat_touched       and close < ma5
 exit_dow   = in_pos and in_trail_zone     and not na(dow_stop) and close < dow_stop
 exit_force = in_pos and at_force_exit
 exit_signal = exit_sl or exit_sat or exit_dow or exit_force
@@ -361,7 +362,6 @@ if exit_signal
     sl_price    := na
     sat_touched := false
     dow_stop    := na
-    trail_bars  := 0
 
 if long_signal
     in_pos      := true
