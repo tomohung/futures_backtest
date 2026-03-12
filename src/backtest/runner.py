@@ -385,6 +385,132 @@ def load_data_for_orb_est_hl(start=None, end=None):
     return df_day
 
 
+def load_data_for_reversal(start=None, end=None):
+    """Load day-session data with reversal strategy indicators.
+
+    Columns added (on top of standard OHLCV):
+        EmaHL, EmaVol, SatZone*, EstHL*, EstHighLevel, EstLowLevel
+            — from compute_estimate_hl_zones()
+        MA30_20, Close30  — 30m 20MA and last close (continuous day+night), shift(1)
+        BigCost1, BigCost2 — yesterday / day-before institutional VWAP
+        BB_Upper, BB_Lower, BB_Middle — 1m Bollinger Bands (period=15, 2σ), shift(1)
+        VolMA20   — 1m volume 20-period MA, shift(1)
+        MA5_1m    — 1m close 5-period SMA, shift(1)
+        CCD_5m    — 5m cumulative candle delta (per day, reset daily), mapped to 1m, shift(1)
+    """
+    import pandas as pd
+    from src.backtest.estimate_hl import compute_estimate_hl_zones
+    from src.indicators.volume import cumulative_candle_delta
+
+    with duckdb.connect(DB_PATH, read_only=True) as conn:
+        df_all = conn.execute("""
+            SELECT timestamp, close FROM ohlcv_1m
+            WHERE symbol = 'TX'
+            ORDER BY timestamp
+        """).df().set_index("timestamp")
+
+        df_day = conn.execute("""
+            SELECT timestamp, open, high, low, close, volume
+            FROM ohlcv_1m
+            WHERE symbol = 'TX'
+              AND CAST(timestamp AS TIME) BETWEEN TIME '08:45:00' AND TIME '13:45:00'
+            ORDER BY timestamp
+        """).df().set_index("timestamp")
+
+        df_bigcost = conn.execute("""
+            WITH vol_ma AS (
+                SELECT timestamp::DATE AS date, timestamp, close, volume,
+                       AVG(volume) OVER (
+                           PARTITION BY timestamp::DATE
+                           ORDER BY timestamp
+                           ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
+                       ) AS vol_20ma
+                FROM ohlcv_1m
+                WHERE symbol = 'TX'
+                  AND timestamp::TIME BETWEEN TIME '08:45:00' AND TIME '13:45:00'
+            ),
+            filtered AS (
+                SELECT date, close, volume FROM vol_ma WHERE volume >= vol_20ma
+            )
+            SELECT date, ROUND(SUM(close * volume) / SUM(volume))::INT AS big_cost
+            FROM filtered GROUP BY date ORDER BY date
+        """).df()
+
+    df_day.columns = ["Open", "High", "Low", "Close", "Volume"]
+
+    # EstHL zones (must run on full history before date filtering)
+    df_day = compute_estimate_hl_zones(df_day)
+
+    # 30m 20MA from continuous series (day + night), shift(1) — no lookahead
+    # dropna() before rolling: the resample creates NaN bars during the 05:00–08:30
+    # closed-market gap; keeping them would prevent rolling(20) from producing values.
+    s30 = df_all["close"].resample("30min").last()
+    s30_clean = s30.dropna()
+    ma30_20 = s30_clean.rolling(20, min_periods=20).mean()
+    df_day["MA30_20"]      = ma30_20.shift(1).reindex(df_day.index, method="ffill")
+    df_day["MA30_20_Prev"] = ma30_20.shift(2).reindex(df_day.index, method="ffill")
+    df_day["Close30"]      = s30_clean.shift(1).reindex(df_day.index, method="ffill")
+
+    # 5m 120MA — same time span as 30m 20MA but updates every 5 minutes
+    # Use day-session only (08:45–13:45) so overnight data doesn't distort direction
+    s5_day = df_day["Close"].resample("5min").last().dropna()
+    ma5m_120 = s5_day.rolling(120, min_periods=120).mean()
+    df_day["MA5m_120"]      = ma5m_120.shift(1).reindex(df_day.index, method="ffill")
+    df_day["MA5m_120_Prev"] = ma5m_120.shift(2).reindex(df_day.index, method="ffill")
+
+    # BigCost1 (yesterday) and BigCost2 (day-before)
+    df_bigcost["date"] = pd.to_datetime(df_bigcost["date"])
+    df_bigcost = df_bigcost.set_index("date")
+    for i in range(1, 3):
+        df_bigcost[f"BigCost{i}"] = df_bigcost["big_cost"].shift(i)
+    day_dates = pd.DatetimeIndex(df_day.index).normalize()
+    for i in range(1, 3):
+        df_day[f"BigCost{i}"] = df_bigcost[f"BigCost{i}"].reindex(day_dates).values
+
+    # Bollinger Bands on 1m close (period=15, 2σ), shift(1) — no lookahead
+    close_roll = df_day["Close"].rolling(15)
+    bb_mid = close_roll.mean()
+    bb_std = close_roll.std()
+    df_day["BB_Middle"] = bb_mid.shift(1)
+    df_day["BB_Upper"]  = (bb_mid + 2.0 * bb_std).shift(1)
+    df_day["BB_Lower"]  = (bb_mid - 2.0 * bb_std).shift(1)
+
+    # Volume 20MA on 1m, shift(1)
+    df_day["VolMA20"] = df_day["Volume"].rolling(20).mean().shift(1)
+
+    # 1m 5-period SMA, shift(1)
+    df_day["MA5_1m"] = df_day["Close"].rolling(5).mean().shift(1)
+
+    # CCD on 5m bars, reset per day, mapped back to 1m via ffill, shift(1)
+    ccd_chunks = []
+    for _date, day_df in df_day.groupby(df_day.index.normalize()):
+        s5 = day_df[["Open", "Close", "Volume"]].resample("5min").agg(
+            {"Open": "first", "Close": "last", "Volume": "sum"}
+        ).dropna(subset=["Open", "Close"])
+        if len(s5) == 0:
+            chunk = pd.Series(np.nan, index=day_df.index, name="CCD_5m")
+        else:
+            ccd = cumulative_candle_delta(s5["Open"], s5["Close"], s5["Volume"])
+            chunk = ccd.shift(1).reindex(day_df.index, method="ffill").rename("CCD_5m")
+        ccd_chunks.append(chunk)
+    df_day["CCD_5m"] = pd.concat(ccd_chunks)
+
+    # Back-fill EmaHL-related columns within each day (no lookahead)
+    _hl_cols = ["EmaHL", "EmaVol", "SatZoneUpper", "SatZoneLower",
+                "EstHL", "EstHighLevel", "EstLowLevel"]
+    for col in _hl_cols:
+        df_day[col] = df_day.groupby(df_day.index.normalize())[col].transform(
+            lambda s: s.bfill()
+        )
+
+    if start:
+        df_day = df_day[df_day.index >= start]
+    if end:
+        df_day = df_day[df_day.index <= end]
+
+    return df_day
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run ORB backtest on TX futures",
