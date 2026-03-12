@@ -55,8 +55,10 @@ trail_h     = input.int(9,  "Trail 啟動 時", minval=9, maxval=13, group=GRP_T
 trail_m     = input.int(45, "Trail 啟動 分", minval=0, maxval=59, group=GRP_TIME)
 
 var string GRP_DOW = "星期濾網"
-skip_thursday = input.bool(true, "跳過週四（結算後第一天，勝率僅 43%）", group=GRP_DOW,
-                            tooltip="週四為台指期結算後首日，假突破頻繁，建議跳過")
+skip_thursday  = input.bool(true,  "跳過週四（OR% 不足時）", group=GRP_DOW,
+                             tooltip="週四為台指期結算後首日，假突破頻繁；搭配下方 OR% 門檻使用")
+thu_or_pct_min = input.float(0.7,  "週四最低 OR%（低於此值跳過）", step=0.05, minval=0.0, group=GRP_DOW,
+                             tooltip="0 = 週四全跳過；0.7 = OR%≥0.7% 的週四仍可進場（建議值）")
 
 var string GRP_MA = "趨勢均線"
 trend_ma_len = input.int(3010, "TrendMA 長度 (bars)", minval=100, step=100, group=GRP_MA,
@@ -156,7 +158,9 @@ exit_force  = in_pos and at_force_exit
 exit_signal = exit_sl or exit_tp or exit_trail or exit_force
 
 // ── 進場條件（加入 OR% 濾網 + 星期濾網）
-dow_ok      = not (skip_thursday and dayofweek == dayofweek.thursday)
+_is_thu     = dayofweek == dayofweek.thursday
+_thu_or_ok  = (not _is_thu) or (thu_or_pct_min == 0.0) or (not na(or_pct) and or_pct >= thu_or_pct_min)
+dow_ok      = not (skip_thursday and _is_thu and not _thu_or_ok)
 can_enter   = (not in_pos and not day_traded and
                or_done and not na(or_high) and in_entry_win and or_filter_pass and dow_ok)
 long_signal = (can_enter and
@@ -189,7 +193,6 @@ atr14 = ta.atr(14)
 day_filtered = or_done and not or_filter_pass and in_entry_win
 
 // ── 時段底色 ──────────────────────────────────────────────
-is_thursday = dayofweek == dayofweek.thursday
 bgcolor(show_bg and in_or_window  ? color.new(color.yellow, 88) : na, title="OR 視窗（黃）")
 bgcolor(show_bg and in_entry_win and or_filter_pass  ? color.new(color.blue,  92) : na, title="進場視窗（藍）")
 bgcolor(show_bg and day_filtered  ? color.new(color.gray,   88) : na, title="OR%濾網淘汰（灰）")
@@ -218,7 +221,7 @@ plot(show_sl_tp ? trail_val : na, "Trail SL (Pink)",
 
 // ── OR% 標籤（OR 結束時顯示在 OR High 上方）──────────────
 if leaving_or_window and not na(or_pct)
-    thu_filtered = skip_thursday and is_thursday
+    thu_filtered = skip_thursday and _is_thu and not _thu_or_ok
     day_ok = or_filter_pass and not thu_filtered
     reason = thu_filtered ? " 週四✗" : (or_filter_pass ? " ✓" : " ✗")
     label_color = day_ok ? color.teal : (thu_filtered ? color.orange : color.gray)
