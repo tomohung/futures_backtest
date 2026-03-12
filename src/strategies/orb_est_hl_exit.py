@@ -81,8 +81,8 @@ class ORBWithEstHLExitStrategy(EstimateHLExitMixin, Strategy):
         self._or_low: float = np.inf
         self._entered: bool = False
         self._sl_price: float | None = None
-        self._low_buf: deque = deque(maxlen=5)
-        self._high_buf: deque = deque(maxlen=5)
+        self._low_buf: deque = deque(maxlen=11)   # 5L + center + 5R = pivotlow(5,5)
+        self._high_buf: deque = deque(maxlen=11)
         self._dow_trail_stop: float | None = None
 
     def next(self):
@@ -185,23 +185,24 @@ class ORBWithEstHLExitStrategy(EstimateHLExitMixin, Strategy):
         if cur_time >= _TRAIL_START:
             if self.position.is_long:
                 self._low_buf.append(float(self.data.Low[-1]))
-                if len(self._low_buf) == 5:
+                if len(self._low_buf) == 11:
                     lows = list(self._low_buf)
-                    # bar at index 2 (i-2) is confirmed pivot low if it's min of all 5
-                    if lows[2] == min(lows):
-                        if self._dow_trail_stop is None or lows[2] > self._dow_trail_stop:
-                            self._dow_trail_stop = lows[2]
+                    # center bar (index 5) is a pivot low if it's min of all 11 — pivotlow(5,5)
+                    if lows[5] == min(lows):
+                        if self._dow_trail_stop is None or lows[5] > self._dow_trail_stop:
+                            self._dow_trail_stop = lows[5]
                 if self._dow_trail_stop is not None and close < self._dow_trail_stop:
                     self.position.close()
                     return
 
             elif self.position.is_short:
                 self._high_buf.append(float(self.data.High[-1]))
-                if len(self._high_buf) == 5:
+                if len(self._high_buf) == 11:
                     highs = list(self._high_buf)
-                    if highs[2] == max(highs):
-                        if self._dow_trail_stop is None or highs[2] < self._dow_trail_stop:
-                            self._dow_trail_stop = highs[2]
+                    # center bar (index 5) is a pivot high if it's max of all 11 — pivothigh(5,5)
+                    if highs[5] == max(highs):
+                        if self._dow_trail_stop is None or highs[5] < self._dow_trail_stop:
+                            self._dow_trail_stop = highs[5]
                 if self._dow_trail_stop is not None and close > self._dow_trail_stop:
                     self.position.close()
                     return

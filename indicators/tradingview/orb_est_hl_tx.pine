@@ -16,7 +16,7 @@
 //   2. SatZone 兩段式出場
 //        Phase 1：High ≥ SatZoneUpper → 標記觸及
 //        Phase 2：觸及後 Close < 5MA → 出場
-//   3. Dow Theory 追蹤停損（09:45 後，5根K，2根確認）
+//   3. Dow Theory 追蹤停損（09:45 後，ta.pivotlow(5,5)，確認後 Close < 停損 → 出場）
 //   4. 強制平倉 13:30
 //
 // SatZone 演算法（對應 src/backtest/estimate_hl.py）：
@@ -325,10 +325,12 @@ if entering_or
         dow_stop    := na
 
 // Dow Theory trailing stop (active after 09:45)
-// Pivot low: low[2] is min of 5-bar window (low[4]..low[0])
-if in_pos and in_trail_zone and not na(low[4])
-    if low[2] <= low[4] and low[2] <= low[3] and low[2] <= low[1] and low[2] <= low[0]
-        dow_stop := na(dow_stop) ? low[2] : math.max(dow_stop, low[2])
+// Uses ta.pivotlow(low, 5, 5): pivot confirmed when center bar is min of 5L+5R window.
+// Mirrors Python pivotlow(5,5): deque maxlen=11, lows[5] == min(lows).
+pivot_low = ta.pivotlow(low, 5, 5)
+
+if in_pos and in_trail_zone and not na(pivot_low)
+    dow_stop := na(dow_stop) ? pivot_low : math.max(dow_stop, pivot_low)
 
 // SatZone Phase 1: zone touched?
 if in_pos and not sat_touched and not na(sat_upper) and high >= sat_upper
@@ -359,6 +361,7 @@ if exit_signal
     sl_price    := na
     sat_touched := false
     dow_stop    := na
+    trail_bars  := 0
 
 if long_signal
     in_pos      := true

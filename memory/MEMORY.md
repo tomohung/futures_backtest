@@ -101,5 +101,15 @@ Results (2021–2026): trades=232, win=58.6%, Sharpe=3.96, total=+5,649
 - OR% label: teal ✓ = pass, gray ✗ = OR% filtered, orange 週四✗ = Thursday filtered
 - Thursday filter: skip_thursday + thu_or_pct_min=0.7 (allow Thu when OR%≥0.7%)
 
+## Pine Script v6 syntax rules (CRITICAL — violations cause compile errors)
+- **Multiline expressions MUST be wrapped in parentheses** — no implicit line continuation
+  - ✅ `x = (\n  a and\n  b)`
+  - ❌ `x = a and\n  b`  ← "end of line without line continuation"
+- This applies to: ternary chains, boolean `and`/`or`, arithmetic across lines
+- Every multiline assignment needs `= (` to open and `)` to close
+- **`plot()` arguments `linewidth` and `style` must be constants** — cannot use series/conditional values
+  - ✅ vary `color` with `color.new(c, in_pos ? 0 : 60)` (series transparency is allowed)
+  - ❌ `linewidth = in_pos ? 2 : 1`  ← "series int" not accepted
+
 ## Workflow rule (from CLAUDE.md)
 Any new strategy or phase MUST have a spec in specs/strategies/ BEFORE writing code.
