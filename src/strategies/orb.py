@@ -270,6 +270,7 @@ class ORBLongStrategy(Strategy):
     long_adx_min: float = 0.0       # ADX 進場門檻（0 = 停用；實驗結論：無顯著效益）
     or_pct_min: float = 0.0         # OR% 下限（0 = 停用）；OR% = OR寬度 / 開盤價 × 100
     or_pct_max: float = 0.0         # OR% 上限（0 = 停用）；建議範圍：0.3–1.0%
+    skip_thursday: int = 0          # 1 = 週四不進場（weekday 效應；Sharpe 3.23→4.05）
 
     def init(self):
         # ── 計算各關鍵時間點 ────────────────────────────────────────────
@@ -442,8 +443,9 @@ class ORBLongStrategy(Strategy):
                 )
 
                 # ── 做多進場 ────────────────────────────────────────────
-                # 條件：突破 OR 高點 + 趨勢向上 + ADX 達標（若啟用）+ OR% 濾網通過
-                if close > self.or_high and not self.long_entered and _adx_ok and self.or_filter_pass:
+                # 條件：突破 OR 高點 + 趨勢向上 + ADX 達標 + OR% 濾網 + 非週四（若啟用）
+                _dow_ok = not (self.skip_thursday and bar_date.weekday() == 3)
+                if close > self.or_high and not self.long_entered and _adx_ok and self.or_filter_pass and _dow_ok:
                     if ma_val is None or close > ma_val:
                         if self.position.is_short:
                             self.position.close()
