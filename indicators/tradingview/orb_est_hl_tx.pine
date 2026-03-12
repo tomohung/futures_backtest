@@ -129,10 +129,10 @@ if leaving_or and not na(or_high) and not na(or_low)
     rolling_or := na(rolling_or) ? w : rolling_or + (2.0 / 21.0) * (w - rolling_or)
 
 or_width      = or_done and not na(or_high) ? or_high - or_low : float(na)
-or_filter_pass = not use_or_width or na(rolling_or) or
-                 (not na(or_width) and
-                  or_width >= 0.5 * rolling_or and
-                  or_width <= 1.5 * rolling_or)
+or_filter_pass = (not use_or_width or na(rolling_or) or
+                  (not na(or_width) and
+                   or_width >= 0.5 * rolling_or and
+                   or_width <= 1.5 * rolling_or))
 
 // ============================================================
 // EmaHL and EmaVol  (daily, prior-day value — no lookahead)
@@ -289,8 +289,8 @@ prev_slot_cum := _slot_cum
 // ============================================================
 // Weekday Filter
 // ============================================================
-wd_ok = not (skip_thu and dayofweek == dayofweek.thursday) and
-        not (skip_fri and dayofweek == dayofweek.friday)
+wd_ok = (not (skip_thu and dayofweek == dayofweek.thursday) and
+         not (skip_fri and dayofweek == dayofweek.friday))
 
 // ============================================================
 // Position State
@@ -331,9 +331,9 @@ exit_signal = exit_sl or exit_sat or exit_dow or exit_force
 // ============================================================
 // Entry Condition
 // ============================================================
-can_enter   = not in_pos and not day_traded and or_done and
-              in_entry_win and or_filter_pass and wd_ok and
-              not na(ema_hl_d)
+can_enter   = (not in_pos and not day_traded and or_done and
+               in_entry_win and or_filter_pass and wd_ok and
+               not na(ema_hl_d))
 long_signal = can_enter and trend_ok and close > or_high and bigcost_ok(or_high, ema_hl_d)
 
 // ============================================================
