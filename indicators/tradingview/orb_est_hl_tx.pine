@@ -135,10 +135,18 @@ or_filter_pass = (not use_or_width or na(rolling_or) or
                    or_width <= 1.5 * rolling_or))
 
 // ============================================================
-// EmaHL and EmaVol  (daily, prior-day value — no lookahead)
+// EmaHL and EmaVol — self-computed from DAY SESSION only
+//
+// ⚠️  request.security("D", volume/high-low) includes the night session
+//     on TAIFEX continuous contracts, making ema_vol much too large and
+//     ema_hl too large.  We track them ourselves so the ratio
+//     est_vol / ema_vol stays meaningful.
+//
+//     Updated at each entering_or using the PREVIOUS day's sess_high/low
+//     and cum_vol (read before they are reset).
 // ============================================================
-ema_hl_d  = request.security(syminfo.tickerid, "D", ta.ema(high - low, 20)[1])
-ema_vol_d = request.security(syminfo.tickerid, "D", ta.ema(volume,     20)[1])
+var float ema_hl_sess  = na   // 20-day EMA of day-session H-L range
+var float ema_vol_sess = na   // 20-day EMA of day-session volume
 
 // ============================================================
 // 30m 20MA Trend Filter
@@ -156,6 +164,13 @@ var float sess_low  = na
 var float cum_vol   = 0.0
 
 if entering_or
+    // Update EMA with PREVIOUS day's completed session (read before reset)
+    if not na(sess_high) and not na(sess_low) and sess_high > sess_low
+        prev_hl      = sess_high - sess_low
+        ema_hl_sess := na(ema_hl_sess) ? prev_hl : ema_hl_sess + (2.0/21.0) * (prev_hl - ema_hl_sess)
+    if cum_vol > 0
+        ema_vol_sess := na(ema_vol_sess) ? cum_vol : ema_vol_sess + (2.0/21.0) * (cum_vol - ema_vol_sess)
+    // Reset for new day
     sess_high := na
     sess_low  := na
     cum_vol   := 0.0
@@ -263,12 +278,12 @@ if entering_or
 
 // Compute new sat_upper at each slot boundary (1-slot delayed)
 if slot_changed and in_session and
-   not na(ema_vol_d) and ema_vol_d > 0 and
-   not na(ema_hl_d)  and
+   not na(ema_vol_sess) and ema_vol_sess > 0 and
+   not na(ema_hl_sess)  and
    not na(prev_slot_cum) and prev_slot_cum > 0 and
    cum_vol > 0
     est_vol = cum_vol / prev_slot_cum
-    est_hl  = est_vol / ema_vol_d * ema_hl_d
+    est_hl  = est_vol / ema_vol_sess * ema_hl_sess
 
     if na(est_avg)
         est_avg   := est_hl
@@ -282,7 +297,7 @@ if slot_changed and in_session and
         est_avg   := (est_avg * (est_count - 1) + adj) / float(est_count)
 
     if not na(sess_low) and not na(sess_high)
-        sat_upper := sess_low + est_avg - ema_hl_d / 8.0
+        sat_upper := sess_low + est_avg - ema_hl_sess / 8.0
 
 prev_slot_cum := _slot_cum
 
@@ -333,8 +348,8 @@ exit_signal = exit_sl or exit_sat or exit_dow or exit_force
 // ============================================================
 can_enter   = (not in_pos and not day_traded and or_done and
                in_entry_win and or_filter_pass and wd_ok and
-               not na(ema_hl_d))
-long_signal = can_enter and trend_ok and close > or_high and bigcost_ok(or_high, ema_hl_d)
+               not na(ema_hl_sess))
+long_signal = can_enter and trend_ok and close > or_high and bigcost_ok(or_high, ema_hl_sess)
 
 // ============================================================
 // Apply State Changes (exit first, then entry)
@@ -348,7 +363,7 @@ if exit_signal
 if long_signal
     in_pos      := true
     day_traded  := true
-    sl_price    := close - sl_fraction * ema_hl_d
+    sl_price    := close - sl_fraction * ema_hl_sess
     sat_touched := false
     dow_stop    := na
 
@@ -401,9 +416,10 @@ plot(show_or_line ? or_high : na, "OR High (Teal)",
 plot(show_or_line ? or_low  : na, "OR Low (Orange)",
      color=color.orange, linewidth=2, style=plot.style_linebr)
 
-// ── SatZone Upper（持倉中顯示，整日延伸）─────────────────
-plot(show_sat and in_pos ? sat_upper : na, "SatZone Upper (Purple)",
-     color=color.new(color.purple, 0), linewidth=2, style=plot.style_linebr)
+// ── SatZone Upper（常駐顯示，方便驗算；持倉中加粗）──────
+plot(show_sat ? sat_upper : na, "SatZone Upper (Purple)",
+     color=color.new(color.purple, in_pos ? 0 : 50),
+     linewidth=in_pos ? 2 : 1, style=plot.style_linebr)
 
 // ── SL 線（持倉中顯示）──────────────────────────────────
 plot(show_sl_ln and in_pos ? sl_price : na, "SL (Red)",
