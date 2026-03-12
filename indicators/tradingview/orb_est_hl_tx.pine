@@ -390,7 +390,7 @@ if leaving_or and not na(or_high) and not na(or_low) and not na(day_open) and da
     is_fri_skip = skip_fri and dayofweek == dayofweek.friday
     wd_prefix   = is_thu_skip ? "Thu  " : is_fri_skip ? "Fri  " : ""
     lbl_color   = (day_pass                        ? color.teal :
-                   is_thu_skip or is_fri_skip      ? color.orange : color.gray)
+                   is_thu_skip or is_fri_skip      ? color.new(color.orange, 50) : color.gray)
     reason      = day_pass ? " ✓" : " ✗"
     label.delete(live_lbl)
     label.new(bar_index, or_high,
