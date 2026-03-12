@@ -7,8 +7,9 @@
 //   2. 30m 20MA 趨勢向上（Close30 > MA30_20）
 //   3. OR 寬度在 0.5–1.5× RollingOR 內
 //   4. 非週四、非週五（weekday 效應）
-//   ⚠️  BigCost 濾網（or_high > max(BigCost1,2) + 0.5 × sl_dist）
-//       在 Pine 裡難以精確重現，本指標略去。
+//   5. BigCost 濾網：or_high > max(BigCost1, BigCost2) + 0.5 × sl_dist
+//      BigCost = 日盤成交量 > 20SMA 的 bar 的 VWAP（大戶成本）
+//      BigCost1 = 昨日，BigCost2 = 前日
 //
 // 出場優先順序：
 //   1. 固定停損（SL = entry - sl_fraction × EmaHL）
@@ -29,6 +30,7 @@
 // 線條顏色說明：
 //   Teal    ── OR High（開盤區間高點 08:45–08:57）
 //   Orange  ── OR Low （開盤區間低點）
+//   Yellow  ── BigCost1/2（大戶成本，昨日/前日）
 //   Purple  ── SatZone Upper（滿足區上緣，持倉中顯示）
 //   Red     ── SL（固定停損線）
 //   Pink    ── Dow Theory 追蹤停損（09:45 後）
@@ -48,23 +50,28 @@ indicator(
 // ============================================================
 // Inputs
 // ============================================================
-var string GRP_SL    = "停損"
-var string GRP_OR    = "OR / 進場"
-var string GRP_TREND = "趨勢濾網（30m 20MA）"
-var string GRP_DOW   = "星期濾網"
-var string GRP_VIZ   = "顯示"
+var string GRP_SL       = "停損"
+var string GRP_OR       = "OR / 進場"
+var string GRP_BIGCOST  = "BigCost 濾網（大戶成本）"
+var string GRP_TREND    = "趨勢濾網（30m 20MA）"
+var string GRP_DOW      = "星期濾網"
+var string GRP_VIZ      = "顯示"
 
-sl_fraction  = input.float(0.25, "SL = EmaHL ×",                  step=0.05, minval=0.05, group=GRP_SL,
-                            tooltip="固定停損 = 進場價 - sl_fraction × EmaHL")
-use_or_width = input.bool (true, "啟用 OR 寬度濾網（0.5–1.5× RollingOR）", group=GRP_OR)
-use_trend    = input.bool (true, "啟用 30m 20MA 趨勢濾網",          group=GRP_TREND)
-skip_thu     = input.bool (true, "跳過週四（weekday 效應）",          group=GRP_DOW)
-skip_fri     = input.bool (true, "跳過週五（weekday 效應）",          group=GRP_DOW)
-show_or      = input.bool (true, "OR 高低線",                       group=GRP_VIZ)
-show_sat     = input.bool (true, "SatZone 線（紫色）",               group=GRP_VIZ)
-show_sl_ln   = input.bool (true, "SL 線（紅色）",                    group=GRP_VIZ)
-show_dow_ln  = input.bool (true, "Dow Trail 線（粉紅）",              group=GRP_VIZ)
-show_bg      = input.bool (true, "時段底色",                         group=GRP_VIZ)
+sl_fraction    = input.float(0.25, "SL = EmaHL ×",                  step=0.05, minval=0.05, group=GRP_SL,
+                              tooltip="固定停損 = 進場價 - sl_fraction × EmaHL")
+use_or_width   = input.bool (true, "啟用 OR 寬度濾網（0.5–1.5× RollingOR）", group=GRP_OR)
+use_bigcost    = input.bool (true, "啟用 BigCost 濾網",               group=GRP_BIGCOST,
+                              tooltip="or_high > max(BigCost1,BigCost2) + 0.5 × sl_dist")
+bigcost_days   = input.int  (2,    "回看天數（1 或 2）",               minval=1, maxval=2, group=GRP_BIGCOST)
+use_trend      = input.bool (true, "啟用 30m 20MA 趨勢濾網",          group=GRP_TREND)
+skip_thu       = input.bool (true, "跳過週四（weekday 效應）",          group=GRP_DOW)
+skip_fri       = input.bool (true, "跳過週五（weekday 效應）",          group=GRP_DOW)
+show_or        = input.bool (true, "OR 高低線",                       group=GRP_VIZ)
+show_bigcost   = input.bool (true, "BigCost 線（黃色）",               group=GRP_VIZ)
+show_sat       = input.bool (true, "SatZone 線（紫色）",               group=GRP_VIZ)
+show_sl_ln     = input.bool (true, "SL 線（紅色）",                    group=GRP_VIZ)
+show_dow_ln    = input.bool (true, "Dow Trail 線（粉紅）",              group=GRP_VIZ)
+show_bg        = input.bool (true, "時段底色",                         group=GRP_VIZ)
 
 // ============================================================
 // Time Windows (Asia/Taipei = UTC+8)
@@ -157,6 +164,44 @@ if in_session
     sess_high := na(sess_high) ? high : math.max(sess_high, high)
     sess_low  := na(sess_low)  ? low  : math.min(sess_low,  low)
     cum_vol   += volume
+
+// ============================================================
+// BigCost Computation（大戶成本，對應 Python BigCost1 / BigCost2）
+//
+// 演算法（與 src/backtest/runner.py build_bigcost 相同）：
+//   - 日盤每根 1 分鐘 bar：若 volume > 20-bar SMA(volume)，納入計算
+//   - BigCost = sum(volume × hl2) / sum(volume)（高量 VWAP）
+//   - 每日日盤結束後儲存，BigCost1 = 昨日，BigCost2 = 前日
+//
+// ⚠️  在 1 分鐘圖上直接計算，不需 request.security_lower_tf。
+// ============================================================
+vol_sma20 = ta.sma(volume, 20)    // 20-bar 成交量 SMA（1 分鐘）
+
+var float day_big_vol  = 0.0
+var float day_big_cost = 0.0
+var float bigcost1     = na        // 昨日大戶成本
+var float bigcost2     = na        // 前日大戶成本
+
+// 每日日盤開始時（entering_or）：封存前一日結果，重置累計
+if entering_or
+    prev_bc   = day_big_vol > 0 ? day_big_cost / day_big_vol : float(na)
+    bigcost2 := bigcost1
+    bigcost1 := prev_bc
+    day_big_vol  := 0.0
+    day_big_cost := 0.0
+
+// 日盤期間累計大量 bar
+if in_session and volume > vol_sma20
+    day_big_vol  += volume
+    day_big_cost += volume * hl2
+
+// BigCost 濾網：突破點需高於最近 N 日大戶成本 + 0.5 × sl_dist
+// （sl_dist 在此先用 EmaHL 暫估；進場時以實際 ema_hl_d 計算）
+_bc_max = bigcost_days >= 2 and not na(bigcost1) and not na(bigcost2) ? math.max(bigcost1, bigcost2) :
+          not na(bigcost1) ? bigcost1 : float(na)
+
+bigcost_ok(or_h, ema_hl) =>
+    not use_bigcost or na(_bc_max) or (or_h > _bc_max + 0.5 * sl_fraction * ema_hl)
 
 // ============================================================
 // SatZone Computation
@@ -289,7 +334,7 @@ exit_signal = exit_sl or exit_sat or exit_dow or exit_force
 can_enter   = not in_pos and not day_traded and or_done and
               in_entry_win and or_filter_pass and wd_ok and
               not na(ema_hl_d)
-long_signal = can_enter and trend_ok and close > or_high
+long_signal = can_enter and trend_ok and close > or_high and bigcost_ok(or_high, ema_hl_d)
 
 // ============================================================
 // Apply State Changes (exit first, then entry)
@@ -342,6 +387,12 @@ bgcolor(show_bg and in_or_window                      ? color.new(color.yellow, 
 bgcolor(show_bg and in_entry_win and not day_filtered ? color.new(color.blue,   92) : na, title="進場窗口（藍）")
 bgcolor(show_bg and in_entry_win and day_filtered     ? color.new(color.gray,   88) : na, title="濾網淘汰（灰）")
 bgcolor(show_bg and in_trail_zone                     ? color.new(color.purple, 94) : na, title="Trail 區段（紫）")
+
+// ── BigCost 線（黃色虛線，參考用）────────────────────────
+plot(show_bigcost ? bigcost1 : na, "BigCost1（昨日）",
+     color=color.new(color.yellow, 0), linewidth=1, style=plot.style_linebr)
+plot(show_bigcost ? bigcost2 : na, "BigCost2（前日）",
+     color=color.new(color.yellow, 50), linewidth=1, style=plot.style_linebr)
 
 // ── OR 高低線（OR 窗口 + 進場窗口，進場窗口結束後隱藏）──
 show_or_line = show_or and not na(or_high) and (in_or_window or (or_done and in_entry_win))
