@@ -37,6 +37,10 @@ def main():
                         help="BigCost lookback days 1–5 (default 2)")
     parser.add_argument("--short", action="store_true",
                         help="Also take short trades (default: long-only)")
+    parser.add_argument("--no-skip-thursday", action="store_true",
+                        help="Allow trading on Thursdays (default: skip)")
+    parser.add_argument("--no-skip-friday", action="store_true",
+                        help="Allow trading on Fridays (default: skip)")
     parser.add_argument("--plot", action="store_true",
                         help="Show backtesting.py chart after run")
     args = parser.parse_args()
@@ -56,7 +60,9 @@ def main():
     stats = bt.run(sl_ema_fraction=args.sl_fraction,
                    adx_min=args.adx_min,
                    long_only=not args.short,
-                   bigcost_days=args.bigcost_days)
+                   bigcost_days=args.bigcost_days,
+                   skip_thursday=not args.no_skip_thursday,
+                   skip_friday=not args.no_skip_friday)
     print_summary(stats)
 
     OUTPUT_DIR.mkdir(exist_ok=True)
