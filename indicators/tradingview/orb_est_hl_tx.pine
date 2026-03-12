@@ -419,15 +419,15 @@ plot(show_or_line ? or_low  : na, "OR Low (Orange)",
 // ── SatZone Upper（常駐顯示；持倉中不透明，無持倉半透明）
 plot(show_sat ? sat_upper : na, "SatZone Upper (Purple)",
      color=color.new(color.purple, in_pos ? 0 : 60),
-     linewidth=2, style=plot.style_linebr)
+     linewidth=2, style=plot.style_circles)
 
 // ── SL 線（持倉中顯示）──────────────────────────────────
 plot(show_sl_ln and in_pos ? sl_price : na, "SL (Red)",
-     color=color.red, linewidth=2, style=plot.style_linebr)
+     color=color.red, linewidth=2, style=plot.style_circles)
 
 // ── Dow Theory 追蹤停損（09:45 後，持倉中顯示）──────────
 plot(show_dow_ln and in_pos and in_trail_zone ? dow_stop : na, "Dow Trail (Pink)",
-     color=color.new(color.red, 50), linewidth=1, style=plot.style_linebr)
+     color=color.new(color.red, 50), linewidth=1, style=plot.style_circles)
 
 // ── 進場箭頭（綠色 ▲ IN）────────────────────────────────
 plotshape(long_signal ? low - atr14 * 1.5 : na,
