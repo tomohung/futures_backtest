@@ -15,7 +15,11 @@
 //   藍色  = 進場窗口（09:30–11:00）
 //   紫色  = Trailing 區段（09:45–13:00）
 //   灰色  = OR% 濾網淘汰（當日不進場）
-//   橘色  = 週四過濾（啟用 skip_thursday 時顯示）
+//
+// OR% 標籤說明（OR 結束時顯示在 OR High 上方）：
+//   Teal  + ✓     = 通過（可進場）
+//   Gray  + ✗     = OR% 濾網淘汰
+//   Orange+ 週四✗  = 週四過濾淘汰（skip_thursday 啟用時）
 //
 // 進場訊號：綠色 ▲ IN（K 棒下方）
 // 出場訊號：紅色 ▼ OUT（K 棒上方）
@@ -190,7 +194,6 @@ bgcolor(show_bg and in_or_window  ? color.new(color.yellow, 88) : na, title="OR 
 bgcolor(show_bg and in_entry_win and or_filter_pass  ? color.new(color.blue,  92) : na, title="進場視窗（藍）")
 bgcolor(show_bg and day_filtered  ? color.new(color.gray,   88) : na, title="OR%濾網淘汰（灰）")
 bgcolor(show_bg and in_trail_zone ? color.new(color.purple, 94) : na, title="Trail 區段（紫）")
-bgcolor(show_bg and skip_thursday and is_thursday ? color.new(color.orange, 85) : na, title="週四過濾（橘）")
 
 // ── TrendMA（藍線）────────────────────────────────────────
 plot(show_ma ? trend_ma : na, "TrendMA (10d)",
@@ -215,9 +218,11 @@ plot(show_sl_tp ? trail_val : na, "Trail SL (Pink)",
 
 // ── OR% 標籤（OR 結束時顯示在 OR High 上方）──────────────
 if leaving_or_window and not na(or_pct)
-    pass_str = or_filter_pass ? "✓" : "✗"
-    label_color = or_filter_pass ? color.teal : color.gray
-    label.new(bar_index, or_high, str.format("OR {0,number,#.##}% {1}", or_pct, pass_str),
+    thu_filtered = skip_thursday and is_thursday
+    day_ok = or_filter_pass and not thu_filtered
+    reason = thu_filtered ? " 週四✗" : (or_filter_pass ? " ✓" : " ✗")
+    label_color = day_ok ? color.teal : (thu_filtered ? color.orange : color.gray)
+    label.new(bar_index, or_high, str.format("OR {0,number,#.##}%{1}", or_pct, reason),
               style=label.style_label_down, size=size.small,
               color=label_color, textcolor=color.white)
 

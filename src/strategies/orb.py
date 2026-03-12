@@ -271,6 +271,7 @@ class ORBLongStrategy(Strategy):
     or_pct_min: float = 0.0         # OR% 下限（0 = 停用）；OR% = OR寬度 / 開盤價 × 100
     or_pct_max: float = 0.0         # OR% 上限（0 = 停用）；建議範圍：0.3–1.0%
     skip_thursday: int = 0          # 1 = 週四不進場（weekday 效應；Sharpe 3.23→4.05）
+    thu_or_pct_min: float = 0.0     # >0 = 週四只在 OR% >= 此值才進場（0.7 最佳；Sharpe 4.08）
 
     def init(self):
         # ── 計算各關鍵時間點 ────────────────────────────────────────────
@@ -443,8 +444,15 @@ class ORBLongStrategy(Strategy):
                 )
 
                 # ── 做多進場 ────────────────────────────────────────────
-                # 條件：突破 OR 高點 + 趨勢向上 + ADX 達標 + OR% 濾網 + 非週四（若啟用）
-                _dow_ok = not (self.skip_thursday and bar_date.weekday() == 3)
+                # 條件：突破 OR 高點 + 趨勢向上 + ADX 達標 + OR% 濾網 + 星期濾網
+                _is_thu = bar_date.weekday() == 3
+                _thu_or_ok = (
+                    not _is_thu                      # 非週四：永遠通過
+                    or self.thu_or_pct_min == 0      # 未啟用：永遠通過
+                    or (self.day_open is not None and
+                        (self.or_high - self.or_low) / self.day_open * 100 >= self.thu_or_pct_min)
+                )
+                _dow_ok = (not (self.skip_thursday and _is_thu)) and _thu_or_ok
                 if close > self.or_high and not self.long_entered and _adx_ok and self.or_filter_pass and _dow_ok:
                     if ma_val is None or close > ma_val:
                         if self.position.is_short:
