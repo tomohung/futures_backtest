@@ -173,6 +173,17 @@ uv run python src/etl/validate.py         # Step 4: 驗證
   - 最新合約 `adjustment = 0`，越早的歷史調整量越大
   - 換倉切換點：`adj_close(舊合約最後一根) == adj_close(新合約第一根)` ✅
 
+## 外部資料來源
+
+### VIXTWN（台灣波動率指數）
+- 路徑：`data/external_sources/VIXTWN.csv`
+- 格式：`Date,VIXTWN`（日頻，交易日）
+- 範圍：2016-11-25 ~ 2026-03-11（2,374 筆）
+- 用途：波動率濾網、高 VIX 環境篩選（如 VIX > 20 避免進場，或反向作為均值回歸的確認）
+- 更新：手動補充，不自動下載
+
+---
+
 ## 資料現況（截至 2026-03）
 
 | 項目 | 數值 |
