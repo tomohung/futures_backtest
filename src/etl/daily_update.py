@@ -165,6 +165,11 @@ def main() -> None:
     else:
         print("\n[跳過] Step 4: 驗證")
 
+    # Step 5: build_vixtwn (optional, warn-only)
+    ok = run_step(ETL_DIR / "build_vixtwn.py")
+    if not ok:
+        print("\n[WARN] build_vixtwn.py 失敗，VIX 資料未更新。")
+
     print("\n" + "=" * 60)
     print("Pipeline 完成。")
     print("=" * 60)
