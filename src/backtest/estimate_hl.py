@@ -58,7 +58,12 @@ def _get_slot(t: time) -> time | None:
     return slot
 
 
-def compute_estimate_hl_zones(df: pd.DataFrame, ema_period: int = 20) -> pd.DataFrame:
+def compute_estimate_hl_zones(
+    df: pd.DataFrame,
+    ema_period: int = 20,
+    or_vol_adjust: bool = False,
+    or_vol_alpha: float = 0.3,
+) -> pd.DataFrame:
     """Compute Estimated H-L satisfaction zones for each 1-min bar.
 
     Parameters
@@ -70,6 +75,13 @@ def compute_estimate_hl_zones(df: pd.DataFrame, ema_period: int = 20) -> pd.Data
         sufficient warmup data.  Caller should filter by date afterwards.
     ema_period : int
         EMA period for daily volume and H-L range (default 20).
+    or_vol_adjust : bool
+        If True, scale EstHL by OR volume ratio at the 09:30 slot boundary.
+        Formula: ``est_avg *= (or_vol_alpha + (1 - or_vol_alpha) * or_vol_ratio)``
+        where ``or_vol_ratio = today's OR volume / 20-day rolling mean of OR volume``.
+    or_vol_alpha : float
+        Blend weight for OR volume adjustment.  0.3 means 30% fixed + 70% scaled.
+        Only used when *or_vol_adjust* is True.
 
     Returns
     -------
@@ -94,6 +106,10 @@ def compute_estimate_hl_zones(df: pd.DataFrame, ema_period: int = 20) -> pd.Data
     ema_vol: float | None = None
     ema_hl: float | None = None
 
+    # OR volume ratio tracking (for or_vol_adjust)
+    _or_vol_history: list[float] = []  # past completed-day OR volumes
+    _OR_END_SLOT = time(9, 30)  # OR ends at 09:30
+
     dates = sorted(df.index.normalize().unique())
 
     for date in dates:
@@ -110,6 +126,9 @@ def compute_estimate_hl_zones(df: pd.DataFrame, ema_period: int = 20) -> pd.Data
         # pending sat_zone to broadcast to the CURRENT slot's bars
         pending: dict | None = None
         prev_slot: time | None = None
+        # OR volume tracking
+        or_cum_vol: float = 0.0
+        or_vol_adjusted: bool = False
 
         for idx in idx_list:
             t = idx.time()
@@ -117,6 +136,10 @@ def compute_estimate_hl_zones(df: pd.DataFrame, ema_period: int = 20) -> pd.Data
             vol = df.at[idx, "Volume"]
             high = df.at[idx, "High"]
             low = df.at[idx, "Low"]
+
+            # ---- track OR volume (08:45–09:29) ----
+            if or_vol_adjust and t < _OR_END_SLOT:
+                or_cum_vol += vol
 
             # ---- slot boundary: finalise previous slot, stage new sat_zone ----
             if slot != prev_slot:
@@ -148,6 +171,17 @@ def compute_estimate_hl_zones(df: pd.DataFrame, ema_period: int = 20) -> pd.Data
                                 est_avg * (est_count - 1) + adj
                             ) / est_count
 
+                        # ---- OR volume adjustment at 09:30 slot boundary ----
+                        if (or_vol_adjust and not or_vol_adjusted
+                                and slot == _OR_END_SLOT
+                                and len(_or_vol_history) >= 10):
+                            or_vol_mean = sum(_or_vol_history[-20:]) / len(_or_vol_history[-20:])
+                            if or_vol_mean > 0:
+                                or_vol_ratio = or_cum_vol / or_vol_mean
+                                scale = or_vol_alpha + (1 - or_vol_alpha) * or_vol_ratio
+                                est_avg *= scale
+                            or_vol_adjusted = True
+
                         pending = {
                             "EmaVol": ema_vol,
                             "EmaHL": ema_hl,
@@ -173,7 +207,7 @@ def compute_estimate_hl_zones(df: pd.DataFrame, ema_period: int = 20) -> pd.Data
 
             prev_slot = slot
 
-        # ---- end of day: update EMA for subsequent days ----
+        # ---- end of day: update EMA and OR volume history ----
         day_vol = df.loc[mask, "Volume"].sum()
         if session_high == -np.inf or session_low == np.inf:
             continue  # degenerate / empty day
@@ -185,6 +219,9 @@ def compute_estimate_hl_zones(df: pd.DataFrame, ema_period: int = 20) -> pd.Data
         else:
             ema_vol = float(day_vol) * alpha + ema_vol * (1 - alpha)
             ema_hl = float(day_hl) * alpha + ema_hl * (1 - alpha)
+
+        if or_vol_adjust and or_cum_vol > 0:
+            _or_vol_history.append(or_cum_vol)
 
     return df
 
