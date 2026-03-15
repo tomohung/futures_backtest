@@ -450,7 +450,7 @@ def get_30m_bars(n_days=20):
                     SUM(volume)                      AS volume
                 FROM ohlcv_1m, last_day
                 WHERE symbol = ?
-                  AND timestamp::DATE >= (SELECT d FROM last_day) - (? + 10) * INTERVAL '1 day'
+                  AND timestamp::DATE >= (SELECT d FROM last_day) - (? * 2) * INTERVAL '1 day'
                   AND timestamp::DATE <= (SELECT d FROM last_day)
                   AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
                 GROUP BY ts
@@ -476,7 +476,7 @@ def get_1h_bars(n_days=20):
                 FROM ohlcv_1m
                 WHERE symbol = ?
                   AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
-                  AND timestamp::DATE >= (SELECT d FROM last_day) - ? * INTERVAL '1 day'
+                  AND timestamp::DATE >= (SELECT d FROM last_day) - (? * 2) * INTERVAL '1 day'
                 GROUP BY td
                 ORDER BY td
             ),

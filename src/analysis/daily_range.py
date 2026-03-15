@@ -101,8 +101,6 @@ def main():
     dates_r = [r[0] for r in range_data]
     ranges = [float(r[1]) for r in range_data]
     avg20_range = np.mean(ranges)
-    last10_dates = dates_r[-10:]
-    last10_ranges = ranges[-10:]
 
     vix_data = get_vix_data(20)
     vix_dates = [r[0] for r in vix_data]
@@ -119,32 +117,32 @@ def main():
     setup_font()
     weekday_names = ["一", "二", "三", "四", "五", "六", "日"]
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8))
     fig.suptitle("TX 日盤波動 & VIX 指數", fontsize=15, fontweight="bold", y=0.98)
 
     # ── 上圖：日盤波動 ──
-    colors = ["#e74c3c" if r > avg20_range else "#3498db" for r in last10_ranges]
-    bars = ax1.bar(range(10), last10_ranges, color=colors, width=0.6, zorder=3)
-    for bar, v in zip(bars, last10_ranges):
+    n_bars = len(ranges)
+    colors = ["#e74c3c" if r > avg20_range else "#3498db" for r in ranges]
+    bars = ax1.bar(range(n_bars), ranges, color=colors, width=0.6, zorder=3)
+    for bar, v in zip(bars, ranges):
         ax1.text(bar.get_x() + bar.get_width() / 2, v + 2, f"{int(v)}",
-                 ha="center", va="bottom", fontsize=10, fontweight="bold")
+                 ha="center", va="bottom", fontsize=9, fontweight="bold")
     ax1.axhline(avg20_range, color="#f39c12", linewidth=2, linestyle="--", zorder=4,
                 label=f"20日均波動 {avg20_range:.0f}pt")
-    ax1.set_xticks(range(10))
+    ax1.set_xticks(range(n_bars))
     ax1.set_xticklabels(
-        [f"{d}\n（週{weekday_names[d.weekday()]}）" for d in last10_dates],
-        rotation=0, ha="center", fontsize=9)
+        [f"{d}\n（週{weekday_names[d.weekday()]}）" for d in dates_r],
+        rotation=45, ha="right", fontsize=7)
     ax1.set_ylabel("波動點數（高 - 低）", fontsize=11)
-    ax1.set_title("日盤波動（近10交易日）", fontsize=12)
+    ax1.set_title("日盤波動（近20交易日）", fontsize=12)
     ax1.legend(fontsize=10)
-    ax1.set_ylim(0, max(last10_ranges) * 1.2)
+    ax1.set_ylim(0, max(ranges) * 1.2)
     ax1.yaxis.grid(True, linestyle="--", alpha=0.4)
     ax1.set_axisbelow(True)
     stats_text = (
-        f"近10日均: {np.mean(last10_ranges):.0f}pt  "
         f"近20日均: {avg20_range:.0f}pt  "
-        f"最大: {max(last10_ranges):.0f}pt  "
-        f"最小: {min(last10_ranges):.0f}pt"
+        f"最大: {max(ranges):.0f}pt  "
+        f"最小: {min(ranges):.0f}pt"
     )
     ax1.text(0.5, 0.97, stats_text, transform=ax1.transAxes, fontsize=9,
              ha="center", va="top",
@@ -199,10 +197,8 @@ def main():
     vix_dict = dict(vix_data)
     for d, r in zip(dates_r, ranges):
         v_str = f"{vix_dict[d]:.2f}" if d in vix_dict else "  —"
-        marker = " ◀" if d in last10_dates else ""
-        print(f"{str(d):<12} {int(r):>8}   {v_str:>6}{marker}")
+        print(f"{str(d):<12} {int(r):>8}   {v_str:>6}")
     print("-" * 32)
-    print(f"{'近10日平均':<12} {np.mean(last10_ranges):>8.0f}")
     print(f"{'近20日平均':<12} {avg20_range:>8.0f}   {avg20_vix:>6.2f}")
     print(f"\nVIX 趨勢：{trend_dir}（斜率 {trend_coef[0]:+.2f}/日）")
 
