@@ -9,8 +9,10 @@ Entry premise (BC zone gate):
   - BC data missing (NaN)    → skip day
 
 Direction: 5m K 120MA 斜率（等同 30m 20MA 時間跨度，但每 5 分鐘更新）
-  Bullish day  : MA5m_120 > MA5m_120_Prev  (MA 向上)
-  Bearish day  : MA5m_120 < MA5m_120_Prev  (MA 向下)
+  Bullish  : MA5m_120 > MA5m_120_Prev  (MA 向上)
+  Bearish  : MA5m_120 < MA5m_120_Prev  (MA 向下)
+  Minimum slope: |slope| / MA >= min_slope_pct (default 0.006%)
+    Filters out flat-MA periods where direction is ambiguous.
 
 Two-step entry (sequential):
 
@@ -33,7 +35,8 @@ Two-step entry (sequential):
 
 Exit priority (highest to lowest):
   1. Fixed SL : entry ∓ EmaHL × sl_ema_fraction
-  2. Fixed TP : entry ± EmaHL × tp_ema_fraction
+  2. Fixed TP : Long  → day_low  + EmaHL × tp_ema_fraction
+               Short → day_high - EmaHL × tp_ema_fraction
   3. Pivot trailing stop (active after 09:45): pivotlow(5,5) for long,
      pivothigh(5,5) for short — trailing stop ratchets in the favorable direction
   4. Force exit at 13:40
@@ -59,10 +62,11 @@ _FORCE_EXIT   = dtime(13, 40)
 class ReversalStrategy(Strategy):
     """Sequential BB-extreme → MA5 cross entry within institutional cost zone."""
 
-    vol_ratio:       float = 1.5   # volume must exceed vol_ratio × VolMA20
-    sl_ema_fraction: float = 0.35  # SL = EmaHL × fraction
-    tp_ema_fraction: float = 1.0   # TP = EmaHL × fraction
-    signal_skip:     int   = 0     # skip first N triggers before entering
+    vol_ratio:       float = 1.5      # volume must exceed vol_ratio × VolMA20
+    sl_ema_fraction: float = 0.35    # SL = EmaHL × fraction
+    tp_ema_fraction: float = 0.7     # TP = day_low/high + EmaHL × fraction
+    min_slope_pct:   float = 0.006   # min |slope|/MA % to confirm direction
+    signal_skip:     int   = 0       # skip first N triggers before entering
 
     def init(self):
         self._prev_date   = None
@@ -76,6 +80,8 @@ class ReversalStrategy(Strategy):
         self._setup_long  = False
         self._setup_short = False
         self._trigger_count = 0
+        self._day_low     = None
+        self._day_high    = None
         self._sl_price    = None
         self._tp_price    = None
         self._trail_stop  = None
@@ -94,6 +100,9 @@ class ReversalStrategy(Strategy):
             self._prev_date  = cur_date
             self._open_price = float(self.data.Open[-1])
 
+            self._day_low  = float(self.data.Low[-1])
+            self._day_high = float(self.data.High[-1])
+
             bc1 = float(self.data.BigCost1[-1])
             bc2 = float(self.data.BigCost2[-1])
             if not (np.isnan(bc1) or np.isnan(bc2)):
@@ -105,6 +114,11 @@ class ReversalStrategy(Strategy):
                 else:                              # inside zone → both
                     self._allow_long = True
                     self._allow_short = True
+
+        # ── Track daily extremes ──────────────────────────────────────────
+        if self._day_low is not None:
+            self._day_low  = min(self._day_low,  float(self.data.Low[-1]))
+            self._day_high = max(self._day_high, float(self.data.High[-1]))
 
         # ── Exit logic (runs whenever in a position) ───────────────────────
         if self.position:
@@ -176,10 +190,15 @@ class ReversalStrategy(Strategy):
                [ema_hl, ma5m, ma5m_prev, bb_upper, bb_lower, vol_ma, ma5]):
             return
 
-        sl     = ema_hl * self.sl_ema_fraction
-        tp     = ema_hl * self.tp_ema_fraction
+        sl = ema_hl * self.sl_ema_fraction
+        tp = ema_hl * self.tp_ema_fraction
         vol_ok = vol > self.vol_ratio * vol_ma
-        bullish = ma5m > ma5m_prev   # 5m 120MA 斜率向上
+
+        # Direction: slope sign + minimum magnitude filter
+        slope_pct = abs(ma5m - ma5m_prev) / ma5m_prev * 100 if ma5m_prev > 0 else 0
+        if slope_pct < self.min_slope_pct:
+            return  # MA too flat — direction ambiguous
+        bullish = ma5m > ma5m_prev
 
         # ── Step 1: Latch setup ───────────────────────────────────────────
         if self._allow_long and bullish and not self._setup_long:
@@ -198,7 +217,7 @@ class ReversalStrategy(Strategy):
             if self._trigger_count > self.signal_skip:
                 self.buy(size=1)
                 self._sl_price = close - sl
-                self._tp_price = close + tp
+                self._tp_price = self._day_low + tp   # low + EmaHL × fraction
                 self._entered  = True
 
         elif self._allow_short and not bullish and self._setup_short and close < ma5:
@@ -207,7 +226,7 @@ class ReversalStrategy(Strategy):
             if self._trigger_count > self.signal_skip:
                 self.sell(size=1)
                 self._sl_price = close + sl
-                self._tp_price = close - tp
+                self._tp_price = self._day_high - tp   # high - EmaHL × fraction
                 self._entered  = True
 
         # ── Reset setup once MA5 is crossed (opportunity passed) ─────────
