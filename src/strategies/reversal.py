@@ -1,9 +1,12 @@
 """
 Reversal Strategy（轉折回歸策略）
 
-Entry premise:
-  Open price is between BigCost1 (yesterday's institutional VWAP) and BigCost2
-  (day-before), indicating the market is in a contested zone between two cost bases.
+Entry premise (BC zone gate):
+  BigCost1 = yesterday's institutional VWAP, BigCost2 = day-before.
+  - Open between BC1 and BC2 → both long and short allowed
+  - Open below BC zone       → short only (price already weak)
+  - Open above BC zone       → long only  (price already strong)
+  - BC data missing (NaN)    → skip day
 
 Direction: 5m K 120MA 斜率（等同 30m 20MA 時間跨度，但每 5 分鐘更新）
   Bullish day  : MA5m_120 > MA5m_120_Prev  (MA 向上)
@@ -21,8 +24,12 @@ Two-step entry (sequential):
     Long  : close > MA5_1m  (price crosses back above 1m 5-MA)
     Short : close < MA5_1m  (price crosses back below 1m 5-MA)
 
-  The setup flag is latched for the rest of the day; once triggered, no further
-  entries are taken.
+  The setup flag resets when close crosses MA5 (opportunity passed).
+  Once triggered and entered, no further entries are taken that day.
+
+  signal_skip (default 0): number of valid triggers to skip before entering.
+    signal_skip=0 → enter on the 1st trigger (original behaviour)
+    signal_skip=1 → skip the 1st trigger, enter on the 2nd
 
 Exit priority (highest to lowest):
   1. Fixed SL : entry ∓ EmaHL × sl_ema_fraction
@@ -32,7 +39,7 @@ Exit priority (highest to lowest):
   4. Force exit at 13:40
 
 Entry window: 09:00 – 13:00
-One entry per day maximum.
+One entry per day maximum (after skipping signal_skip triggers).
 
 Data loader: load_data_for_reversal() in src/backtest/runner.py
 """
@@ -55,17 +62,20 @@ class ReversalStrategy(Strategy):
     vol_ratio:       float = 1.5   # volume must exceed vol_ratio × VolMA20
     sl_ema_fraction: float = 0.35  # SL = EmaHL × fraction
     tp_ema_fraction: float = 1.0   # TP = EmaHL × fraction
+    signal_skip:     int   = 0     # skip first N triggers before entering
 
     def init(self):
         self._prev_date   = None
         self._reset_daily()
 
     def _reset_daily(self):
-        self._entered     = False
-        self._bc_zone_ok  = False
-        self._open_price  = None
+        self._entered      = False
+        self._allow_long   = False
+        self._allow_short  = False
+        self._open_price   = None
         self._setup_long  = False
         self._setup_short = False
+        self._trigger_count = 0
         self._sl_price    = None
         self._tp_price    = None
         self._trail_stop  = None
@@ -88,7 +98,13 @@ class ReversalStrategy(Strategy):
             bc2 = float(self.data.BigCost2[-1])
             if not (np.isnan(bc1) or np.isnan(bc2)):
                 bc_lo, bc_hi = min(bc1, bc2), max(bc1, bc2)
-                self._bc_zone_ok = bc_lo < self._open_price < bc_hi
+                if self._open_price > bc_hi:       # above zone → long only
+                    self._allow_long = True
+                elif self._open_price < bc_lo:     # below zone → short only
+                    self._allow_short = True
+                else:                              # inside zone → both
+                    self._allow_long = True
+                    self._allow_short = True
 
         # ── Exit logic (runs whenever in a position) ───────────────────────
         if self.position:
@@ -140,7 +156,7 @@ class ReversalStrategy(Strategy):
             return  # in position but no exit triggered
 
         # ── Entry gate checks ──────────────────────────────────────────────
-        if self._entered or not self._bc_zone_ok:
+        if self._entered or not (self._allow_long or self._allow_short):
             return
         if not (_ENTRY_START <= cur_time <= _ENTRY_END):
             return
@@ -166,23 +182,36 @@ class ReversalStrategy(Strategy):
         bullish = ma5m > ma5m_prev   # 5m 120MA 斜率向上
 
         # ── Step 1: Latch setup ───────────────────────────────────────────
-        if bullish and not self._setup_long:
+        if self._allow_long and bullish and not self._setup_long:
             if close <= bb_lower and vol_ok and ccd > 0:
                 self._setup_long = True
 
-        if not bullish and not self._setup_short:
+        if self._allow_short and not bullish and not self._setup_short:
             if close >= bb_upper and vol_ok and ccd < 0:
                 self._setup_short = True
 
         # ── Step 2: Trigger on MA5 cross ──────────────────────────────────
-        if bullish and self._setup_long and close > ma5:
-            self.buy(size=1)
-            self._sl_price = close - sl
-            self._tp_price = close + tp
-            self._entered  = True
+        triggered = False
+        if self._allow_long and bullish and self._setup_long and close > ma5:
+            self._trigger_count += 1
+            triggered = True
+            if self._trigger_count > self.signal_skip:
+                self.buy(size=1)
+                self._sl_price = close - sl
+                self._tp_price = close + tp
+                self._entered  = True
 
-        elif not bullish and self._setup_short and close < ma5:
-            self.sell(size=1)
-            self._sl_price = close + sl
-            self._tp_price = close - tp
-            self._entered  = True
+        elif self._allow_short and not bullish and self._setup_short and close < ma5:
+            self._trigger_count += 1
+            triggered = True
+            if self._trigger_count > self.signal_skip:
+                self.sell(size=1)
+                self._sl_price = close + sl
+                self._tp_price = close - tp
+                self._entered  = True
+
+        # ── Reset setup once MA5 is crossed (opportunity passed) ─────────
+        if close > ma5:
+            self._setup_long = False
+        if close < ma5:
+            self._setup_short = False
