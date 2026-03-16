@@ -41,7 +41,7 @@ Exit priority (highest to lowest):
      pivothigh(5,5) for short — trailing stop ratchets in the favorable direction
   4. Force exit at 13:40
 
-Entry window: 09:00 – 13:00
+Entry window: 09:10 – 13:00
 One entry per day maximum (after skipping signal_skip triggers).
 
 Data loader: load_data_for_reversal() in src/backtest/runner.py
@@ -53,7 +53,7 @@ from datetime import time as dtime
 import numpy as np
 from backtesting import Strategy
 
-_ENTRY_START  = dtime(9, 0)
+_ENTRY_START  = dtime(9, 10)
 _ENTRY_END    = dtime(13, 0)
 _TRAIL_START  = dtime(9, 45)
 _FORCE_EXIT   = dtime(13, 40)
@@ -64,7 +64,7 @@ class ReversalStrategy(Strategy):
 
     vol_ratio:       float = 1.5      # volume must exceed vol_ratio × VolMA20
     sl_ema_fraction: float = 0.35    # SL = EmaHL × fraction
-    tp_ema_fraction: float = 0.7     # TP = day_low/high + EmaHL × fraction
+    tp_ema_fraction: float = 2.0     # TP = day_low/high + EmaHL × fraction
     min_slope_pct:   float = 0.006   # min |slope|/MA % to confirm direction
     signal_skip:     int   = 0       # skip first N triggers before entering
 
