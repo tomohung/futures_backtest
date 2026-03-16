@@ -467,13 +467,13 @@ def load_data_for_reversal(start=None, end=None):
     for i in range(1, 3):
         df_day[f"BigCost{i}"] = df_bigcost[f"BigCost{i}"].reindex(day_dates).values
 
-    # Bollinger Bands on 1m close (period=15, 2σ), shift(1) — no lookahead
+    # Bollinger Bands on 1m close (period=15, 2σ, ddof=0) — matches TradingView
     close_roll = df_day["Close"].rolling(15)
     bb_mid = close_roll.mean()
-    bb_std = close_roll.std()
-    df_day["BB_Middle"] = bb_mid.shift(1)
-    df_day["BB_Upper"]  = (bb_mid + 2.0 * bb_std).shift(1)
-    df_day["BB_Lower"]  = (bb_mid - 2.0 * bb_std).shift(1)
+    bb_std = close_roll.std(ddof=0)
+    df_day["BB_Middle"] = bb_mid
+    df_day["BB_Upper"]  = bb_mid + 2.0 * bb_std
+    df_day["BB_Lower"]  = bb_mid - 2.0 * bb_std
 
     # Volume 20MA on 1m, shift(1)
     df_day["VolMA20"] = df_day["Volume"].rolling(20).mean().shift(1)
