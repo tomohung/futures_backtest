@@ -30,7 +30,9 @@
 // 線條顏色說明：
 //   Teal    ── OR High（開盤區間高點 08:45–08:57）
 //   Orange  ── OR Low （開盤區間低點）
+//   Blue    ── 30m 20MA（趨勢方向參考）
 //   Yellow  ── BigCost1/2（大戶成本，昨日/前日）
+//   White   ── BigCost 門檻（BC + 0.5×sl_dist，OR High 需突破此線）
 //   Purple  ── SatZone Upper（滿足區上緣，持倉中顯示）
 //   Red     ── SL（固定停損線）
 //   Pink    ── Dow Theory 追蹤停損（09:45 後）
@@ -72,6 +74,9 @@ show_sat       = input.bool (true, "SatZone 線（紫色）",               grou
 show_sl_ln     = input.bool (true, "SL 線（紅色）",                    group=GRP_VIZ)
 show_dow_ln    = input.bool (true, "Dow Trail 線（粉紅）",              group=GRP_VIZ)
 show_bg        = input.bool (true, "時段底色",                         group=GRP_VIZ)
+show_trend_ma  = input.bool (true, "30m 20MA 趨勢線（藍色）",           group=GRP_VIZ)
+show_bc_thresh = input.bool (true, "BigCost 門檻線（白色虛線）",         group=GRP_VIZ)
+show_diag      = input.bool (true, "濾網診斷 Label",                    group=GRP_VIZ)
 
 // ============================================================
 // Time Windows (Asia/Taipei = UTC+8)
@@ -151,9 +156,12 @@ var float ema_vol_sess = na   // 20-day EMA of day-session volume
 // ============================================================
 // 30m 20MA Trend Filter
 // ============================================================
+// lookahead_on + [1] = 防重繪標準寫法：
+//   lookahead_on 讓歷史 bar 行為與即時一致，
+//   [1] 確保只取已收盤的前一根 30m bar，不偷看未來
 [close30, ma30_20] = request.security(syminfo.tickerid, "30",
     [close[1], ta.sma(close, 20)[1]],
-    lookahead = barmerge.lookahead_off)
+    lookahead = barmerge.lookahead_on)
 trend_ok = not use_trend or na(close30) or na(ma30_20) or close30 > ma30_20
 
 // ============================================================
@@ -217,6 +225,9 @@ _bc_max = (bigcost_days >= 2 and not na(bigcost1) and not na(bigcost2) ? math.ma
 
 bigcost_ok(or_h, ema_hl) =>
     not use_bigcost or na(_bc_max) or (or_h > _bc_max + 0.5 * sl_fraction * ema_hl)
+
+// BigCost 門檻線（用於視覺化）
+_bc_threshold = not na(_bc_max) and not na(ema_hl_sess) ? _bc_max + 0.5 * sl_fraction * ema_hl_sess : float(na)
 
 // ============================================================
 // SatZone Computation
@@ -398,6 +409,23 @@ if leaving_or and not na(or_high) and not na(or_low) and not na(day_open) and da
         style=label.style_label_down, size=size.small,
         color=lbl_color, textcolor=color.white)
 
+    // ── 濾網診斷 Label（OR 下方，逐條列出 pass/fail）──────────
+    if show_diag
+        _trend_str  = not use_trend ? "off" : trend_ok ? "Y" : "N"
+        _or_str     = not use_or_width ? "off" : or_filter_pass ? "Y" : "N"
+        _wd_str     = wd_ok ? "Y" : (is_thu_skip ? "Thu" : "Fri")
+        _bc_str     = not use_bigcost ? "off" : (na(_bc_max) ? "n/a" : (not na(or_high) and not na(ema_hl_sess) and bigcost_ok(or_high, ema_hl_sess) ? "Y" : "N"))
+        _bc_val_str = na(_bc_max) ? "" : str.format("\nBC={0,number,#}", _bc_max)
+        _ma_str     = na(ma30_20) ? "" : str.format("\nMA20={0,number,#}", ma30_20)
+        _c30_str    = na(close30) ? "" : str.format(" C30={0,number,#}", close30)
+        diag_txt    = str.format("Trend:{0} OR:{1} WD:{2} BC:{3}{4}{5}{6}",
+                      _trend_str, _or_str, _wd_str, _bc_str,
+                      _bc_val_str, _ma_str, _c30_str)
+        label.new(bar_index, or_low,
+            diag_txt,
+            style=label.style_label_up, size=size.tiny,
+            color=color.new(color.black, 30), textcolor=color.white)
+
 // ============================================================
 // Plots
 // ============================================================
@@ -408,11 +436,20 @@ bgcolor(show_bg and in_entry_win and not day_filtered ? color.new(color.blue,   
 bgcolor(show_bg and in_entry_win and day_filtered     ? color.new(color.gray,   88) : na, title="濾網淘汰（灰）")
 bgcolor(show_bg and in_trail_zone                     ? color.new(color.purple, 94) : na, title="Trail 區段（紫）")
 
-// ── BigCost 線（黃色虛線，參考用）────────────────────────
+// ── 30m 20MA 趨勢線（藍色，日盤期間顯示）─────────────────
+plot(show_trend_ma and in_session ? ma30_20 : na, "30m MA20 (Blue)",
+     color=color.new(color.blue, 30), linewidth=2, style=plot.style_linebr)
+
+// ── BigCost 線（黃色，參考用）──────────────────────────────
 plot(show_bigcost ? bigcost1 : na, "BigCost1（昨日）",
      color=color.new(color.yellow, 0),  linewidth=2, style=plot.style_linebr)
 plot(show_bigcost ? bigcost2 : na, "BigCost2（前日）",
      color=color.new(color.orange, 50), linewidth=1, style=plot.style_linebr)
+
+// ── BigCost 門檻線（白色虛線，OR 高點需突破此線才進場）─────
+show_bc_line = show_bc_thresh and not na(_bc_threshold) and in_session and or_done
+plot(show_bc_line ? _bc_threshold : na, "BigCost Threshold (White)",
+     color=color.new(color.white, 20), linewidth=1, style=plot.style_cross)
 
 // ── OR 高低線（OR 窗口 + 進場窗口，進場窗口結束後隱藏）──
 show_or_line = show_or and not na(or_high) and (in_or_window or (or_done and in_entry_win))
