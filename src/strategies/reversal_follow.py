@@ -26,7 +26,7 @@ from datetime import time as dtime
 import numpy as np
 from backtesting import Strategy
 
-_ENTRY_START  = dtime(9, 0)
+_ENTRY_START  = dtime(9, 10)
 _ENTRY_END    = dtime(13, 0)
 _TRAIL_START  = dtime(9, 45)
 _FORCE_EXIT   = dtime(13, 40)
@@ -35,9 +35,10 @@ _FORCE_EXIT   = dtime(13, 40)
 class ReversalFollowStrategy(Strategy):
     """Enter on 2nd reversal signal only if 1st signal's direction confirmed."""
 
-    vol_ratio:       float = 1.5   # volume must exceed vol_ratio × VolMA20
-    sl_ema_fraction: float = 0.35  # SL = EmaHL × fraction
-    tp_ema_fraction: float = 1.0   # TP = EmaHL × fraction
+    vol_ratio:       float = 1.5      # volume must exceed vol_ratio × VolMA20
+    sl_ema_fraction: float = 0.35     # SL = EmaHL × fraction
+    tp_ema_fraction: float = 2.0      # TP = day_low/high + EmaHL × fraction
+    min_slope_pct:   float = 0.006    # min |slope|/MA % to confirm direction
 
     def init(self):
         self._prev_date = None
@@ -51,8 +52,10 @@ class ReversalFollowStrategy(Strategy):
         self._setup_long   = False
         self._setup_short  = False
         self._trigger_count = 0
-        self._first_entry_price = None  # price at 1st trigger
-        self._first_direction   = None  # 'L' or 'S'
+        self._first_entry_price = None
+        self._first_direction   = None
+        self._day_low     = None
+        self._day_high    = None
         self._sl_price    = None
         self._tp_price    = None
         self._trail_stop  = None
@@ -70,6 +73,8 @@ class ReversalFollowStrategy(Strategy):
             self._reset_daily()
             self._prev_date  = cur_date
             self._open_price = float(self.data.Open[-1])
+            self._day_low  = float(self.data.Low[-1])
+            self._day_high = float(self.data.High[-1])
 
             bc1 = float(self.data.BigCost1[-1])
             bc2 = float(self.data.BigCost2[-1])
@@ -82,6 +87,11 @@ class ReversalFollowStrategy(Strategy):
                 else:
                     self._allow_long = True
                     self._allow_short = True
+
+        # ── Track daily extremes ──────────────────────────────────────────
+        if self._day_low is not None:
+            self._day_low  = min(self._day_low,  float(self.data.Low[-1]))
+            self._day_high = max(self._day_high, float(self.data.High[-1]))
 
         # ── Exit logic (identical to ReversalStrategy) ────────────────────
         if self.position:
@@ -150,9 +160,14 @@ class ReversalFollowStrategy(Strategy):
                [ema_hl, ma5m, ma5m_prev, bb_upper, bb_lower, vol_ma, ma5]):
             return
 
-        sl     = ema_hl * self.sl_ema_fraction
-        tp     = ema_hl * self.tp_ema_fraction
+        sl = ema_hl * self.sl_ema_fraction
+        tp = ema_hl * self.tp_ema_fraction
         vol_ok = vol > self.vol_ratio * vol_ma
+
+        # Direction: slope sign + minimum magnitude filter
+        slope_pct = abs(ma5m - ma5m_prev) / ma5m_prev * 100 if ma5m_prev > 0 else 0
+        if slope_pct < self.min_slope_pct:
+            return
         bullish = ma5m > ma5m_prev
 
         # ── Step 1: Latch setup ──────────────────────────────────────────
@@ -169,17 +184,15 @@ class ReversalFollowStrategy(Strategy):
             self._trigger_count += 1
 
             if self._trigger_count == 1:
-                # 1st trigger: record but don't enter
                 self._first_entry_price = close
                 self._first_direction = 'L'
 
             elif self._trigger_count == 2:
-                # 2nd trigger: enter only if 1st direction confirmed
                 if (self._first_direction == 'L'
                         and close > self._first_entry_price):
                     self.buy(size=1)
                     self._sl_price = close - sl
-                    self._tp_price = close + tp
+                    self._tp_price = self._day_low + tp
                     self._entered  = True
 
         elif self._allow_short and not bullish and self._setup_short and close < ma5:
@@ -194,7 +207,7 @@ class ReversalFollowStrategy(Strategy):
                         and close < self._first_entry_price):
                     self.sell(size=1)
                     self._sl_price = close + sl
-                    self._tp_price = close - tp
+                    self._tp_price = self._day_high - tp
                     self._entered  = True
 
         # ── Reset setup once MA5 is crossed ──────────────────────────────
