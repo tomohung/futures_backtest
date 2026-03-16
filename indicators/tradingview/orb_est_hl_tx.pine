@@ -19,13 +19,12 @@
 //   3. Dow Theory 追蹤停損（09:45 後，ta.pivotlow(5,5)，確認後 Close < 停損 → 出場）
 //   4. 強制平倉 13:30
 //
-// SatZone 演算法（對應 src/backtest/estimate_hl.py）：
-//   - EmaHL  = 20日 EMA（前一日收盤後的日波動幅度）
-//   - EmaVol = 20日 EMA（前一日成交量）
-//   - 每 15 分鐘 slot 邊界，以當時累計成交量 ÷ 時間因子 推估全日量，
-//     再換算 EstHL，帶入下降懲罰 (×1.414) 的 running average
-//   - SatZoneUpper = session_low + running_avg_EstHL - EmaHL / 8
-//   - 延遲一個 slot（08:45 slot 的資料在 09:00 bar 才廣播）
+// SatZone 演算法（EstRange，對應 src/backtest/estimate_hl.py）：
+//   - EmaHL = 20日 EMA（前一日日盤 H-L range）
+//   - ema_cum_vol[slot] = 每個 5 分鐘 slot 的累積量 EMA(20)
+//   - est_range = EmaHL × (今日累積量 / ema_cum_vol[slot])
+//   - SatZoneUpper = session_low + est_range - EmaHL / 8
+//   - 延遲一個 5 分鐘 slot（無 lookahead）
 //
 // 線條顏色說明：
 //   Teal    ── OR High（開盤區間高點 08:45–08:57）
@@ -140,18 +139,13 @@ or_filter_pass = (not use_or_width or na(rolling_or) or
                    or_width <= 1.5 * rolling_or))
 
 // ============================================================
-// EmaHL and EmaVol — self-computed from DAY SESSION only
+// EmaHL — self-computed from DAY SESSION only
 //
-// ⚠️  request.security("D", volume/high-low) includes the night session
-//     on TAIFEX continuous contracts, making ema_vol much too large and
-//     ema_hl too large.  We track them ourselves so the ratio
-//     est_vol / ema_vol stays meaningful.
-//
-//     Updated at each entering_or using the PREVIOUS day's sess_high/low
-//     and cum_vol (read before they are reset).
+// ⚠️  request.security("D", high-low) includes the night session
+//     on TAIFEX continuous contracts.  We track it ourselves.
+//     Updated at each entering_or using the PREVIOUS day's range.
 // ============================================================
 var float ema_hl_sess  = na   // 20-day EMA of day-session H-L range
-var float ema_vol_sess = na   // 20-day EMA of day-session volume
 
 // ============================================================
 // 30m 20MA Trend Filter
@@ -165,23 +159,45 @@ var float ema_vol_sess = na   // 20-day EMA of day-session volume
 trend_ok = not use_trend or na(close30) or na(ma30_20) or close30 > ma30_20
 
 // ============================================================
-// Session High/Low and Cumulative Volume (for SatZone)
+// Session High/Low and Cumulative Volume
 // ============================================================
 var float sess_high = na
 var float sess_low  = na
 var float cum_vol   = 0.0
 
+// EstRange: per-slot EMA of cumulative volume (60 × 5-min slots)
+var float[] ema_cum_vol_arr = array.new_float(60, na)
+var float[] today_profile   = array.new_float(60, na)
+var int     vol_day_count   = 0
+var int     prev_slot_5m    = -1
+
 if entering_or
-    // Update EMA with PREVIOUS day's completed session (read before reset)
+    // Record last slot of previous day (cum_vol not yet reset)
+    if prev_slot_5m >= 0
+        array.set(today_profile, prev_slot_5m, cum_vol)
+
+    // Update ema_hl_sess from PREVIOUS day's range (read before reset)
     if not na(sess_high) and not na(sess_low) and sess_high > sess_low
         prev_hl      = sess_high - sess_low
         ema_hl_sess := na(ema_hl_sess) ? prev_hl : ema_hl_sess + (2.0/21.0) * (prev_hl - ema_hl_sess)
-    if cum_vol > 0
-        ema_vol_sess := na(ema_vol_sess) ? cum_vol : ema_vol_sess + (2.0/21.0) * (cum_vol - ema_vol_sess)
+
+    // Update per-slot EMA of cumulative volume from yesterday's profile
+    if not na(array.get(today_profile, 0))
+        for i = 0 to 59
+            cv = array.get(today_profile, i)
+            if not na(cv)
+                old_cv = array.get(ema_cum_vol_arr, i)
+                new_cv = na(old_cv) ? cv : old_cv + (2.0 / 21.0) * (cv - old_cv)
+                array.set(ema_cum_vol_arr, i, new_cv)
+        vol_day_count += 1
+
     // Reset for new day
-    sess_high := na
-    sess_low  := na
-    cum_vol   := 0.0
+    sess_high    := na
+    sess_low     := na
+    cum_vol      := 0.0
+    prev_slot_5m := -1
+    for i = 0 to 59
+        array.set(today_profile, i, na)
 
 if in_session
     sess_high := na(sess_high) ? high : math.max(sess_high, high)
@@ -230,87 +246,47 @@ bigcost_ok(or_h, ema_hl) =>
 _bc_threshold = not na(_bc_max) and not na(ema_hl_sess) ? _bc_max + 0.5 * sl_fraction * ema_hl_sess : float(na)
 
 // ============================================================
-// SatZone Computation
+// SatZone Computation — EstRange (Volume-Weighted)
 //
-// TIME_FACTORS per 15-min slot (fraction of daily volume expected):
-//   08:45→0.089  09:00→0.114  09:15→0.077  09:30→0.073  09:45→0.061
-//   10:00→0.055  10:15→0.046  10:30→0.042  10:45→0.038  11:00→0.036
-//   11:15→0.031  11:30→0.030  11:45→0.027  12:00→0.028  12:15→0.026
-//   12:30→0.030  12:45→0.031  13:00→0.040  13:15→0.052  13:30→0.075
+// Replaces the hardcoded TIME_FACTORS table with actual volume profiles:
+//   ema_range     = ema_hl_sess (EMA of daily H-L range, prior day)
+//   ema_cum_vol   = per-5min-slot EMA of cumulative volume
+//   est_range     = ema_range × (cum_vol_today / ema_cum_vol[slot])
+//   sat_upper     = sess_low + est_range - ema_range / 8
 //
-// Cumulative factor at slot start (sum of prior slots):
-//   before 09:00 = 0.089
-//   before 09:15 = 0.203  before 09:30 = 0.280  before 09:45 = 0.353
-//   before 10:00 = 0.414  before 10:15 = 0.469  before 10:30 = 0.515
-//   before 10:45 = 0.557  before 11:00 = 0.595  before 11:15 = 0.631
-//   before 11:30 = 0.662  before 11:45 = 0.692  before 12:00 = 0.719
-//   before 12:15 = 0.747  before 12:30 = 0.773  before 12:45 = 0.803
-//   before 13:00 = 0.834  before 13:15 = 0.874  before 13:30 = 0.926
+// 60 slots (08:45–13:40), delayed by 1 slot (5 min) to prevent lookahead.
+// Requires 20 days warmup (vol_day_count >= 20).
 // ============================================================
 _h   = hour(time,   "Asia/Taipei")
 _m   = minute(time, "Asia/Taipei")
 _t   = _h * 60 + _m
 
-// Cumulative time factor for completed slots up to and including current slot
-_slot_cum = (
-    _t <  9*60     ? 0.089 :
-    _t <  9*60+15  ? 0.203 :
-    _t <  9*60+30  ? 0.280 :
-    _t <  9*60+45  ? 0.353 :
-    _t < 10*60     ? 0.414 :
-    _t < 10*60+15  ? 0.469 :
-    _t < 10*60+30  ? 0.515 :
-    _t < 10*60+45  ? 0.557 :
-    _t < 11*60     ? 0.595 :
-    _t < 11*60+15  ? 0.631 :
-    _t < 11*60+30  ? 0.662 :
-    _t < 11*60+45  ? 0.692 :
-    _t < 12*60     ? 0.719 :
-    _t < 12*60+15  ? 0.747 :
-    _t < 12*60+30  ? 0.773 :
-    _t < 12*60+45  ? 0.803 :
-    _t < 13*60     ? 0.834 :
-    _t < 13*60+15  ? 0.874 :
-    _t < 13*60+30  ? 0.926 :
-    1.001)
+// 5-min slot index: 0 = 08:45, 1 = 08:50, ..., 59 = 13:40
+_slot_5m = in_session ? math.max(0, math.min(59, math.floor((_t - 525) / 5))) : -1
 
-var float prev_slot_cum = na
-var float est_avg       = na
-var int   est_count     = 0
-var float sat_upper     = na   // SatZoneUpper（進場後的目標）
+var float sat_upper = na   // SatZoneUpper（進場後的目標）
 
-slot_changed = not na(prev_slot_cum) and _slot_cum != prev_slot_cum
+slot_changed_5m = _slot_5m >= 0 and _slot_5m != prev_slot_5m
 
 if entering_or
-    prev_slot_cum := na
-    est_avg       := na
-    est_count     := 0
-    sat_upper     := na
+    sat_upper := na
 
-// Compute new sat_upper at each slot boundary (1-slot delayed)
-if slot_changed and in_session and
-   not na(ema_vol_sess) and ema_vol_sess > 0 and
-   not na(ema_hl_sess)  and
-   not na(prev_slot_cum) and prev_slot_cum > 0 and
-   cum_vol > 0
-    est_vol = cum_vol / prev_slot_cum
-    est_hl  = est_vol / ema_vol_sess * ema_hl_sess
+// Compute new sat_upper at each 5-min slot boundary (1-slot delayed)
+if slot_changed_5m
+    if prev_slot_5m >= 0
+        // Record cum_vol at end of previous slot
+        array.set(today_profile, prev_slot_5m, cum_vol)
 
-    if na(est_avg)
-        est_avg   := est_hl
-        est_count := 1
-    else if est_count == 1
-        est_avg   := (est_avg + est_hl) / 2.0
-        est_count := 2
-    else
-        adj        = est_hl < est_avg ? est_hl - (est_avg - est_hl) * 1.414 : est_hl
-        est_count += 1
-        est_avg   := (est_avg * (est_count - 1) + adj) / float(est_count)
+        // Compute EstRange → SatZone (delayed by 1 slot)
+        if vol_day_count >= 20 and not na(ema_hl_sess)
+            ema_cv = array.get(ema_cum_vol_arr, prev_slot_5m)
+            if not na(ema_cv) and ema_cv > 0
+                vol_ratio  = cum_vol / ema_cv
+                est_range  = ema_hl_sess * vol_ratio
+                if not na(sess_low)
+                    sat_upper := sess_low + est_range - ema_hl_sess / 8.0
 
-    if not na(sess_low) and not na(sess_high)
-        sat_upper := sess_low + est_avg - ema_hl_sess / 8.0
-
-prev_slot_cum := _slot_cum
+    prev_slot_5m := _slot_5m
 
 // ============================================================
 // Weekday Filter
