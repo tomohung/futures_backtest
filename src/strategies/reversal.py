@@ -65,6 +65,8 @@ class ReversalStrategy(Strategy):
     vol_ratio:       float = 1.5      # volume must exceed vol_ratio × VolMA20
     sl_ema_fraction: float = 0.35    # SL = EmaHL × fraction
     tp_ema_fraction: float = 2.0     # TP = day_low/high + EmaHL × fraction
+    tp_mode:         str   = "ema"   # "ema" | "vol_range"
+    tp_vol_fraction: float = 0.8     # fraction for vol_range mode
     min_slope_pct:   float = 0.006   # min |slope|/MA % to confirm direction
     signal_skip:     int   = 0       # skip first N triggers before entering
 
@@ -191,7 +193,17 @@ class ReversalStrategy(Strategy):
             return
 
         sl = ema_hl * self.sl_ema_fraction
-        tp = ema_hl * self.tp_ema_fraction
+
+        # TP calculation: two modes
+        if self.tp_mode == "vol_range":
+            est_range = float(self.data.EstRange[-1])
+            if np.isnan(est_range):
+                tp = ema_hl * self.tp_ema_fraction  # fallback
+            else:
+                tp = est_range * self.tp_vol_fraction
+        else:
+            tp = ema_hl * self.tp_ema_fraction
+
         vol_ok = vol > self.vol_ratio * vol_ma
 
         # Direction: slope sign + minimum magnitude filter

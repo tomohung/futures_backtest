@@ -274,8 +274,19 @@ def load_data_for_orb_est_hl(start=None, end=None):
     df_day.columns = ["Open", "High", "Low", "Close", "Volume"]
 
     # Estimate H-L zones (must run on full history before date filtering)
-    from src.backtest.estimate_hl import compute_estimate_hl_zones
+    from src.backtest.estimate_hl import compute_estimate_hl_zones, compute_vol_estimated_range
     df_day = compute_estimate_hl_zones(df_day)
+
+    # Volume-weighted estimated range (5-min slots, EMA, 20-day lookback)
+    # EstRange_Daily (prior-day, fixed) replaces EmaHL for SL calculation.
+    # EstRange_SatUpper/Lower replaces SatZone for exit logic.
+    # — simpler than TIME_FACTORS approach, adapts to volume regime changes.
+    df_day = compute_vol_estimated_range(df_day)
+    _daily_mask = df_day["EstRange_Daily"].notna()
+    df_day.loc[_daily_mask, "EmaHL"] = df_day.loc[_daily_mask, "EstRange_Daily"]
+    _sat_mask = df_day["EstRange_SatUpper"].notna()
+    df_day.loc[_sat_mask, "SatZoneUpper"] = df_day.loc[_sat_mask, "EstRange_SatUpper"]
+    df_day.loc[_sat_mask, "SatZoneLower"] = df_day.loc[_sat_mask, "EstRange_SatLower"]
 
     # 10-day TrendMA from continuous series (same logic as load_data_with_night_ma)
     n_bars = 10 * 301
@@ -399,7 +410,7 @@ def load_data_for_reversal(start=None, end=None):
         CCD_5m    — 5m cumulative candle delta (per day, reset daily), mapped to 1m, shift(1)
     """
     import pandas as pd
-    from src.backtest.estimate_hl import compute_estimate_hl_zones
+    from src.backtest.estimate_hl import compute_estimate_hl_zones, compute_vol_estimated_range
     from src.indicators.volume import cumulative_candle_delta
 
     with duckdb.connect(DB_PATH, read_only=True) as conn:
@@ -440,6 +451,13 @@ def load_data_for_reversal(start=None, end=None):
 
     # EstHL zones (must run on full history before date filtering)
     df_day = compute_estimate_hl_zones(df_day)
+
+    # Volume-weighted estimated range (5-min slots, EMA, 20-day lookback)
+    # Reversal entry is 09:10+, so intra-day EstRange (vol-adjusted) gives
+    # better results than fixed daily — it reflects today's volume by entry time.
+    df_day = compute_vol_estimated_range(df_day)
+    _est_mask = df_day["EstRange"].notna()
+    df_day.loc[_est_mask, "EmaHL"] = df_day.loc[_est_mask, "EstRange"]
 
     # 30m 20MA from continuous series (day + night), shift(1) — no lookahead
     # dropna() before rolling: the resample creates NaN bars during the 05:00–08:30

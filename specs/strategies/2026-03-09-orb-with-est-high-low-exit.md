@@ -26,10 +26,11 @@
 - `RollingOR`：20日滾動平均 OR 寬度
 - 過濾條件：`0.5 × RollingOR ≤ ORWidth ≤ 1.5 × RollingOR`
 
-### 4. Estimated H-L 指標（已實作）
-- `EmaHL`：20日平均日波動 EMA
-- `SatZoneUpper`、`SatZoneLower`：滿足區間邊界
-- 來源：`src/backtest/estimate_hl.py` → `compute_estimate_hl_zones()`
+### 4. Estimated H-L 指標（已改用 EstRange EMA）
+- `EmaHL`：由 `EstRange_Daily` 替換 — 前一日 EMA(20) of daily range，固定全天（用於 SL）
+- `SatZoneUpper`、`SatZoneLower`：由 `EstRange_SatUpper/Lower` 替換 — 日內每 5 分鐘按量更新
+- 來源：`src/backtest/estimate_hl.py` → `compute_vol_estimated_range()`
+- 舊版使用 `compute_estimate_hl_zones()` + 硬編碼 `TIME_FACTORS` 表，已被取代（2026-03-16）
 
 ---
 
@@ -163,20 +164,31 @@ uv run python src/backtest/run_orb_est_hl.py --start 2021-01-01 --no-skip-thursd
 
 > 參數：`sl_ema_fraction=0.25`, `bigcost_days=2`, `long_only=True`, `or_end_min=537`, `entry_end_min=555`
 > **`skip_thursday=True`, `skip_friday=True`**（2026-03-12 加入）
-> loader：`load_data_for_orb_est_hl()`（含 EmaHL bfill，詳見下方說明）
+> loader：`load_data_for_orb_est_hl()`（含 EstRange EMA 替換 EmaHL/SatZone，2026-03-16 更新）
 
-### 年度總覽（含星期濾網）
+### 年度總覽（含星期濾網，EstRange EMA）
 
 | 年份 | 筆數 | 勝率 | PF | 期望值 | 總損益 |
 |------|------|------|----|--------|--------|
-| 2021 | 43 | 58.1% | 1.66 | +10.7 pts | +460 |
-| 2022 | 29 | 65.5% | 3.20 | +24.9 pts | +723 |
-| 2023 | 27 | 63.0% | 2.03 | +11.9 pts | +321 |
-| 2024 | 28 | 75.0% | 4.01 | +42.5 pts | +1190 |
-| **2021–2024** | **127** | **64.6%** | **2.60** | **+21.1 pts** | **+2694** |
-| 2025 | 27 | 59.3% | 2.53 | +39.8 pts | +1075 |
-| 2026 YTD | 7 | 57.1% | 2.31 | +37.9 pts | +265 |
-| **2021–2026** | **161** | **63.4%** | **2.53** | **+25.1 pts** | **+4034** |
+| 2021 | 43 | 51.2% | 1.50 | +11.8 pts | +508 |
+| 2022 | 29 | 65.5% | 2.75 | +22.5 pts | +653 |
+| 2023 | 27 | 55.6% | 1.94 | +13.3 pts | +359 |
+| 2024 | 28 | 64.3% | 2.74 | +38.3 pts | +1072 |
+| 2025 | 27 | 59.3% | 3.09 | +52.3 pts | +1411 |
+| 2026 YTD | 8 | 62.5% | 3.87 | +83.9 pts | +671 |
+| **2021–2026** | **162** | **58.6%** | **2.42** | **+28.9 pts** | **+4674** |
+
+Sharpe: 5.12 | MaxDD: -0.2% | Max consec losses: 5
+Avg win: +83.9 pts | Avg loss: -50.0 pts | Win/Loss: 1.68
+
+### EstRange EMA vs EmaHL 比較（2026-03-16 測試）
+
+| 模式 | Total | PF | EV | Sharpe | 說明 |
+|------|-------|-----|-----|--------|------|
+| EmaHL (TIME_FACTORS) | +4240 | 2.40 | +26.2 | ~4.5 | 舊版，硬編碼 15 分鐘比例表 |
+| **EstRange EMA** ✅ | **+4674** | **2.42** | **+28.9** | **5.12** | 新版，實際量 EMA，5 分鐘更新 |
+
+改善 +434 點（+10%）。EmaHL 用 `EstRange_Daily`（前一天固定值）替換，SatZone 用 `EstRange_SatUpper/Lower`（日內量更新）替換。
 
 ### 星期濾網效果比較（2021–2026）
 
