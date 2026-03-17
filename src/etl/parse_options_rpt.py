@@ -127,14 +127,14 @@ def get_imported_dates(conn: duckdb.DuckDBPyConnection) -> set:
 
 def get_recent_zip_dates(n: int) -> set[date]:
     all_dates = sorted(
-        d for p in RAW_DIR.glob("OptionsDaily_*.zip")
+        d for p in RAW_DIR.glob("**/OptionsDaily_*.zip")
         if (d := date_from_zip(p)) is not None
     )
     return set(all_dates[-n:]) if n > 0 and all_dates else set()
 
 
 def find_all_zips() -> list[Path]:
-    return sorted(RAW_DIR.glob("OptionsDaily_*.zip"))
+    return sorted(RAW_DIR.glob("**/OptionsDaily_*.zip"))
 
 
 def date_from_zip(path: Path) -> date | None:
