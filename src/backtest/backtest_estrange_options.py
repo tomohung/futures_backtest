@@ -177,48 +177,74 @@ def run_backtest(
             day_mask = df.index.normalize() == dt
             day_df = df[day_mask]
 
-            # Get EstRange at 09:30 (first bar with valid EstRange at or after 09:30)
-            bars_930 = day_df[day_df.index.time >= entry_start]
-            if bars_930.empty:
-                continue
-            est_range = bars_930["EstRange"].dropna()
-            if est_range.empty:
-                continue
-            er = float(est_range.iloc[0])
-            if er <= 0 or np.isnan(er):
+            # Build running session high/low and EstRange from all bars
+            # (dynamically updated, matching TradingView behavior)
+            session_high = -np.inf
+            session_low = np.inf
+            er = np.nan
+
+            # Update session extremes from all bars up to entry_start
+            for idx, row in day_df.iterrows():
+                if idx.time() >= entry_start:
+                    break
+                session_high = max(session_high, float(row["High"]))
+                session_low = min(session_low, float(row["Low"]))
+
+            if session_high == -np.inf:
                 continue
 
-            # Session extremes up to 09:30
-            bars_pre = day_df[day_df.index.time < entry_start]
-            if bars_pre.empty:
-                continue
-            session_high = float(bars_pre["High"].max())
-            session_low = float(bars_pre["Low"].min())
-
-            # Compute levels
-            est_high = session_low + er * fraction
-            est_low = session_high - er * fraction
-
-            # Scan bars from 09:30 to exit_time for first touch
+            # Scan bars from 09:30 to exit_time, dynamically updating levels
             scan_bars = day_df[
                 (day_df.index.time >= entry_start) & (day_df.index.time <= exit_time)
             ]
 
             touched_side = None
             touch_time = None
+            touch_er = np.nan
+            touch_est_high = np.nan
+            touch_est_low = np.nan
+
             for idx, row in scan_bars.iterrows():
                 h, l = float(row["High"]), float(row["Low"])
-                if h >= est_high and touched_side is None:
+
+                # Update session extremes BEFORE computing levels
+                # (matches TradingView: sess_high/low updated first, then est levels)
+                session_high = max(session_high, h)
+                session_low = min(session_low, l)
+
+                # Update EstRange (use latest available)
+                bar_er = row.get("EstRange")
+                if pd.notna(bar_er) and bar_er > 0:
+                    er = float(bar_er)
+
+                if np.isnan(er):
+                    continue
+
+                # Compute dynamic levels with current session extremes
+                est_high = session_low + er * fraction
+                est_low = session_high - er * fraction
+
+                if h >= est_high:
                     touched_side = "high"
                     touch_time = idx.time()
+                    touch_er = er
+                    touch_est_high = est_high
+                    touch_est_low = est_low
                     break
-                if l <= est_low and touched_side is None:
+                if l <= est_low:
                     touched_side = "low"
                     touch_time = idx.time()
+                    touch_er = er
+                    touch_est_high = est_high
+                    touch_est_low = est_low
                     break
 
             if touched_side is None:
                 continue
+
+            er = touch_er
+            est_high = touch_est_high
+            est_low = touch_est_low
 
             # Determine trade
             contract = get_monthly_contract(td)
