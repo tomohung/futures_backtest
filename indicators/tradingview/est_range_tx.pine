@@ -1,0 +1,167 @@
+// ============================================================
+// EstRange TX — Volume-Weighted Estimated Range
+//
+// 用實際歷史累積量 EMA 預估當日振幅，每 5 分鐘更新。
+//
+// 公式：
+//   ema_range     = EMA of daily session range (high - low)
+//   ema_cum_vol   = per-5min-slot EMA of cumulative volume
+//   vol_ratio     = 今日累積量 / ema_cum_vol[slot]
+//   est_range     = ema_range × vol_ratio
+//
+// 繪製：
+//   綠色實線 ── Est High = session_low  + est_range（預估高點 100%）
+//   紅色實線 ── Est Low  = session_high - est_range（預估低點 100%）
+//   綠色虛線 ── Frac High = session_low  + est_range × fraction
+//   紅色虛線 ── Frac Low  = session_high - est_range × fraction
+//
+// Fraction by weekday (based on hit-rate analysis):
+//   Tue/Wed : 0.75 (higher volatility, ~50% hit rate)
+//   Mon/Thu/Fri : 0.618 (lower volatility, ~60% hit rate)
+//
+// 09:00 開始顯示。延遲 1 個 5 分鐘 slot，無 lookahead。
+// ============================================================
+//@version=6
+indicator(
+    title   = "EstRange TX (Volume-Weighted)",
+    overlay = true
+)
+
+// ============================================================
+// Inputs
+// ============================================================
+ema_period     = input.int(20, "EMA Period", minval=5, maxval=100)
+min_warmup     = input.int(3,  "最少暖機天數", minval=1, maxval=50)
+show_start     = input.int(540, "開始顯示時間（分鐘）", minval=525, maxval=600,
+                           tooltip="525=08:45, 540=09:00, 555=09:15")
+frac_tue_wed   = input.float(0.75,  "Fraction (Tue/Wed)", step=0.01, minval=0.1, maxval=1.5)
+frac_other     = input.float(0.618, "Fraction (Mon/Thu/Fri)", step=0.01, minval=0.1, maxval=1.5)
+use_weekday_frac = input.bool(true, "依星期自動調整 Fraction")
+show_full      = input.bool(true,  "顯示 100% Est High/Low（實線）")
+show_frac      = input.bool(true,  "顯示 Fraction Est High/Low（虛線）")
+
+// ============================================================
+// Time Windows (Asia/Taipei = UTC+8)
+// ============================================================
+_h = hour(time, "Asia/Taipei")
+_m = minute(time, "Asia/Taipei")
+_t = _h * 60 + _m
+
+in_session = _t >= 525 and _t < 825   // 08:45 ~ 13:44
+
+// Detect new session day
+var int prev_session_day = -1
+_cur_day = dayofmonth(time, "Asia/Taipei")
+entering_session = in_session and _cur_day != prev_session_day
+if in_session
+    prev_session_day := _cur_day
+
+// Weekday fraction
+is_tue_wed = dayofweek == dayofweek.tuesday or dayofweek == dayofweek.wednesday
+cur_fraction = use_weekday_frac ? (is_tue_wed ? frac_tue_wed : frac_other) : frac_other
+
+// ============================================================
+// Session Tracking
+// ============================================================
+var float sess_high = na
+var float sess_low  = na
+var float cum_vol   = 0.0
+
+var float ema_range = na
+float ema_alpha = 2.0 / (ema_period + 1)
+
+// EstRange: per-slot EMA of cumulative volume (60 × 5-min slots)
+var float[] ema_cum_vol_arr = array.new_float(60, na)
+var float[] today_profile   = array.new_float(60, na)
+var int     vol_day_count   = 0
+var int     prev_slot_5m    = -1
+
+var float cur_est_range = na
+
+if entering_session
+    if prev_slot_5m >= 0
+        array.set(today_profile, prev_slot_5m, cum_vol)
+
+    if not na(sess_high) and not na(sess_low) and sess_high > sess_low
+        prev_hl    = sess_high - sess_low
+        ema_range := na(ema_range) ? prev_hl : ema_range + ema_alpha * (prev_hl - ema_range)
+
+    if not na(array.get(today_profile, 0))
+        for i = 0 to 59
+            cv = array.get(today_profile, i)
+            if not na(cv)
+                old_cv = array.get(ema_cum_vol_arr, i)
+                new_cv = na(old_cv) ? cv : old_cv + ema_alpha * (cv - old_cv)
+                array.set(ema_cum_vol_arr, i, new_cv)
+        vol_day_count += 1
+
+    sess_high    := na
+    sess_low     := na
+    cum_vol      := 0.0
+    prev_slot_5m := -1
+    cur_est_range := na
+    for i = 0 to 59
+        array.set(today_profile, i, na)
+
+if in_session
+    sess_high := na(sess_high) ? high : math.max(sess_high, high)
+    sess_low  := na(sess_low)  ? low  : math.min(sess_low,  low)
+    cum_vol   += volume
+
+// ============================================================
+// EstRange Computation (5-min slots, 1-slot delayed)
+// ============================================================
+_slot_5m = in_session ? int(math.max(0, math.min(59, math.floor((_t - 525) / 5.0)))) : -1
+
+slot_changed_5m = _slot_5m >= 0 and _slot_5m != prev_slot_5m
+
+if slot_changed_5m
+    if prev_slot_5m >= 0
+        array.set(today_profile, prev_slot_5m, cum_vol)
+        if vol_day_count >= min_warmup and not na(ema_range)
+            ema_cv = array.get(ema_cum_vol_arr, prev_slot_5m)
+            if not na(ema_cv) and ema_cv > 0
+                vol_ratio     = cum_vol / ema_cv
+                cur_est_range := ema_range * vol_ratio
+    prev_slot_5m := _slot_5m
+
+// ============================================================
+// Compute display levels
+// ============================================================
+show_ok = in_session and _t >= show_start and not na(cur_est_range) and not na(sess_low) and not na(sess_high)
+
+// 100% levels
+est_high      = show_ok ? sess_low  + cur_est_range : na
+est_low       = show_ok ? sess_high - cur_est_range : na
+
+// Fraction levels
+frac_est_high = show_ok ? sess_low  + cur_est_range * cur_fraction : na
+frac_est_low  = show_ok ? sess_high - cur_est_range * cur_fraction : na
+
+// ============================================================
+// Plots
+// ============================================================
+// 100% Est High/Low (solid)
+plot(show_full ? est_high : na, "Est High 100%",
+     color=color.new(color.green, 40), linewidth=1, style=plot.style_linebr)
+plot(show_full ? est_low : na, "Est Low 100%",
+     color=color.new(color.red, 40), linewidth=1, style=plot.style_linebr)
+
+// Fraction Est High/Low (dashed via cross style)
+plot(show_frac ? frac_est_high : na, "Frac High",
+     color=color.new(color.green, 0), linewidth=2, style=plot.style_cross)
+plot(show_frac ? frac_est_low : na, "Frac Low",
+     color=color.new(color.red, 0), linewidth=2, style=plot.style_cross)
+
+// Daily label
+var bool day_label_done = false
+if entering_session
+    day_label_done := false
+if show_ok and not day_label_done
+    _wd_str = is_tue_wed ? "TW" : "MTF"
+    _frac_str = use_weekday_frac ? str.format(" ×{0,number,#.###}({1})", cur_fraction, _wd_str) : ""
+    label.new(bar_index, est_high,
+        str.format("ER {0,number,#}{1}", cur_est_range, _frac_str),
+        style=label.style_label_down, size=size.small,
+        color=color.new(color.gray, 50), textcolor=color.white)
+    day_label_done := true
