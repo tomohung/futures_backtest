@@ -170,17 +170,42 @@ if trigger_short
         style=label.style_label_down, size=size.normal,
         color=color.new(color.red, 0), textcolor=color.white)
 
-// Show sell strike as horizontal line after triggered (until 12:30)
-show_strike = day_triggered and in_session and _t <= 750
-plot(show_strike and signal_dir == 1  ? sell_strike : na, "Sell Put Strike",
-     color=color.new(color.orange, 20), linewidth=2, style=plot.style_linebr)
-plot(show_strike and signal_dir == -1 ? sell_strike : na, "Sell Call Strike",
-     color=color.new(color.orange, 20), linewidth=2, style=plot.style_linebr)
+// Show sell strike as horizontal line after triggered (until exit)
+var bool  strike_hit   = false   // sell strike has been touched → stop loss
+var bool  sl_alerted   = false
 
-// 12:30 exit reminder
+if entering_session
+    strike_hit := false
+    sl_alerted := false
+
+// Detect sell strike touch (stop loss trigger)
+if day_triggered and not strike_hit and in_session and _t <= 750
+    if signal_dir == 1 and low <= sell_strike
+        strike_hit := true
+    if signal_dir == -1 and high >= sell_strike
+        strike_hit := true
+
+show_strike = day_triggered and in_session and _t <= 750 and not strike_hit
+_strike_color = color.new(color.orange, 20)
+plot(show_strike and signal_dir == 1  ? sell_strike : na, "Sell Put Strike",
+     color=_strike_color, linewidth=2, style=plot.style_linebr)
+plot(show_strike and signal_dir == -1 ? sell_strike : na, "Sell Call Strike",
+     color=_strike_color, linewidth=2, style=plot.style_linebr)
+
+// Stop loss label when sell strike touched
+if strike_hit and not sl_alerted
+    _side = signal_dir == 1 ? "Put" : "Call"
+    label.new(bar_index, signal_dir == 1 ? low : high,
+        str.format("⚠️ Strike 被碰！\n立即買回 {0} Spread", _side),
+        style=signal_dir == 1 ? label.style_label_up : label.style_label_down,
+        size=size.normal,
+        color=color.new(color.red, 0), textcolor=color.white)
+    sl_alerted := true
+
+// 12:30 exit reminder (only if not already stopped out)
 t_exit = timestamp("Asia/Taipei", year, month, dayofmonth, 12, 30)
 at_exit = time >= t_exit and time < t_exit + 60000  // within 1 min of 12:30
-if at_exit and day_triggered
+if at_exit and day_triggered and not strike_hit
     _side = signal_dir == 1 ? "Put" : "Call"
     label.new(bar_index, close,
         str.format("⏰ 12:30 收工\n買回 {0} Spread", _side),
@@ -194,23 +219,29 @@ if entering_session and is_wed
         style=label.style_label_down, size=size.small,
         color=color.new(color.gray, 60), textcolor=color.white)
 
-// Background: entry window
+// Background: entry window / in position / stop loss
 bgcolor(in_entry_win and not day_triggered and ready and not is_wed ?
         color.new(color.blue, 94) : na, title="進場窗口")
-bgcolor(day_triggered and in_session and _t <= 750 ?
+bgcolor(day_triggered and not strike_hit and in_session and _t <= 750 ?
         color.new(color.green, 94) : na, title="持倉中")
+bgcolor(strike_hit and in_session and _t <= 750 ?
+        color.new(color.red, 90) : na, title="停損觸發")
 
 // ============================================================
 // Alerts
 // ============================================================
 alertcondition(trigger_long,
     title="Sell Put Spread",
-    message="EstRange Signal: Sell Put {{plot_4}} / Buy Put {{plot_4}} - {{plot_5}} (TX {{close}})")
+    message="EstRange: Sell Put Spread (TX {{close}})")
 
 alertcondition(trigger_short,
     title="Sell Call Spread",
-    message="EstRange Signal: Sell Call {{plot_4}} / Buy Call {{plot_4}} + {{plot_5}} (TX {{close}})")
+    message="EstRange: Sell Call Spread (TX {{close}})")
 
-alertcondition(at_exit and day_triggered,
+alertcondition(strike_hit and not sl_alerted,
+    title="Stop Loss — Buy Back",
+    message="⚠️ Sell strike touched! Buy back spread now (TX {{close}})")
+
+alertcondition(at_exit and day_triggered and not strike_hit,
     title="12:30 Exit",
     message="EstRange: 12:30 買回 Spread (TX {{close}})")
