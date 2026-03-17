@@ -2,11 +2,13 @@
 每日更新 pipeline 整合腳本
 
 執行順序：
-  Step 0: download.py         — 下載最新 zip 檔（可跳過）
-  Step 1: parse_rpt.py        — zip → ticks 表
-  Step 2: build_1m.py         — ticks → ohlcv_1m 表
-  Step 3: build_continuous.py — 換倉 + Panama adj_close
-  Step 4: validate.py         — 資料驗證（可跳過）
+  Step 0a: download.py          — 下載期貨最新 zip 檔（可跳過）
+  Step 0b: download_options.py  — 下載選擇權最新 zip 檔（可跳過）
+  Step 1a: parse_rpt.py         — 期貨 zip → ticks 表
+  Step 1b: parse_options_rpt.py — 選擇權 zip → ticks_options 表
+  Step 2:  build_1m.py          — ticks → ohlcv_1m 表
+  Step 3:  build_continuous.py  — 換倉 + Panama adj_close
+  Step 4:  validate.py          — 資料驗證（可跳過）
 
 使用 subprocess 呼叫各 step，避免 DuckDB 寫入鎖定衝突。
 """
@@ -134,16 +136,32 @@ def main() -> None:
             download_args += ["--start", args.start]
         ok = run_step(ETL_DIR / "download.py", download_args)
         if not ok:
-            print("\n[ABORT] 下載失敗，停止 pipeline。")
+            print("\n[ABORT] 期貨下載失敗，停止 pipeline。")
             sys.exit(1)
+
+        # Step 0b: Download options
+        options_download_args = [
+            "--end", args.end,
+            "--delay", str(args.delay),
+        ]
+        if args.start:
+            options_download_args += ["--start", args.start]
+        ok = run_step(ETL_DIR / "download_options.py", options_download_args)
+        if not ok:
+            print("\n[WARN] 選擇權下載失敗，繼續 pipeline。")
     else:
         print("\n[跳過] Step 0: 下載")
 
-    # Step 1: parse_rpt
+    # Step 1a: parse_rpt (futures)
     ok = run_step(ETL_DIR / "parse_rpt.py", ["--reimport-recent", str(args.reimport_recent)])
     if not ok:
         print("\n[ABORT] parse_rpt.py 失敗，停止 pipeline。")
         sys.exit(1)
+
+    # Step 1b: parse_options_rpt
+    ok = run_step(ETL_DIR / "parse_options_rpt.py", ["--reimport-recent", str(args.reimport_recent)])
+    if not ok:
+        print("\n[WARN] parse_options_rpt.py 失敗，選擇權資料未更新。")
 
     # Step 2: build_1m
     ok = run_step(ETL_DIR / "build_1m.py")

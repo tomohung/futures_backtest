@@ -1,5 +1,5 @@
 """
-下載期交所每日選擇權 tick zip → data/raw_options/OptionsDaily_YYYY_MM_DD.zip
+下載期交所每日選擇權 tick zip → data/raw_options/<年份>/OptionsDaily_YYYY_MM_DD.zip
 
 URL 格式：
   https://www.taifex.com.tw/file/taifex/Dailydownload/OptionsDailydownload/OptionsDaily_YYYY_MM_DD.zip
@@ -12,7 +12,7 @@ import re
 import time
 import urllib.error
 import urllib.request
-from datetime import date, timedelta, timezone
+from datetime import date, timedelta
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -36,7 +36,7 @@ def detect_start_date(backfill_days: int = 45) -> date:
 
 def existing_zip_dates() -> set[date]:
     dates: set[date] = set()
-    for p in RAW_DIR.glob("OptionsDaily_*.zip"):
+    for p in RAW_DIR.glob("**/OptionsDaily_*.zip"):
         d = date_from_zip(p)
         if d is not None:
             dates.add(d)
@@ -54,9 +54,10 @@ def download_one(target_date: date, delay: float = 1.0, force: bool = False) -> 
     if target_date.weekday() >= 5:
         return "weekend"
 
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
+    year_dir = RAW_DIR / str(target_date.year)
+    year_dir.mkdir(parents=True, exist_ok=True)
     fname = f"OptionsDaily_{target_date.year}_{target_date.month:02d}_{target_date.day:02d}.zip"
-    fpath = RAW_DIR / fname
+    fpath = year_dir / fname
 
     if fpath.exists() and not force:
         return "skipped"
@@ -134,7 +135,7 @@ def main() -> None:
         d += timedelta(days=1)
 
     print(f"\n下載完成：新增 {saved}，跳過 {skipped}，非交易日 {non_trading}")
-    print(f"磁碟 zip 總數：{len(list(RAW_DIR.glob('OptionsDaily_*.zip')))}")
+    print(f"磁碟 zip 總數：{len(list(RAW_DIR.glob('**/OptionsDaily_*.zip')))}")
 
 
 if __name__ == "__main__":
