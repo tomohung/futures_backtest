@@ -143,6 +143,7 @@ def main() -> None:
         options_download_args = [
             "--end", args.end,
             "--delay", str(args.delay),
+            "--redownload-recent", str(args.redownload_recent),
         ]
         if args.start:
             options_download_args += ["--start", args.start]

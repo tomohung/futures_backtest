@@ -105,6 +105,10 @@ def _parse_args() -> argparse.Namespace:
         help="強制重新下載已存在的 zip",
     )
     parser.add_argument(
+        "--redownload-recent", type=int, default=0, metavar="N",
+        help="強制重新下載磁碟上最近 N 個 zip（預設 0）",
+    )
+    parser.add_argument(
         "--delay", type=float, default=1.0,
         help="每次下載後等待秒數（預設 1.0）",
     )
@@ -121,20 +125,39 @@ def main() -> None:
     existing = existing_zip_dates()
     print(f"磁碟上已有 {len(existing)} 個 zip")
 
-    saved = skipped = non_trading = 0
+    # Determine force-redownload dates (N most recent zips on disk)
+    force_dates: set[date] = set()
+    if args.redownload_recent > 0:
+        all_zip_dates = sorted(existing)
+        force_dates = set(all_zip_dates[-args.redownload_recent:])
+        if force_dates:
+            print(f"強制重新下載最近 {len(force_dates)} 個 zip：{sorted(force_dates)}")
+
+    saved = skipped = non_trading = updated = 0
+    # Union of [start, end] and force_dates
+    all_dates: dict[date, bool] = {d: True for d in force_dates}
     d = start
     while d <= end:
-        result = download_one(d, delay=args.delay, force=args.force)
+        if d not in all_dates:
+            all_dates[d] = False
+        d += timedelta(days=1)
+
+    for d in sorted(all_dates):
+        force = args.force or all_dates[d]
+        result = download_one(d, delay=args.delay, force=force)
         if result == "saved":
-            print(f"  ✓ {d}")
-            saved += 1
+            if all_dates.get(d):
+                print(f"  ✓ {d} (重新下載)")
+                updated += 1
+            else:
+                print(f"  ✓ {d}")
+                saved += 1
         elif result == "skipped":
             skipped += 1
         elif result == "non_trading" or result == "weekend":
             non_trading += 1
-        d += timedelta(days=1)
 
-    print(f"\n下載完成：新增 {saved}，跳過 {skipped}，非交易日 {non_trading}")
+    print(f"\n下載完成：新增 {saved}，重新下載 {updated}，跳過 {skipped}，非交易日 {non_trading}")
     print(f"磁碟 zip 總數：{len(list(RAW_DIR.glob('**/OptionsDaily_*.zip')))}")
 
 
