@@ -85,6 +85,23 @@ CREATE TABLE ohlcv_1m (
 );
 ```
 
+#### ticks_options 表（選擇權原始 tick）
+```sql
+CREATE TABLE ticks_options (
+    trade_date     DATE,
+    symbol         VARCHAR,        -- 'TXO'
+    strike         DECIMAL(10,2),  -- 履約價
+    contract       VARCHAR,        -- 到期月份(週別)
+    put_call       VARCHAR,        -- 'C' or 'P'
+    trade_time     TIME,
+    price          DECIMAL(10,2),
+    volume         INT,
+    is_auction     BOOLEAN
+);
+```
+- 資料來源：`data/raw_options/` 下的 `OptionsDaily_YYYY_MM_DD.zip`
+- ETL：`src/etl/parse_options_rpt.py`（只保留 TXO，過濾 flex 合約）
+
 #### rollover_log 表
 ```sql
 CREATE TABLE rollover_log (
@@ -106,7 +123,8 @@ futures_backtest/
 ├── pyproject.toml
 ├── .tool-versions
 ├── data/
-│   ├── raw/              ← 原始 zip 檔（依年份子目錄，不納入版控）
+│   ├── raw/              ← 期貨原始 zip 檔（依年份子目錄，不納入版控）
+│   ├── raw_options/      ← 選擇權原始 zip 檔（依年份子目錄，不納入版控）
 │   └── futures.duckdb    ← DuckDB 資料庫（不納入版控）
 ├── specs/
 │   ├── daily_update.md   ← 每日更新系統規格
@@ -118,6 +136,7 @@ futures_backtest/
 │   │   ├── parse_rpt.py        ← zip/rpt → ticks 表 ✅
 │   │   ├── build_1m.py         ← ticks → ohlcv_1m ✅
 │   │   ├── build_continuous.py ← 換倉 + Panama adj_close ✅
+│   │   ├── parse_options_rpt.py ← options zip → ticks_options 表 ✅
 │   │   └── validate.py         ← 資料驗證 ✅
 │   ├── strategies/
 │   │   └── orb.py              ← ORBStrategy、ORBPhase4HybridStrategy ✅
