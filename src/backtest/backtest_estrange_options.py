@@ -173,6 +173,7 @@ def run_backtest(
     skip_wed: bool = False,
     skip_settlement: bool = True,
     max_spread: int | None = None,
+    min_gap: int = 50,
 ) -> pd.DataFrame:
     exit_time = time(int(exit_time_str.split(":")[0]), int(exit_time_str.split(":")[1]))
     entry_start = time(9, 30)
@@ -281,6 +282,10 @@ def run_backtest(
             er = touch_er
             est_high = touch_est_high
             est_low = touch_est_low
+
+            # Skip if Est High and Est Low are too close (large session range)
+            if est_high - est_low < min_gap:
+                continue
 
             # Determine trade
             contract = get_monthly_contract(td)
@@ -472,6 +477,7 @@ def main():
     parser.add_argument("--skip-wed", action="store_true", help="Skip all Wednesdays")
     parser.add_argument("--no-skip-settlement", action="store_true", help="Include settlement days")
     parser.add_argument("--max-spread", type=int, default=None, help="Max spread width (pts)")
+    parser.add_argument("--min-gap", type=int, default=50, help="Min est_high - est_low gap (pts, default 50)")
     parser.add_argument("--output", default=None, help="Save trades CSV")
     args = parser.parse_args()
 
@@ -484,6 +490,7 @@ def main():
         skip_wed=args.skip_wed,
         skip_settlement=not args.no_skip_settlement,
         max_spread=args.max_spread,
+        min_gap=args.min_gap,
     )
 
     print_summary(df_trades)
