@@ -156,22 +156,22 @@ plot(show_levels ? est_low : na, "Est Low",
 
 // Entry signal label
 if trigger_long
-    _type = "Sell Put"
-    _txt = str.format("🔔 {0}\nSell P {1} / Buy P {2}\nSpread {3}  ER {4,number,#}",
-                       _type, sell_strike, buy_strike, int(spread_w), cur_est_range)
+    // 賣權多頭價差 (Bull Put Spread) — 紅色，配合下單軟體
+    _txt = str.format("🔔 賣權多頭價差\n賣 P{0} / 買 P{1}\nSpread {2}  ER {3,number,#}",
+                       sell_strike, buy_strike, int(spread_w), cur_est_range)
     label.new(bar_index, low,
         _txt,
         style=label.style_label_up, size=size.normal,
-        color=color.new(color.green, 0), textcolor=color.white)
+        color=color.new(color.red, 0), textcolor=color.white)
 
 if trigger_short
-    _type = "Sell Call"
-    _txt = str.format("🔔 {0}\nSell C {1} / Buy C {2}\nSpread {3}  ER {4,number,#}",
-                       _type, sell_strike, buy_strike, int(spread_w), cur_est_range)
+    // 買權空頭價差 (Bear Call Spread) — 綠色，配合下單軟體
+    _txt = str.format("🔔 買權空頭價差\n賣 C{0} / 買 C{1}\nSpread {2}  ER {3,number,#}",
+                       sell_strike, buy_strike, int(spread_w), cur_est_range)
     label.new(bar_index, high,
         _txt,
         style=label.style_label_down, size=size.normal,
-        color=color.new(color.red, 0), textcolor=color.white)
+        color=color.new(color.green, 0), textcolor=color.white)
 
 // Show sell strike as horizontal line after triggered (until exit)
 var bool  strike_hit   = false   // sell strike has been touched → stop loss
@@ -190,16 +190,16 @@ if day_triggered and not strike_hit and in_session and _t <= 750
 
 show_strike = day_triggered and in_session and _t <= 750 and not strike_hit
 _strike_color = color.new(color.orange, 20)
-plot(show_strike and signal_dir == 1  ? sell_strike : na, "Sell Put Strike",
+plot(show_strike and signal_dir == 1  ? sell_strike : na, "賣權多頭 Strike",
      color=_strike_color, linewidth=2, style=plot.style_linebr)
-plot(show_strike and signal_dir == -1 ? sell_strike : na, "Sell Call Strike",
+plot(show_strike and signal_dir == -1 ? sell_strike : na, "買權空頭 Strike",
      color=_strike_color, linewidth=2, style=plot.style_linebr)
 
 // Stop loss label when sell strike touched
 if strike_hit and not sl_alerted
-    _side = signal_dir == 1 ? "Put" : "Call"
+    _side = signal_dir == 1 ? "賣權多頭" : "買權空頭"
     label.new(bar_index, signal_dir == 1 ? low : high,
-        str.format("⚠️ Strike 被碰！\n立即買回 {0} Spread", _side),
+        str.format("⚠️ Strike 被碰！\n立即買回{0}價差", _side),
         style=signal_dir == 1 ? label.style_label_up : label.style_label_down,
         size=size.normal,
         color=color.new(color.red, 0), textcolor=color.white)
@@ -209,9 +209,9 @@ if strike_hit and not sl_alerted
 t_exit = timestamp("Asia/Taipei", year, month, dayofmonth, 12, 30)
 at_exit = time >= t_exit and time < t_exit + 60000  // within 1 min of 12:30
 if at_exit and day_triggered and not strike_hit
-    _side = signal_dir == 1 ? "Put" : "Call"
+    _side = signal_dir == 1 ? "賣權多頭" : "買權空頭"
     label.new(bar_index, close,
-        str.format("⏰ 12:30 收工\n買回 {0} Spread", _side),
+        str.format("⏰ 12:30 收工\n買回{0}價差", _side),
         style=label.style_label_right, size=size.small,
         color=color.new(color.gray, 30), textcolor=color.white)
 
@@ -234,17 +234,17 @@ bgcolor(strike_hit and in_session and _t <= 750 ?
 // Alerts
 // ============================================================
 alertcondition(trigger_long,
-    title="Sell Put Spread",
-    message="EstRange: Sell Put Spread (TX {{close}})")
+    title="賣權多頭價差",
+    message="EstRange: 賣權多頭價差 (TX {{close}})")
 
 alertcondition(trigger_short,
-    title="Sell Call Spread",
-    message="EstRange: Sell Call Spread (TX {{close}})")
+    title="買權空頭價差",
+    message="EstRange: 買權空頭價差 (TX {{close}})")
 
 alertcondition(strike_hit and not sl_alerted,
-    title="Stop Loss — Buy Back",
-    message="⚠️ Sell strike touched! Buy back spread now (TX {{close}})")
+    title="Stop Loss — 買回價差",
+    message="⚠️ Strike 被碰！立即買回價差 (TX {{close}})")
 
 alertcondition(at_exit and day_triggered and not strike_hit,
-    title="12:30 Exit",
-    message="EstRange: 12:30 買回 Spread (TX {{close}})")
+    title="12:30 收工",
+    message="EstRange: 12:30 買回價差 (TX {{close}})")
