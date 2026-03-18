@@ -24,6 +24,9 @@ min_warmup   = input.int(3,  "最少暖機天數", minval=1, maxval=50)
 frac         = input.float(0.70, "Fraction", step=0.01, minval=0.3, maxval=1.0)
 spread_pct   = input.float(0.50, "Spread = ER ×", step=0.05, minval=0.1, maxval=1.0,
                            tooltip="Spread 寬度 = EstRange × 此值，round to 100")
+max_spread   = input.int(200, "Max Spread", minval=100, maxval=500, step=100,
+                         tooltip="Spread 寬度上限（看盤軟體限制）")
+skip_wed     = input.bool(true, "Skip Wed", tooltip="週三不做（雙邊觸及率高）")
 
 // ============================================================
 // Time
@@ -99,14 +102,14 @@ if slot_changed_5m
 // ============================================================
 // Trigger Levels + Signal
 // ============================================================
-ready = not na(cur_est_range) and not na(sess_low) and not na(sess_high) and not is_wed
+ready = not na(cur_est_range) and not na(sess_low) and not na(sess_high) and not (skip_wed and is_wed)
 
 est_high = ready ? sess_low  + cur_est_range * frac : na
 est_low  = ready ? sess_high - cur_est_range * frac : na
 
-// Spread width (round to 100, min 100)
+// Spread width (round to 100, min 100, cap at max_spread)
 _spread_raw = ready ? cur_est_range * spread_pct : na
-spread_w    = ready ? math.max(100, math.round(_spread_raw / 100) * 100) : na
+spread_w    = ready ? math.min(max_spread, math.max(100, math.round(_spread_raw / 100) * 100)) : na
 
 // Track if triggered today
 var bool  day_triggered  = false
@@ -213,14 +216,14 @@ if at_exit and day_triggered and not strike_hit
         color=color.new(color.gray, 30), textcolor=color.white)
 
 // Wed warning
-if entering_session and is_wed
+if entering_session and skip_wed and is_wed
     label.new(bar_index, high,
         "🚫 Wed — 不做",
         style=label.style_label_down, size=size.small,
         color=color.new(color.gray, 60), textcolor=color.white)
 
 // Background: entry window / in position / stop loss
-bgcolor(in_entry_win and not day_triggered and ready and not is_wed ?
+bgcolor(in_entry_win and not day_triggered and ready and not (skip_wed and is_wed) ?
         color.new(color.blue, 94) : na, title="進場窗口")
 bgcolor(day_triggered and not strike_hit and in_session and _t <= 750 ?
         color.new(color.green, 94) : na, title="持倉中")

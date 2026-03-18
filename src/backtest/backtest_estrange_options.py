@@ -148,6 +148,7 @@ def run_backtest(
     spread_pct: float = 0.50,
     exit_time_str: str = "12:30",
     skip_wed: bool = True,
+    max_spread: int | None = None,
 ) -> pd.DataFrame:
     exit_time = time(int(exit_time_str.split(":")[0]), int(exit_time_str.split(":")[1]))
     entry_start = time(9, 30)
@@ -249,6 +250,8 @@ def run_backtest(
             # Determine trade
             contract = get_monthly_contract(td)
             spread_width = max(round_to_100(er * spread_pct), 100)
+            if max_spread is not None:
+                spread_width = min(spread_width, max_spread)
 
             if touched_side == "high":
                 # Sell Put Spread: sell put at est_low strike, buy put spread_width below
@@ -413,6 +416,7 @@ def main():
     parser.add_argument("--spread-pct", type=float, default=0.50)
     parser.add_argument("--exit-time", default="12:30")
     parser.add_argument("--no-skip-wed", action="store_true")
+    parser.add_argument("--max-spread", type=int, default=None, help="Max spread width (pts)")
     parser.add_argument("--output", default=None, help="Save trades CSV")
     args = parser.parse_args()
 
@@ -423,6 +427,7 @@ def main():
         spread_pct=args.spread_pct,
         exit_time_str=args.exit_time,
         skip_wed=not args.no_skip_wed,
+        max_spread=args.max_spread,
     )
 
     print_summary(df_trades)
