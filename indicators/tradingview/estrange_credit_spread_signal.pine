@@ -26,7 +26,7 @@ spread_pct   = input.float(0.50, "Spread = ER ×", step=0.05, minval=0.1, maxval
                            tooltip="Spread 寬度 = EstRange × 此值，round to 100")
 max_spread   = input.int(200, "Max Spread", minval=100, maxval=500, step=100,
                          tooltip="Spread 寬度上限（看盤軟體限制）")
-skip_wed     = input.bool(true, "Skip Wed", tooltip="週三不做（雙邊觸及率高）")
+skip_settlement = input.bool(true, "Skip Settlement", tooltip="結算日不做（第三個週三，勝率僅 46%）")
 
 // ============================================================
 // Time
@@ -36,8 +36,12 @@ _m = minute(time, "Asia/Taipei")
 _t = _h * 60 + _m
 
 in_session    = _t >= 525 and _t < 825    // 08:45 ~ 13:44
-in_entry_win  = _t > 570 and _t <= 750    // 09:30 ~ 12:30
+in_entry_win  = _t >= 570 and _t <= 750   // 09:30 ~ 12:30
 is_wed        = dayofweek == dayofweek.wednesday
+
+// Detect 3rd Wednesday (settlement day)
+_dom = dayofmonth(time, "Asia/Taipei")
+is_3rd_wed = is_wed and _dom >= 15 and _dom <= 21
 
 var int prev_session_day = -1
 _cur_day = dayofmonth(time, "Asia/Taipei")
@@ -102,7 +106,7 @@ if slot_changed_5m
 // ============================================================
 // Trigger Levels + Signal
 // ============================================================
-ready = not na(cur_est_range) and not na(sess_low) and not na(sess_high) and not (skip_wed and is_wed)
+ready = not na(cur_est_range) and not na(sess_low) and not na(sess_high) and not (skip_settlement and is_3rd_wed)
 
 est_high = ready ? sess_low  + cur_est_range * frac : na
 est_low  = ready ? sess_high - cur_est_range * frac : na
@@ -147,12 +151,12 @@ if trigger_short
 // Display
 // ============================================================
 
-// Est High / Est Low lines (only during entry window)
-show_levels = ready and in_entry_win and not day_triggered
-plot(show_levels ? est_high : na, "Est High",
-     color=color.new(color.green, 30), linewidth=2, style=plot.style_linebr)
-plot(show_levels ? est_low : na, "Est Low",
-     color=color.new(color.red, 30), linewidth=2, style=plot.style_linebr)
+// Est High / Est Low lines (always show when available; dimmer after trigger or outside entry window)
+_lvl_bright = ready and in_entry_win and not day_triggered
+plot(ready ? est_high : na, "Est High",
+     color=color.new(color.green, _lvl_bright ? 30 : 70), linewidth=2, style=plot.style_linebr)
+plot(ready ? est_low : na, "Est Low",
+     color=color.new(color.red, _lvl_bright ? 30 : 70), linewidth=2, style=plot.style_linebr)
 
 // Entry signal label
 if trigger_long
@@ -215,15 +219,15 @@ if at_exit and day_triggered and not strike_hit
         style=label.style_label_right, size=size.small,
         color=color.new(color.gray, 30), textcolor=color.white)
 
-// Wed warning
-if entering_session and skip_wed and is_wed
+// Settlement day warning
+if entering_session and skip_settlement and is_3rd_wed
     label.new(bar_index, high,
-        "🚫 Wed — 不做",
+        "🚫 結算日 — 不做",
         style=label.style_label_down, size=size.small,
         color=color.new(color.gray, 60), textcolor=color.white)
 
 // Background: entry window / in position / stop loss
-bgcolor(in_entry_win and not day_triggered and ready and not (skip_wed and is_wed) ?
+bgcolor(in_entry_win and not day_triggered and ready and not (skip_settlement and is_3rd_wed) ?
         color.new(color.blue, 94) : na, title="進場窗口")
 bgcolor(day_triggered and not strike_hit and in_session and _t <= 750 ?
         color.new(color.green, 94) : na, title="持倉中")

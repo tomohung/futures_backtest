@@ -44,7 +44,7 @@ def get_monthly_contract(trade_date: date) -> str:
     first_wed = first_day + timedelta(days=(2 - first_day.weekday()) % 7)
     third_wed = first_wed + timedelta(weeks=2)
 
-    if trade_date >= third_wed:
+    if trade_date > third_wed:
         # Use next month
         if m == 12:
             y, m = y + 1, 1
@@ -123,22 +123,45 @@ def check_strike_touched(
     conn: duckdb.DuckDBPyConnection,
     trade_date: date,
     strike: int,
+    direction: str,
     after_time: time,
     before_time: time,
-) -> bool:
-    """Check if TX futures price touched or breached the given strike level."""
+) -> time | None:
+    """Check if TX futures price touched or breached the given strike level.
+
+    Parameters
+    ----------
+    direction : str
+        "down" for sell put (price drops to strike → low <= strike),
+        "up" for sell call (price rises to strike → high >= strike).
+
+    Returns the time of the first 1-min bar where the strike was breached,
+    or None if never breached.
+    """
+    if direction == "down":
+        condition = "low <= ?"
+    else:
+        condition = "high >= ?"
     row = conn.execute(
-        """
-        SELECT 1 FROM ohlcv_1m
+        f"""
+        SELECT CAST(timestamp AS TIME) FROM ohlcv_1m
         WHERE symbol = 'TX'
           AND CAST(timestamp AS DATE) = ?
           AND CAST(timestamp AS TIME) BETWEEN ? AND ?
-          AND (low <= ? AND high >= ?)
+          AND ({condition})
+        ORDER BY timestamp
         LIMIT 1
         """,
-        [trade_date, after_time, before_time, strike, strike],
+        [trade_date, after_time, before_time, strike],
     ).fetchone()
-    return row is not None
+    return row[0] if row else None
+
+
+def _third_wednesday(y: int, m: int) -> date:
+    """Return the 3rd Wednesday of the given year/month."""
+    first_day = date(y, m, 1)
+    first_wed = first_day + timedelta(days=(2 - first_day.weekday()) % 7)
+    return first_wed + timedelta(weeks=2)
 
 
 def run_backtest(
@@ -147,7 +170,8 @@ def run_backtest(
     fraction: float = 0.70,
     spread_pct: float = 0.50,
     exit_time_str: str = "12:30",
-    skip_wed: bool = True,
+    skip_wed: bool = False,
+    skip_settlement: bool = True,
     max_spread: int | None = None,
 ) -> pd.DataFrame:
     exit_time = time(int(exit_time_str.split(":")[0]), int(exit_time_str.split(":")[1]))
@@ -163,6 +187,13 @@ def run_backtest(
     dates = [d for d in dates if pd.Timestamp(start) <= d <= pd.Timestamp(end)]
     print(f"  Trading days in range: {len(dates)}")
 
+    # Pre-compute settlement dates
+    settlement_dates: set[date] = set()
+    if skip_settlement:
+        for y in range(int(start[:4]), int(end[:4]) + 1):
+            for m in range(1, 13):
+                settlement_dates.add(_third_wednesday(y, m))
+
     trades = []
 
     with duckdb.connect(DB_PATH, read_only=True) as conn:
@@ -172,6 +203,10 @@ def run_backtest(
 
             # Skip Wednesday
             if skip_wed and weekday == 2:
+                continue
+
+            # Skip settlement day (3rd Wednesday)
+            if skip_settlement and td in settlement_dates:
                 continue
 
             # Get day's 1-min bars
@@ -304,16 +339,34 @@ def run_backtest(
             max_loss = spread_width - credit
 
             # Check if sell_strike is touched between touch_time and exit_time
-            struck = check_strike_touched(conn, td, sell_strike, touch_time, exit_time)
+            # Sell put → price drops to strike ("down"); Sell call → price rises to strike ("up")
+            sl_direction = "down" if touched_side == "high" else "up"
+            struck_time = check_strike_touched(conn, td, sell_strike, sl_direction, touch_time, exit_time)
 
-            if struck:
-                # Check exit price at exit_time for partial loss assessment
-                # Conservative: assume full loss
-                pnl = -max_loss
+            if struck_time:
+                # Stop-loss: close spread at actual option prices when strike touched
+                close_sell = lookup_option_price(
+                    conn, td, contract, sell_strike, put_call, struck_time,
+                    time(min(struck_time.hour + (struck_time.minute + 5) // 60, 13),
+                         (struck_time.minute + 5) % 60),
+                )
+                close_buy = lookup_option_price(
+                    conn, td, contract, buy_strike, put_call, struck_time,
+                    time(min(struck_time.hour + (struck_time.minute + 5) // 60, 13),
+                         (struck_time.minute + 5) % 60),
+                )
+                if close_sell is not None and close_buy is not None:
+                    close_debit = close_sell - close_buy
+                    pnl = credit - close_debit
+                else:
+                    # Fallback: assume max loss if no option prices available
+                    pnl = -max_loss
                 result = "Loss"
+                exit_at = struck_time.strftime("%H:%M")
             else:
                 pnl = credit
                 result = "Win"
+                exit_at = exit_time.strftime("%H:%M")
 
             trades.append({
                 "date": td,
@@ -326,6 +379,7 @@ def run_backtest(
                 "buy_strike": buy_strike,
                 "contract": contract,
                 "touch_time": touch_time.strftime("%H:%M"),
+                "exit_time": exit_at,
                 "sell_premium": sell_premium,
                 "buy_premium": buy_premium,
                 "credit": round(credit, 1),
@@ -390,7 +444,7 @@ def print_summary(df_trades: pd.DataFrame) -> None:
     # By weekday
     print(f"\n{'--- By Weekday ---':^60}")
     print(f"  {'Day':<5} {'n':>4} {'WR%':>6} {'PnL':>10}")
-    for day in ["Mon", "Tue", "Thu", "Fri"]:
+    for day in ["Mon", "Tue", "Wed", "Thu", "Fri"]:
         sub = df_trades[df_trades["weekday"] == day]
         if sub.empty:
             continue
@@ -415,7 +469,8 @@ def main():
     parser.add_argument("--fraction", type=float, default=0.70)
     parser.add_argument("--spread-pct", type=float, default=0.50)
     parser.add_argument("--exit-time", default="12:30")
-    parser.add_argument("--no-skip-wed", action="store_true")
+    parser.add_argument("--skip-wed", action="store_true", help="Skip all Wednesdays")
+    parser.add_argument("--no-skip-settlement", action="store_true", help="Include settlement days")
     parser.add_argument("--max-spread", type=int, default=None, help="Max spread width (pts)")
     parser.add_argument("--output", default=None, help="Save trades CSV")
     args = parser.parse_args()
@@ -426,7 +481,8 @@ def main():
         fraction=args.fraction,
         spread_pct=args.spread_pct,
         exit_time_str=args.exit_time,
-        skip_wed=not args.no_skip_wed,
+        skip_wed=args.skip_wed,
+        skip_settlement=not args.no_skip_settlement,
         max_spread=args.max_spread,
     )
 
