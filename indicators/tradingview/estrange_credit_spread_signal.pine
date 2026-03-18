@@ -157,8 +157,8 @@ plot(show_levels ? est_low : na, "Est Low",
 // Entry signal label
 if trigger_long
     // 賣權多頭價差 (Bull Put Spread) — 紅色，配合下單軟體
-    _txt = str.format("🔔 賣權多頭價差\n賣 P{0} / 買 P{1}\nSpread {2}  ER {3,number,#}",
-                       sell_strike, buy_strike, int(spread_w), cur_est_range)
+    _txt = str.format("🔔 賣權多頭價差\n買 P{0} / 賣 P{1}\nSpread {2}  ER {3,number,#}",
+                       buy_strike, sell_strike, int(spread_w), cur_est_range)
     label.new(bar_index, low,
         _txt,
         style=label.style_label_up, size=size.normal,
@@ -166,8 +166,8 @@ if trigger_long
 
 if trigger_short
     // 買權空頭價差 (Bear Call Spread) — 綠色，配合下單軟體
-    _txt = str.format("🔔 買權空頭價差\n賣 C{0} / 買 C{1}\nSpread {2}  ER {3,number,#}",
-                       sell_strike, buy_strike, int(spread_w), cur_est_range)
+    _txt = str.format("🔔 買權空頭價差\n買 C{0} / 賣 C{1}\nSpread {2}  ER {3,number,#}",
+                       buy_strike, sell_strike, int(spread_w), cur_est_range)
     label.new(bar_index, high,
         _txt,
         style=label.style_label_down, size=size.normal,
