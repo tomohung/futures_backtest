@@ -1,0 +1,9 @@
+//@version=6
+indicator("6 SMA", overlay=true)
+
+plot(ta.sma(close, 5), "SMA 5", color.red)
+plot(ta.sma(close, 10), "SMA 10", color.orange)
+plot(ta.sma(close, 21), "SMA 21", color.yellow)
+plot(ta.sma(close, 65), "SMA 65", color.green)
+plot(ta.sma(close, 130), "SMA 130", color.blue)
+plot(ta.sma(close, 233), "SMA 233", color.purple)

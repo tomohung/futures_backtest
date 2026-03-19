@@ -150,6 +150,8 @@ futures_backtest/
 │       ├── explore_*.py         ← 探索性分析 ✅
 │       ├── analyze.py           ← 交易分析 ✅
 │       └── summary_all.py       ← 策略跨年度比較 ✅
+├── indicators/
+│   └── tradingview/      ← TradingView Pine Script 指標
 ├── output/               ← 回測結果 CSV（不納入版控）
 ├── notebooks/
 └── tests/
