@@ -318,7 +318,7 @@ def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "all"
 
     # Step 1 best exits (from previous run, or re-run)
-    BEST_EXITS = {"Mon": "13:44", "Tue": "13:00", "Wed": "10:30", "Thu": "11:30", "Fri": "12:00"}
+    BEST_EXITS = {"Mon": "11:30", "Tue": "11:30", "Wed": "10:30", "Thu": "11:30", "Fri": "12:00"}
     D_COMBO = ["Mon", "Tue", "Wed", "Fri"]
 
     if mode in ("all", "step1"):

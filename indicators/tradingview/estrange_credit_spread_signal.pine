@@ -8,7 +8,7 @@
 //   D combo: Mon+Tue+Wed+Fri，skip Thu
 //   碰到 Est High → Sell Put Spread
 //   碰到 Est Low  → Sell Call Spread
-//   逐 weekday exit: Mon=13:44, Tue=13:00, Wed=10:30, Fri=12:00
+//   逐 weekday exit: Mon=11:30, Tue=11:30, Wed=10:30, Fri=12:00
 //   min_credit=5, skip settlement Wed
 // ============================================================
 //@version=6
@@ -49,8 +49,8 @@ is_mon        = dayofweek == dayofweek.monday
 is_tue        = dayofweek == dayofweek.tuesday
 
 // Per-weekday exit time (minutes from midnight)
-// Mon=13:44(824), Tue=13:00(780), Wed=10:30(630), Fri=12:00(720)
-_exit_t = is_mon ? 824 : is_tue ? 780 : is_wed ? 630 : is_fri ? 720 : 824
+// Mon=11:30(690), Tue=11:30(690), Wed=10:30(630), Fri=12:00(720)
+_exit_t = is_mon ? 690 : is_tue ? 690 : is_wed ? 630 : is_fri ? 720 : 690
 
 in_entry_win  = _t >= 570 and _t <= _exit_t   // 09:30 ~ weekday exit
 
