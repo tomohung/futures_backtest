@@ -222,6 +222,26 @@ if at_exit and day_triggered and not strike_hit
         style=label.style_label_right, size=size.small,
         color=color.new(color.gray, 30), textcolor=color.white)
 
+// Preparation labels on the last bar (one at Est High, one at Est Low)
+var label _prep_high_lbl = na
+var label _prep_low_lbl  = na
+if barstate.islast and ready and not day_triggered
+    _put_sell  = int(math.round(est_low / 100) * 100)
+    _put_buy   = _put_sell - int(spread_w)
+    _call_sell = int(math.round(est_high / 100) * 100)
+    _call_buy  = _call_sell + int(spread_w)
+    if not na(_prep_high_lbl)
+        label.delete(_prep_high_lbl)
+    if not na(_prep_low_lbl)
+        label.delete(_prep_low_lbl)
+    _prep_high_lbl := label.new(bar_index + 3, est_high, str.format("📋 賣權多頭價差\n買 P{0} / 賣 P{1}\nSpread {2}", _put_buy, _put_sell, int(spread_w)), style=label.style_label_left, size=size.normal, color=color.new(color.red, 20), textcolor=color.white)
+    _prep_low_lbl := label.new(bar_index + 3, est_low, str.format("📋 買權空頭價差\n買 C{0} / 賣 C{1}\nSpread {2}", _call_buy, _call_sell, int(spread_w)), style=label.style_label_left, size=size.normal, color=color.new(color.green, 20), textcolor=color.white)
+if barstate.islast and day_triggered
+    if not na(_prep_high_lbl)
+        label.delete(_prep_high_lbl)
+    if not na(_prep_low_lbl)
+        label.delete(_prep_low_lbl)
+
 // Settlement day warning
 if entering_session and skip_settlement and is_3rd_wed
     label.new(bar_index, high,
