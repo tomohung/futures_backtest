@@ -5,7 +5,7 @@ Entry: ORB breakout (8:45–8:57 range, 8:58–9:15 window), long-only by defaul
 
 Entry filters (all must pass):
   1. Close > or_high (upward breakout)
-  2. Close30 > MA30_20 (30m 20MA uptrend, from continuous day+night series)
+  2. Close30 > MA30_20 (30m 20MA uptrend, day-session only)
   3. or_high > max(BigCost1..N) + 0.5 × sl_dist  (breakout above institutional cost)
   4. 0.5 × RollingOR ≤ ORWidth ≤ 1.5 × RollingOR (normal opening range width)
 

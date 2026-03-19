@@ -231,8 +231,8 @@ def load_data_for_orb_est_hl(start=None, end=None):
     Columns added:
         EmaHL, SatZoneUpper, SatZoneLower, EstHL, EstHighLevel, EstLowLevel, EmaVol
             — from compute_estimate_hl_zones()
-        MA30_20  — 20-period MA of 30m closes (continuous day+night), 1-slot delayed
-        Close30  — last 30m close, 1-slot delayed (for direction comparison)
+        MA30_20  — 20-period MA of 30m closes (day-session only), 1-slot delayed
+        Close30  — last 30m close (day-session only), 1-slot delayed
         BigCost  — yesterday's institutional cost (heavy-volume VWAP)
     """
     import pandas as pd
@@ -293,9 +293,8 @@ def load_data_for_orb_est_hl(start=None, end=None):
     trend_ma = df_all["close"].rolling(n_bars, min_periods=n_bars).mean()
     df_day["TrendMA"] = trend_ma.reindex(df_day.index)
 
-    # 30m 20MA from continuous series (day + night)
-    # Default 30min grid: 8:00, 8:30, 9:00, ... so 8:30–8:59 bar labeled 8:30
-    s30 = df_all["close"].resample("30min").last()
+    # 30m 20MA from day-session only (08:45–13:45)
+    s30 = df_day["Close"].resample("30min").last().dropna()
     ma30_20 = s30.rolling(20, min_periods=20).mean()
     # shift(1): value at label T reflects the closed bar ending at T-30min (no lookahead)
     ma30_20_shifted = ma30_20.shift(1)
