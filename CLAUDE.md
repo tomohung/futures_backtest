@@ -100,7 +100,8 @@ CREATE TABLE ticks_options (
 );
 ```
 - 資料來源：`data/raw_options/` 下的 `OptionsDaily_YYYY_MM_DD.zip`
-- ETL：`src/etl/parse_options_rpt.py`（只保留 TXO，過濾 flex 合約）
+- ETL：`src/etl/parse_options_rpt.py`（只保留 TXO，過濾價差合約）
+- 合約格式：`YYYYMM`（月合約，第三週三到期）、`YYYYMMWn`（週三到期）、`YYYYMMFn`（週五到期，2025-06-27 起）
 
 #### rollover_log 表
 ```sql

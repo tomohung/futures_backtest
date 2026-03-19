@@ -68,9 +68,9 @@ def parse_zip(zip_path: Path) -> pd.DataFrame:
     for col in df.columns:
         df[col] = df[col].str.strip()
 
-    # Filter: TXO only, skip flex contracts (contain "F")
+    # Filter: TXO only, skip spread contracts (contain "/")
     df = df[df["商品代號"] == "TXO"].copy()
-    df = df[~df["到期月份(週別)"].str.contains("F", na=False)]
+    df = df[~df["到期月份(週別)"].str.contains("/", na=False)]
     if df.empty:
         return pd.DataFrame()
 
@@ -153,6 +153,13 @@ def _parse_args() -> argparse.Namespace:
         metavar="N",
         help="強制重新匯入磁碟上最新 N 個 zip 日期的資料（先刪後插，預設 2）",
     )
+    parser.add_argument(
+        "--reimport-from",
+        type=str,
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="強制重新匯入指定日期之後（含）的所有資料（先刪後插）",
+    )
     return parser.parse_args()
 
 
@@ -162,6 +169,16 @@ def main() -> None:
 
     with duckdb.connect(str(DB_PATH)) as conn:
         init_db(conn)
+
+        # --reimport-from: 刪除指定日期之後（含）的所有資料
+        if args.reimport_from:
+            from_date = date.fromisoformat(args.reimport_from)
+            count = conn.execute(
+                "SELECT COUNT(*) FROM ticks_options WHERE trade_date >= ?", [from_date]
+            ).fetchone()[0]
+            if count > 0:
+                conn.execute("DELETE FROM ticks_options WHERE trade_date >= ?", [from_date])
+                print(f"已刪除 {from_date} 起的 {count:,} 筆 ticks_options")
 
         # 刪除最近 N 個 zip 日期的 ticks_options，強制重新匯入
         reimport_dates = get_recent_zip_dates(args.reimport_recent)

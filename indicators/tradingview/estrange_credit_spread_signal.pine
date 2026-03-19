@@ -4,11 +4,12 @@
 // 在台指期 1 分 K 上顯示選擇權價差單進場訊號。
 // 碰到 EstRange 水位時，跳出要下的單（strike + 方向）。
 //
-// 策略：
-//   09:30~12:30 觀察，碰到一邊就做對側 credit spread
+// 策略（2026-03-19 weekday optimization）：
+//   D combo: Mon+Tue+Wed+Fri，skip Thu
 //   碰到 Est High → Sell Put Spread
 //   碰到 Est Low  → Sell Call Spread
-//   Skip Wed，月選，12:30 收工
+//   逐 weekday exit: Mon=13:44, Tue=13:00, Wed=10:30, Fri=12:00
+//   min_credit=5, skip settlement Wed
 // ============================================================
 //@version=6
 indicator(
@@ -21,13 +22,16 @@ indicator(
 // ============================================================
 ema_period   = input.int(20, "EMA Period", minval=5, maxval=100)
 min_warmup   = input.int(3,  "最少暖機天數", minval=1, maxval=50)
-frac         = input.float(0.70, "Fraction", step=0.01, minval=0.3, maxval=1.0)
+frac         = input.float(0.65, "Fraction", step=0.01, minval=0.3, maxval=1.0)
 spread_pct   = input.float(0.50, "Spread = ER ×", step=0.05, minval=0.1, maxval=1.0,
                            tooltip="Spread 寬度 = EstRange × 此值，round to 100")
 max_spread   = input.int(200, "Max Spread", minval=100, maxval=500, step=100,
                          tooltip="Spread 寬度上限（看盤軟體限制）")
 min_gap      = input.int(50, "Min Gap", minval=0, maxval=200, step=10,
                          tooltip="Est High - Est Low 最小間距（< 此值不做，避免大波動日）")
+min_credit   = input.float(5.0, "Min Credit", step=1.0, minval=0, maxval=50,
+                           tooltip="Credit 低於此值不做（Wed/Fri DTE=0 扣手續費後不划算）")
+skip_thu     = input.bool(true, "Skip Thursday", tooltip="Thu 不做（所有 exit time 都虧損）")
 skip_settlement = input.bool(true, "Skip Settlement", tooltip="結算日不做（第三個週三，勝率僅 46%）")
 
 // ============================================================
@@ -38,8 +42,17 @@ _m = minute(time, "Asia/Taipei")
 _t = _h * 60 + _m
 
 in_session    = _t >= 525 and _t < 825    // 08:45 ~ 13:44
-in_entry_win  = _t >= 570 and _t <= 750   // 09:30 ~ 12:30
 is_wed        = dayofweek == dayofweek.wednesday
+is_thu        = dayofweek == dayofweek.thursday
+is_fri        = dayofweek == dayofweek.friday
+is_mon        = dayofweek == dayofweek.monday
+is_tue        = dayofweek == dayofweek.tuesday
+
+// Per-weekday exit time (minutes from midnight)
+// Mon=13:44(824), Tue=13:00(780), Wed=10:30(630), Fri=12:00(720)
+_exit_t = is_mon ? 824 : is_tue ? 780 : is_wed ? 630 : is_fri ? 720 : 824
+
+in_entry_win  = _t >= 570 and _t <= _exit_t   // 09:30 ~ weekday exit
 
 // Detect 3rd Wednesday (settlement day)
 _dom = dayofmonth(time, "Asia/Taipei")
@@ -108,7 +121,7 @@ if slot_changed_5m
 // ============================================================
 // Trigger Levels + Signal
 // ============================================================
-ready = not na(cur_est_range) and not na(sess_low) and not na(sess_high) and not (skip_settlement and is_3rd_wed)
+ready = not na(cur_est_range) and not na(sess_low) and not na(sess_high) and not (skip_settlement and is_3rd_wed) and not (skip_thu and is_thu)
 
 est_high = ready ? sess_low  + cur_est_range * frac : na
 est_low  = ready ? sess_high - cur_est_range * frac : na
@@ -162,10 +175,12 @@ plot(ready ? est_low : na, "Est Low",
      color=color.new(color.red, _lvl_bright ? 30 : 70), linewidth=2, style=plot.style_linebr)
 
 // Entry signal label
+_cr_note = min_credit > 0 ? str.format("\nCredit < {0} 不做", min_credit) : ""
+
 if trigger_long
     // 賣權多頭價差 (Bull Put Spread) — 紅色，配合下單軟體
-    _txt = str.format("🔔 賣權多頭價差\n買 P{0} / 賣 P{1}\nSpread {2}  ER {3,number,#}",
-                       buy_strike, sell_strike, int(spread_w), cur_est_range)
+    _txt = str.format("賣權多頭價差\n買 P{0} / 賣 P{1}\nSpread {2}  ER {3,number,#}{4}",
+                       buy_strike, sell_strike, int(spread_w), cur_est_range, _cr_note)
     label.new(bar_index, low,
         _txt,
         style=label.style_label_up, size=size.normal,
@@ -173,8 +188,8 @@ if trigger_long
 
 if trigger_short
     // 買權空頭價差 (Bear Call Spread) — 綠色，配合下單軟體
-    _txt = str.format("🔔 買權空頭價差\n買 C{0} / 賣 C{1}\nSpread {2}  ER {3,number,#}",
-                       buy_strike, sell_strike, int(spread_w), cur_est_range)
+    _txt = str.format("買權空頭價差\n買 C{0} / 賣 C{1}\nSpread {2}  ER {3,number,#}{4}",
+                       buy_strike, sell_strike, int(spread_w), cur_est_range, _cr_note)
     label.new(bar_index, high,
         _txt,
         style=label.style_label_down, size=size.normal,
@@ -189,13 +204,13 @@ if entering_session
     sl_alerted := false
 
 // Detect sell strike touch (stop loss trigger)
-if day_triggered and not strike_hit and in_session and _t <= 750
+if day_triggered and not strike_hit and in_session and _t <= _exit_t
     if signal_dir == 1 and low <= sell_strike
         strike_hit := true
     if signal_dir == -1 and high >= sell_strike
         strike_hit := true
 
-show_strike = day_triggered and in_session and _t <= 750 and not strike_hit
+show_strike = day_triggered and in_session and _t <= _exit_t and not strike_hit
 _strike_color = color.new(color.orange, 20)
 plot(show_strike and signal_dir == 1  ? sell_strike : na, "賣權多頭 Strike",
      color=_strike_color, linewidth=2, style=plot.style_linebr)
@@ -212,20 +227,27 @@ if strike_hit and not sl_alerted
         color=color.new(color.red, 0), textcolor=color.white)
     sl_alerted := true
 
-// 12:30 exit reminder (only if not already stopped out)
-t_exit = timestamp("Asia/Taipei", year, month, dayofmonth, 12, 30)
-at_exit = time >= t_exit and time < t_exit + 60000  // within 1 min of 12:30
+// Exit reminder at per-weekday exit time (only if not already stopped out)
+_exit_h = int(math.floor(_exit_t / 60))
+_exit_m = _exit_t % 60
+t_exit = timestamp("Asia/Taipei", year, month, dayofmonth, _exit_h, _exit_m)
+at_exit = time >= t_exit and time < t_exit + 60000  // within 1 min of exit
+_exit_label = str.format("{0,number,00}:{1,number,00}", _exit_h, _exit_m)
 if at_exit and day_triggered and not strike_hit
     _side = signal_dir == 1 ? "賣權多頭" : "買權空頭"
     label.new(bar_index, close,
-        str.format("⏰ 12:30 收工\n買回{0}價差", _side),
+        str.format("{0} 收工\n買回{1}價差", _exit_label, _side),
         style=label.style_label_right, size=size.small,
         color=color.new(color.gray, 30), textcolor=color.white)
 
 // Preparation labels on the last bar (one at Est High, one at Est Low)
+// Show only when: ready, not triggered, still within entry window
+// Delete when: triggered, past exit time, or skip day
 var label _prep_high_lbl = na
 var label _prep_low_lbl  = na
-if barstate.islast and ready and not day_triggered
+_show_prep = barstate.islast and ready and not day_triggered and in_entry_win
+_hide_prep = barstate.islast and (day_triggered or _t > _exit_t or not ready)
+if _show_prep
     _put_sell  = int(math.round(est_low / 100) * 100)
     _put_buy   = _put_sell - int(spread_w)
     _call_sell = int(math.round(est_high / 100) * 100)
@@ -236,25 +258,33 @@ if barstate.islast and ready and not day_triggered
         label.delete(_prep_low_lbl)
     _prep_high_lbl := label.new(bar_index + 3, est_high, str.format("📋 賣權多頭價差\n買 P{0} / 賣 P{1}\nSpread {2}", _put_buy, _put_sell, int(spread_w)), style=label.style_label_left, size=size.normal, color=color.new(color.red, 20), textcolor=color.white)
     _prep_low_lbl := label.new(bar_index + 3, est_low, str.format("📋 買權空頭價差\n買 C{0} / 賣 C{1}\nSpread {2}", _call_buy, _call_sell, int(spread_w)), style=label.style_label_left, size=size.normal, color=color.new(color.green, 20), textcolor=color.white)
-if barstate.islast and day_triggered
+if _hide_prep
     if not na(_prep_high_lbl)
         label.delete(_prep_high_lbl)
+        _prep_high_lbl := na
     if not na(_prep_low_lbl)
         label.delete(_prep_low_lbl)
+        _prep_low_lbl := na
 
-// Settlement day warning
+// Skip day warnings
 if entering_session and skip_settlement and is_3rd_wed
     label.new(bar_index, high,
-        "🚫 結算日 — 不做",
+        "結算日 — 不做",
+        style=label.style_label_down, size=size.small,
+        color=color.new(color.gray, 60), textcolor=color.white)
+
+if entering_session and skip_thu and is_thu
+    label.new(bar_index, high,
+        "Thu — 不做",
         style=label.style_label_down, size=size.small,
         color=color.new(color.gray, 60), textcolor=color.white)
 
 // Background: entry window / in position / stop loss
-bgcolor(in_entry_win and not day_triggered and ready and not (skip_settlement and is_3rd_wed) ?
+bgcolor(in_entry_win and not day_triggered and ready and not (skip_settlement and is_3rd_wed) and not (skip_thu and is_thu) ?
         color.new(color.blue, 94) : na, title="進場窗口")
-bgcolor(day_triggered and not strike_hit and in_session and _t <= 750 ?
+bgcolor(day_triggered and not strike_hit and in_session and _t <= _exit_t ?
         color.new(color.green, 94) : na, title="持倉中")
-bgcolor(strike_hit and in_session and _t <= 750 ?
+bgcolor(strike_hit and in_session and _t <= _exit_t ?
         color.new(color.red, 90) : na, title="停損觸發")
 
 // ============================================================
@@ -273,5 +303,5 @@ alertcondition(strike_hit and not sl_alerted,
     message="⚠️ Strike 被碰！立即買回價差 (TX {{close}})")
 
 alertcondition(at_exit and day_triggered and not strike_hit,
-    title="12:30 收工",
-    message="EstRange: 12:30 買回價差 (TX {{close}})")
+    title="Exit — 買回價差",
+    message="EstRange: 收工買回價差 (TX {{close}})")
