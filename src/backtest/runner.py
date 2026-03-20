@@ -214,6 +214,7 @@ def load_data_with_night_ma(start=None, end=None, trend_ma_days=10, rolling_or_w
 
     # Estimated H-L zones (must run on full history BEFORE date filtering)
     if estimate_hl:
+        adjust_settlement_volume(df_day)
         from src.backtest.estimate_hl import compute_estimate_hl_zones
         df_day = compute_estimate_hl_zones(df_day)
 
@@ -223,6 +224,69 @@ def load_data_with_night_ma(start=None, end=None, trend_ma_days=10, rolling_or_w
         df_day = df_day[df_day.index <= end]
 
     return df_day
+
+
+def _settlement_dates(trading_dates: set) -> set:
+    """Return actual TX monthly settlement dates.
+
+    Settlement = 3rd Wednesday of each month.  If that day is a holiday
+    (not in *trading_dates*), roll forward to the next trading day.
+    """
+    from datetime import date, timedelta
+    if not trading_dates:
+        return set()
+    min_year = min(d.year for d in trading_dates)
+    max_year = max(d.year for d in trading_dates)
+    dates = set()
+    for y in range(min_year, max_year + 1):
+        for m in range(1, 13):
+            d = date(y, m, 1)
+            wed = d + timedelta(days=(2 - d.weekday()) % 7)
+            third_wed = wed + timedelta(weeks=2)
+            actual = third_wed
+            # Roll forward if holiday
+            while actual not in trading_dates:
+                actual += timedelta(days=1)
+                if (actual - third_wed).days > 10:
+                    actual = None  # safety: give up
+                    break
+            if actual is not None:
+                dates.add(actual)
+    return dates
+
+
+# Settlement day volume multiplier: empirical ratio of combined (all TX
+# contracts) volume to dominant-contract volume, measured across 61 settlement
+# days (2021-2026).  Stable at ~1.9 across all intra-day time slots.
+_SETTLEMENT_VOL_MULTIPLIER = 1.9
+
+
+def adjust_settlement_volume(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Multiply Volume by settlement multiplier on settlement days.
+
+    On monthly settlement (3rd Wednesday, or next trading day if holiday),
+    volume splits ~55/45 between new and old contracts.  ohlcv_1m only stores
+    the dominant contract's volume, so EstRange underestimates without this.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Day-session 1-min OHLCV with DatetimeIndex and a ``Volume`` column.
+
+    Returns
+    -------
+    pd.DataFrame
+        Same DataFrame with Volume adjusted on settlement days.
+    """
+    all_trading_dates = set(df.index.normalize().map(lambda ts: ts.date()))
+    settle_days = _settlement_dates(all_trading_dates)
+    settle_mask = df.index.normalize().map(lambda ts: ts.date() in settle_days)
+    if settle_mask.any():
+        df.loc[settle_mask, "Volume"] = (
+            (df.loc[settle_mask, "Volume"] * _SETTLEMENT_VOL_MULTIPLIER)
+            .round().astype(df["Volume"].dtype)
+        )
+    return df
 
 
 def load_data_for_orb_est_hl(start=None, end=None):
@@ -272,6 +336,8 @@ def load_data_for_orb_est_hl(start=None, end=None):
         """).df()
 
     df_day.columns = ["Open", "High", "Low", "Close", "Volume"]
+
+    adjust_settlement_volume(df_day)
 
     # Estimate H-L zones (must run on full history before date filtering)
     from src.backtest.estimate_hl import compute_estimate_hl_zones, compute_vol_estimated_range
@@ -447,6 +513,8 @@ def load_data_for_reversal(start=None, end=None):
         """).df()
 
     df_day.columns = ["Open", "High", "Low", "Close", "Volume"]
+
+    adjust_settlement_volume(df_day)
 
     # EstHL zones (must run on full history before date filtering)
     df_day = compute_estimate_hl_zones(df_day)

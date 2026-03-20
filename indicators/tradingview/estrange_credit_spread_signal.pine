@@ -63,9 +63,23 @@ _entry_end_t = _exit_t - min_hold_min
 in_entry_win  = _t >= 570 and _t <= _entry_end_t   // 09:30 ~ (exit - min_hold)
 in_display_win = _t >= 555 and _t <= _exit_t         // 09:15 ~ exit（顯示水位用）
 
-// Detect 3rd Wednesday (settlement day)
+// Detect settlement day — 3rd Wednesday, or next trading day if holiday
+// On settlement days, dominant contract shows ~55% of total volume → × 1.9
 _dom = dayofmonth(time, "Asia/Taipei")
-is_3rd_wed = is_wed and _dom >= 15 and _dom <= 21
+_cur_dow = dayofweek   // 1=Sun..7=Sat
+_cur_month = month(time, "Asia/Taipei")
+_days_from_1st = _dom - 1
+_dow_1st = ((_cur_dow - 1 - (_days_from_1st % 7) + 7) % 7) + 1
+_first_wed = _dow_1st <= 4 ? 1 + (4 - _dow_1st) : 1 + (11 - _dow_1st)
+_third_wed_dom = _first_wed + 14
+var int _last_settle_month = -1
+var bool is_settlement_day = false
+if entering_session
+    is_settlement_day := false
+    if _cur_month != _last_settle_month and _dom >= _third_wed_dom
+        is_settlement_day := true
+        _last_settle_month := _cur_month
+settle_vol_mult = is_settlement_day ? 1.9 : 1.0
 
 var int prev_session_day = -1
 _cur_day = dayofmonth(time, "Asia/Taipei")
@@ -113,7 +127,7 @@ if entering_session
 if in_session
     sess_high := na(sess_high) ? high : math.max(sess_high, high)
     sess_low  := na(sess_low)  ? low  : math.min(sess_low,  low)
-    cum_vol   += volume
+    cum_vol   += volume * settle_vol_mult
 
 _slot_5m = in_session ? int(math.max(0, math.min(59, math.floor((_t - 525) / 5.0)))) : -1
 slot_changed_5m = _slot_5m >= 0 and _slot_5m != prev_slot_5m
@@ -130,7 +144,7 @@ if slot_changed_5m
 // ============================================================
 // Trigger Levels + Signal
 // ============================================================
-ready = not na(cur_est_range) and not na(sess_low) and not na(sess_high) and not (skip_settlement and is_3rd_wed) and not (skip_wed and is_wed) and not (skip_thu and is_thu) and not (skip_fri and is_fri)
+ready = not na(cur_est_range) and not na(sess_low) and not na(sess_high) and not (skip_settlement and is_settlement_day) and not (skip_wed and is_wed) and not (skip_thu and is_thu) and not (skip_fri and is_fri)
 
 est_high = ready ? sess_low  + cur_est_range * frac : na
 est_low  = ready ? sess_high - cur_est_range * frac : na
@@ -292,13 +306,13 @@ if _hide_prep
         _prep_low_lbl := na
 
 // Skip day warnings
-if entering_session and skip_settlement and is_3rd_wed
+if entering_session and skip_settlement and is_settlement_day
     label.new(bar_index, high,
         "結算日 — 不做",
         style=label.style_label_down, size=size.small,
         color=color.new(color.gray, 60), textcolor=color.white)
 
-if entering_session and skip_wed and is_wed and not (skip_settlement and is_3rd_wed)
+if entering_session and skip_wed and is_wed and not (skip_settlement and is_settlement_day)
     label.new(bar_index, high,
         "Wed — 不做",
         style=label.style_label_down, size=size.small,

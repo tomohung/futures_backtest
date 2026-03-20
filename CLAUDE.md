@@ -195,6 +195,64 @@ uv run python src/etl/validate.py         # Step 4: 驗證
   - 最新合約 `adjustment = 0`，越早的歷史調整量越大
   - 換倉切換點：`adj_close(舊合約最後一根) == adj_close(新合約第一根)` ✅
 
+## EstRange（預估振幅）
+
+跨策略共用的核心指標，用於預估當日振幅、計算 SatZone 出場區和選擇權 credit spread 定價。
+
+### 演算法（Volume-Weighted Estimated Range）
+
+實作：`src/backtest/estimate_hl.py` → `compute_vol_estimated_range()`
+
+1. 將日盤切成 5 分鐘 slot（08:45, 08:50, ..., 13:40，共 60 slots）
+2. 維護歷史資料：
+   - `ema_range` = EMA(20) of 每日日盤振幅（High - Low）
+   - `ema_cum_vol[slot]` = 每個 slot 的累積量 EMA(20)
+3. 每個 slot boundary 計算：
+   - `vol_ratio = 今日累積量 / ema_cum_vol[slot]`
+   - `est_range = ema_range × vol_ratio`
+4. **延遲 1 個 slot**（5 分鐘），避免 lookahead
+5. 當日 profile 在**收盤後**才加入歷史
+
+### SatZone（滿足區）
+
+```
+SatZoneUpper = session_low + est_range - ema_range / 8
+SatZoneLower = session_high - est_range + ema_range / 8
+```
+
+- `ema_range / 8` 是固定 offset，用前一天的 EMA（非當天 est_range）
+- 用途：EstHL 策略的出場信號（Phase 1 觸碰 + Phase 2 跌破 5MA）
+
+### 結算日 Volume 校正
+
+ohlcv_1m 只存主力合約量，結算日（第三週三）量分散到新舊合約（~55/45），
+主力量僅為實際的一半，導致 EstRange 低估。
+
+- **乘數 = 1.9**（61 個結算日實測合併量/主力量的中位數，盤中恆定）
+- 實作：`runner.py` → `adjust_settlement_volume()` 在載入後直接修改 Volume 欄位
+- 結算日偵測：`_settlement_dates()` — 第三個週三，遇假日順延到下一個交易日
+- Pine Script 同步：三個 `.pine` 都有 `settle_vol_mult` 偵測邏輯
+- 注意：膨脹的量會進入 EMA 歷史，影響隔天 EstRange（已知，目前接受）
+
+### 使用此指標的策略
+
+| 策略 | 用途 |
+|------|------|
+| ORBWithEstHLExitStrategy | SatZone 出場 + EmaHL 計算 SL |
+| EstRange Credit Spread | est_range × fraction 定義 strike |
+| Reversal | SatZone 出場 |
+
+### 相關檔案
+
+- `src/backtest/estimate_hl.py` — 核心演算法
+- `src/backtest/runner.py` — `adjust_settlement_volume()`, `_settlement_dates()`
+- `src/strategies/estimate_hl_exit.py` — SatZone 兩階段出場 mixin
+- `indicators/tradingview/est_range_tx.pine` — TradingView 顯示指標
+- `indicators/tradingview/orb_est_hl_tx.pine` — 含 SatZone 出場的完整策略
+- `specs/strategies/2026-03-20-settlement-volume-satzone.md` — 結算日校正實驗記錄
+
+---
+
 ## 外部資料來源
 
 ### VIXTWN（台灣波動率指數）
@@ -265,6 +323,7 @@ specs/strategies/orb_<名稱>.md     ← 獨立策略實驗（如 orb_filters.md
 - `specs/strategies/2026-03-09-orb-with-est-high-low-exit.md` — ORBWithEstHLExitStrategy，entry_end=9:15，EmaHL bfill，2021–2026 總損益 +3720
 - `specs/strategies/2026-03-09-orb-exit-crossover.md` — Direction A：EstHL進 × ORBLong出，entry_end=9:15，tp×3.0，2021–2026 總損益 +4221
 - `specs/strategies/2026-03-11-portfolio-allocation.md` — **最佳組合**：EstHL + ORBLong 各½口，Sharpe 3.12，固定資金下優於三策略均分
+- `specs/strategies/2026-03-20-settlement-volume-satzone.md` — 結算日 Volume ×1.9 校正 + SatZone fraction 實驗（fraction 失敗，維持 -ema/8）
 
 ### OR% 濾網（ORBLong 專用）
 

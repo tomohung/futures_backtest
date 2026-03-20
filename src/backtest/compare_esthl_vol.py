@@ -79,6 +79,9 @@ def load_data_for_esthl(or_vol_adjust=False, or_vol_alpha=0.3):
 
     df_day.columns = ["Open", "High", "Low", "Close", "Volume"]
 
+    from src.backtest.runner import adjust_settlement_volume
+    adjust_settlement_volume(df_day)
+
     # Estimate H-L zones with optional OR volume adjustment
     df_day = compute_estimate_hl_zones(
         df_day,

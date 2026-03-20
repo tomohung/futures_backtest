@@ -63,6 +63,8 @@ def compute_estimate_hl_zones(
     ema_period: int = 20,
     or_vol_adjust: bool = False,
     or_vol_alpha: float = 0.3,
+    settlement_dates: set | None = None,
+    settlement_vol_mult: float = 1.9,
 ) -> pd.DataFrame:
     """Compute Estimated H-L satisfaction zones for each 1-min bar.
 
@@ -110,16 +112,20 @@ def compute_estimate_hl_zones(
     _or_vol_history: list[float] = []  # past completed-day OR volumes
     _OR_END_SLOT = time(9, 30)  # OR ends at 09:30
 
+    _settle_set = settlement_dates or set()
     dates = sorted(df.index.normalize().unique())
 
     for date in dates:
         mask = df.index.normalize() == date
         idx_list = df.index[mask].tolist()
+        is_settle = date.date() in _settle_set if hasattr(date, 'date') else date in _settle_set
+        vol_mult = settlement_vol_mult if is_settle else 1.0
 
         # ---- intra-day state ----
         session_high: float = -np.inf
         session_low: float = np.inf
-        cum_vol: float = 0.0
+        cum_vol: float = 0.0       # raw (for EMA history)
+        cum_vol_adj: float = 0.0   # adjusted (for intra-day estimation)
         cum_factor: float = 0.0
         est_avg: float | None = None
         est_count: int = 0
@@ -148,9 +154,10 @@ def compute_estimate_hl_zones(
                     cum_factor = TIME_FACTORS.get(slot, 0.0)
                 else:
                     # Previous slot completed → compute estimated HL
+                    # Use ADJUSTED volume for intra-day estimation
                     if (ema_vol is not None and ema_hl is not None
                             and ema_vol > 0 and cum_factor > 0):
-                        est_vol = cum_vol / cum_factor
+                        est_vol = cum_vol_adj / cum_factor
                         est_hl = est_vol / ema_vol * ema_hl
 
                         if est_avg is None:
@@ -197,6 +204,7 @@ def compute_estimate_hl_zones(
 
             # ---- accumulate this bar ----
             cum_vol += vol
+            cum_vol_adj += vol * vol_mult
             session_high = max(session_high, high)
             session_low = min(session_low, low)
 
@@ -234,6 +242,8 @@ def compute_vol_estimated_range(
     df: pd.DataFrame,
     lookback: int = 20,
     use_ema: bool = True,
+    settlement_dates: set | None = None,
+    settlement_vol_mult: float = 1.9,
 ) -> pd.DataFrame:
     """Compute volume-weighted estimated daily range for each 1-min bar.
 
@@ -258,6 +268,12 @@ def compute_vol_estimated_range(
     use_ema : bool
         If True, use EMA(lookback) instead of SMA for daily ranges and
         cumulative volume profiles. Recent data gets higher weight.
+    settlement_dates : set or None
+        Set of ``datetime.date`` objects for monthly settlement days.
+        On these days, volume is multiplied by *settlement_vol_mult* for
+        intra-day ratio estimation only (NOT for EMA history updates).
+    settlement_vol_mult : float
+        Multiplier for settlement day volume (default 2.3).
 
     Returns
     -------
@@ -302,14 +318,19 @@ def compute_vol_estimated_range(
 
     dates = sorted(df.index.normalize().unique())
 
+    _settle_set = settlement_dates or set()
+
     for date in dates:
         mask = df.index.normalize() == date
         idx_list = df.index[mask].tolist()
+        is_settle = date.date() in _settle_set if hasattr(date, 'date') else date in _settle_set
+        vol_mult = settlement_vol_mult if is_settle else 1.0
 
         # Intra-day state
         session_high: float = -np.inf
         session_low: float = np.inf
-        cum_vol: float = 0.0
+        cum_vol: float = 0.0       # raw cumulative volume (for EMA history)
+        cum_vol_adj: float = 0.0   # adjusted cumulative volume (for intra-day ratio)
         today_profile: dict[time, float] = {}
         prev_slot: time | None = None
         pending_est_range: float | None = None
@@ -329,15 +350,16 @@ def compute_vol_estimated_range(
             # Slot boundary → finalize previous slot, compute new estimate
             if slot != prev_slot:
                 if prev_slot is not None:
-                    # Record cumulative volume at the end of prev_slot
+                    # Record RAW cumulative volume for EMA history
                     today_profile[prev_slot] = cum_vol
 
+                    # Use ADJUSTED cumulative volume for intra-day ratio
                     if use_ema:
                         # EMA mode
                         if day_count >= lookback and ema_range is not None:
                             ema_cv = ema_cum_vol.get(prev_slot)
                             if ema_cv is not None and ema_cv > 0:
-                                vol_ratio = cum_vol / ema_cv
+                                vol_ratio = cum_vol_adj / ema_cv
                                 pending_est_range = ema_range * vol_ratio
                     else:
                         # SMA mode
@@ -349,13 +371,14 @@ def compute_vol_estimated_range(
                             if hist_vols:
                                 avg_cum_vol = sum(hist_vols) / len(hist_vols)
                                 if avg_cum_vol > 0:
-                                    vol_ratio = cum_vol / avg_cum_vol
+                                    vol_ratio = cum_vol_adj / avg_cum_vol
                                     pending_est_range = range_avg * vol_ratio
 
                 prev_slot = slot
 
             # Accumulate
             cum_vol += vol
+            cum_vol_adj += vol * vol_mult
             session_high = max(session_high, high)
             session_low = min(session_low, low)
 
@@ -367,7 +390,7 @@ def compute_vol_estimated_range(
                     df.at[idx, "EstRange_SatUpper"] = session_low + pending_est_range - offset
                     df.at[idx, "EstRange_SatLower"] = session_high - pending_est_range + offset
 
-        # End of day: record final slot and add to history
+        # End of day: record final slot with RAW volume and add to history
         if prev_slot is not None:
             today_profile[prev_slot] = cum_vol
 
@@ -379,6 +402,7 @@ def compute_vol_estimated_range(
                     ema_range = day_range
                 else:
                     ema_range = day_range * alpha + ema_range * (1 - alpha)
+                # Update EMA with RAW volume (not adjusted)
                 for s, cv in today_profile.items():
                     if s in ema_cum_vol:
                         ema_cum_vol[s] = cv * alpha + ema_cum_vol[s] * (1 - alpha)

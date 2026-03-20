@@ -56,6 +56,25 @@ entering_session = in_session and _cur_day != prev_session_day
 if in_session
     prev_session_day := _cur_day
 
+// Settlement day detection — 3rd Wednesday, or next trading day if holiday
+// On settlement days, dominant contract shows ~55% of total volume → × 1.9
+_cur_dow = dayofweek   // 1=Sun..7=Sat
+_cur_month = month(time, "Asia/Taipei")
+// Compute 3rd Wednesday's dayofmonth
+_days_from_1st = _cur_day - 1
+_dow_1st = ((_cur_dow - 1 - (_days_from_1st % 7) + 7) % 7) + 1
+_first_wed = _dow_1st <= 4 ? 1 + (4 - _dow_1st) : 1 + (11 - _dow_1st)
+_third_wed_dom = _first_wed + 14
+// First trading day on or after 3rd Wednesday = settlement day
+var int _last_settle_month = -1
+var bool is_settlement_day = false
+if entering_session
+    is_settlement_day := false
+    if _cur_month != _last_settle_month and _cur_day >= _third_wed_dom
+        is_settlement_day := true
+        _last_settle_month := _cur_month
+settle_vol_mult = is_settlement_day ? 1.9 : 1.0
+
 // Weekday fraction
 is_tue_wed = dayofweek == dayofweek.tuesday or dayofweek == dayofweek.wednesday
 cur_fraction = use_weekday_frac ? (is_tue_wed ? frac_tue_wed : frac_other) : frac_other
@@ -106,7 +125,7 @@ if entering_session
 if in_session
     sess_high := na(sess_high) ? high : math.max(sess_high, high)
     sess_low  := na(sess_low)  ? low  : math.min(sess_low,  low)
-    cum_vol   += volume
+    cum_vol   += volume * settle_vol_mult
 
 // ============================================================
 // EstRange Computation (5-min slots, 1-slot delayed)

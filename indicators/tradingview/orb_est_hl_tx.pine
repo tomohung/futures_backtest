@@ -158,6 +158,26 @@ var float ema_hl_sess  = na   // 20-day EMA of day-session H-L range
 trend_ok = not use_trend or na(ma5_cur) or na(ma5_prev) or ma5_cur > ma5_prev
 
 // ============================================================
+// Settlement day detection — 3rd Wednesday, or next trading day if holiday
+// On settlement days, dominant contract shows ~55% of total volume → × 1.9
+// ============================================================
+_dom = dayofmonth(time, "Asia/Taipei")
+_cur_dow = dayofweek   // 1=Sun..7=Sat
+_cur_month = month(time, "Asia/Taipei")
+_days_from_1st = _dom - 1
+_dow_1st = ((_cur_dow - 1 - (_days_from_1st % 7) + 7) % 7) + 1
+_first_wed = _dow_1st <= 4 ? 1 + (4 - _dow_1st) : 1 + (11 - _dow_1st)
+_third_wed_dom = _first_wed + 14
+var int _last_settle_month = -1
+var bool is_settlement_day = false
+if entering_or
+    is_settlement_day := false
+    if _cur_month != _last_settle_month and _dom >= _third_wed_dom
+        is_settlement_day := true
+        _last_settle_month := _cur_month
+settle_vol_mult = is_settlement_day ? 1.9 : 1.0
+
+// ============================================================
 // Session High/Low and Cumulative Volume
 // ============================================================
 var float sess_high = na
@@ -201,7 +221,7 @@ if entering_or
 if in_session
     sess_high := na(sess_high) ? high : math.max(sess_high, high)
     sess_low  := na(sess_low)  ? low  : math.min(sess_low,  low)
-    cum_vol   += volume
+    cum_vol   += volume * settle_vol_mult
 
 // ============================================================
 // BigCost Computation（大戶成本，對應 Python BigCost1 / BigCost2）

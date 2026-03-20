@@ -447,11 +447,13 @@ def analyze_range_consumed(df_bars: pd.DataFrame, df_daily: pd.DataFrame):
     print("=" * 72)
 
     from src.backtest.estimate_hl import compute_estimate_hl_zones
+    from src.backtest.runner import adjust_settlement_volume
 
     # Prepare data for EstHL computation
     df_for_hl = df_bars[["timestamp", "open", "high", "low", "close", "volume"]].copy()
     df_for_hl = df_for_hl.set_index("timestamp")
     df_for_hl.columns = ["Open", "High", "Low", "Close", "Volume"]
+    adjust_settlement_volume(df_for_hl)
     df_hl = compute_estimate_hl_zones(df_for_hl)
 
     # Get EmaHL per day (use first non-NaN value each day)

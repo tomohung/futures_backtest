@@ -511,11 +511,13 @@ def direction_b(df_bars: pd.DataFrame, df_daily: pd.DataFrame):
     print("=" * 72)
 
     from src.backtest.estimate_hl import compute_estimate_hl_zones
+    from src.backtest.runner import adjust_settlement_volume
 
     # Compute EstHL
     df_for_hl = df_bars[["timestamp", "open", "high", "low", "close", "volume"]].copy()
     df_for_hl = df_for_hl.set_index("timestamp")
     df_for_hl.columns = ["Open", "High", "Low", "Close", "Volume"]
+    adjust_settlement_volume(df_for_hl)
     print("  計算 EstHL...", flush=True)
     df_hl = compute_estimate_hl_zones(df_for_hl)
     df_hl["date"] = df_hl.index.date

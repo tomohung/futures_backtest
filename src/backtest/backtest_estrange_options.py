@@ -154,6 +154,8 @@ def select_contract(
 
 def load_1m_data() -> pd.DataFrame:
     """Load full day-session 1-min OHLCV and compute EstRange."""
+    from src.backtest.runner import adjust_settlement_volume
+
     with duckdb.connect(DB_PATH, read_only=True) as conn:
         df = conn.execute("""
             SELECT timestamp, open, high, low, close, volume
@@ -165,6 +167,8 @@ def load_1m_data() -> pd.DataFrame:
 
     df = df.set_index("timestamp")
     df.columns = ["Open", "High", "Low", "Close", "Volume"]
+
+    adjust_settlement_volume(df)
 
     # Compute EstRange on full history (needs 20-day warmup)
     df = compute_vol_estimated_range(df, lookback=20, use_ema=True)
