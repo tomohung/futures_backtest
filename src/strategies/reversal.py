@@ -3,24 +3,33 @@ Reversal Strategy（轉折回歸策略）
 
 Entry premise (BC zone gate):
   BigCost1 = yesterday's institutional VWAP, BigCost2 = day-before.
-  - Open between BC1 and BC2 → both long and short allowed
-  - Open below BC zone       → short only (price already weak)
   - Open above BC zone       → long only  (price already strong)
+  - Open below BC zone       → short only (price already weak)
+  - Open inside BC zone      → direction follows MA (bullish → long, bearish → short)
   - BC data missing (NaN)    → skip day
 
-Direction: 5m K 120MA 斜率（等同 30m 20MA 時間跨度，但每 5 分鐘更新）
-  Bullish  : MA5m_120 > MA5m_120_Prev  (MA 向上)
-  Bearish  : MA5m_120 < MA5m_120_Prev  (MA 向下)
-  Minimum slope: |slope| / MA >= min_slope_pct (default 0.006%)
-    Filters out flat-MA periods where direction is ambiguous.
+Direction: 5m 120MA direction (same as EstHL Pine Script)
+  Bullish  : MA5m_120 > MA5m_120_Prev  (MA trending up)
+  Bearish  : MA5m_120 < MA5m_120_Prev  (MA trending down)
 
 Two-step entry (sequential):
 
   Step 1 — Setup (latch flag when ALL of the following are true):
-    Long  : close ≤ BB_Lower (1m BB(15,2) oversold) AND volume > vol_ratio × VolMA20
-            AND CCD_5m > 0
-    Short : close ≥ BB_Upper (1m BB overbought)     AND volume > vol_ratio × VolMA20
-            AND CCD_5m < 0
+    Long  : close <= BB_Lower (1m BB(15,2) oversold) AND volume > vol_ratio * VolMA20
+            AND (CCD_5m > 0 OR bear_exhausted)
+    Short : close >= BB_Upper (1m BB overbought)     AND volume > vol_ratio * VolMA20
+            AND (CCD_5m < 0 OR bull_exhausted)
+
+  Exhaustion bypass: if price has already moved >= exhaust_fraction (default 0.618)
+    of EstRange from the day extreme, the opposing side is considered spent and
+    CCD direction is relaxed.
+    Short: bull_exhausted = close >= day_low + EstRange * exhaust_fraction
+    Long:  bear_exhausted = close <= day_high - EstRange * exhaust_fraction
+
+  Intraday VWAP bypass (09:30+ only):
+    Long  : close > intraday VWAP (sum(close*vol)/sum(vol)) → CCD < 0 acceptable
+    Short : close < intraday VWAP → CCD > 0 acceptable
+    Rationale: 45 min into session, still above/below avg cost = side is strong
 
   Step 2 — Trigger (entry on FIRST bar after setup where):
     Long  : close > MA5_1m  (price crosses back above 1m 5-MA)
@@ -34,14 +43,16 @@ Two-step entry (sequential):
     signal_skip=1 → skip the 1st trigger, enter on the 2nd
 
 Exit priority (highest to lowest):
-  1. Fixed SL : entry ∓ EmaHL × sl_ema_fraction
-  2. Fixed TP : Long  → day_low  + EmaHL × tp_ema_fraction
-               Short → day_high - EmaHL × tp_ema_fraction
+  1. Fixed SL : entry +/- EmaHL * sl_ema_fraction
+  2. SatZone two-phase exit (same as EstHL strategy):
+       Phase 1: High >= SatZoneUpper (long) or Low <= SatZoneLower (short)
+       Phase 2: close < 5MA (long) or close > 5MA (short)
   3. Pivot trailing stop (active after 09:45): pivotlow(5,5) for long,
      pivothigh(5,5) for short — trailing stop ratchets in the favorable direction
   4. Force exit at 13:40
 
-Entry window: 09:10 – 13:00
+Setup window: session start (08:45) – 10:05 (setup can latch before entry window)
+Entry window: 09:10 – 10:05 (trigger/entry must occur within this window)
 One entry per day maximum (after skipping signal_skip triggers).
 
 Data loader: load_data_for_reversal() in src/backtest/runner.py
@@ -53,25 +64,25 @@ from datetime import time as dtime
 import numpy as np
 from backtesting import Strategy
 
+from src.strategies.estimate_hl_exit import EstimateHLExitMixin
+
 _ENTRY_START  = dtime(9, 10)
-_ENTRY_END    = dtime(13, 0)
+_ENTRY_END    = dtime(10, 5)
 _TRAIL_START  = dtime(9, 45)
 _FORCE_EXIT   = dtime(13, 40)
 
 
-class ReversalStrategy(Strategy):
-    """Sequential BB-extreme → MA5 cross entry within institutional cost zone."""
+class ReversalStrategy(EstimateHLExitMixin, Strategy):
+    """Sequential BB-extreme -> MA5 cross entry within institutional cost zone."""
 
-    vol_ratio:       float = 1.5      # volume must exceed vol_ratio × VolMA20
-    sl_ema_fraction: float = 0.35    # SL = EmaHL × fraction
-    tp_ema_fraction: float = 2.0     # TP = day_low/high + EmaHL × fraction
-    tp_mode:         str   = "ema"   # "ema" | "vol_range"
-    tp_vol_fraction: float = 0.8     # fraction for vol_range mode
-    min_slope_pct:   float = 0.006   # min |slope|/MA % to confirm direction
-    signal_skip:     int   = 0       # skip first N triggers before entering
+    vol_ratio:        float = 1.2      # volume must exceed vol_ratio * VolMA20
+    sl_ema_fraction:  float = 0.25     # SL = EmaHL * fraction
+    exhaust_fraction: float = 0.5      # moved >= fraction of EstRange → opposing side exhausted, relax CCD
+    signal_skip:      int   = 0        # skip first N triggers before entering
 
     def init(self):
         self._prev_date   = None
+        self._init_estimate_hl_exit()
         self._reset_daily()
 
     def _reset_daily(self):
@@ -79,13 +90,16 @@ class ReversalStrategy(Strategy):
         self._allow_long   = False
         self._allow_short  = False
         self._open_price   = None
-        self._setup_long  = False
-        self._setup_short = False
+        self._bb_long_touched  = False  # latch: BB_Lower + vol_ok
+        self._bb_short_touched = False  # latch: BB_Upper + vol_ok
+        self._bull_exhausted   = False  # latch: price reached day_low + EstRange * fraction
+        self._bear_exhausted   = False  # latch: price reached day_high - EstRange * fraction
         self._trigger_count = 0
-        self._day_low     = None
+        self._sum_cv      = 0.0   # running sum(close * volume) for intraday VWAP
+        self._sum_vol     = 0.0   # running sum(volume)
         self._day_high    = None
+        self._day_low     = None
         self._sl_price    = None
-        self._tp_price    = None
         self._trail_stop  = None
         self._low_buf     = deque(maxlen=11)   # pivotlow(5,5)
         self._high_buf    = deque(maxlen=11)   # pivothigh(5,5)
@@ -113,14 +127,19 @@ class ReversalStrategy(Strategy):
                     self._allow_long = True
                 elif self._open_price < bc_lo:     # below zone → short only
                     self._allow_short = True
-                else:                              # inside zone → both
-                    self._allow_long = True
-                    self._allow_short = True
+                else:                              # inside zone → follow MA
+                    self._bc_inside = True
 
-        # ── Track daily extremes ──────────────────────────────────────────
+        # ── Track daily extremes + running VWAP ─────────────────────────
         if self._day_low is not None:
             self._day_low  = min(self._day_low,  float(self.data.Low[-1]))
             self._day_high = max(self._day_high, float(self.data.High[-1]))
+        vol = float(self.data.Volume[-1])
+        self._sum_cv  += close * vol
+        self._sum_vol += vol
+
+        # ── SatZone exit mixin: record bar ────────────────────────────────
+        self._record_bar()
 
         # ── Exit logic (runs whenever in a position) ───────────────────────
         if self.position:
@@ -129,7 +148,7 @@ class ReversalStrategy(Strategy):
                 self.position.close()
                 return
 
-            # 2. Fixed SL / TP
+            # 2. Fixed SL
             if self._sl_price is not None:
                 if self.position.is_long and close <= self._sl_price:
                     self.position.close()
@@ -137,15 +156,18 @@ class ReversalStrategy(Strategy):
                 if self.position.is_short and close >= self._sl_price:
                     self.position.close()
                     return
-            if self._tp_price is not None:
-                if self.position.is_long and close >= self._tp_price:
+
+            # 3. SatZone two-phase exit
+            if self.position.is_long:
+                if self._check_long_exit():
                     self.position.close()
                     return
-                if self.position.is_short and close <= self._tp_price:
+            elif self.position.is_short:
+                if self._check_short_exit():
                     self.position.close()
                     return
 
-            # 3. Pivot trailing stop (active after 09:45)
+            # 4. Pivot trailing stop (active after 09:45)
             if cur_time >= _TRAIL_START:
                 if self.position.is_long:
                     self._low_buf.append(float(self.data.Low[-1]))
@@ -171,13 +193,11 @@ class ReversalStrategy(Strategy):
 
             return  # in position but no exit triggered
 
-        # ── Entry gate checks ──────────────────────────────────────────────
-        if self._entered or not (self._allow_long or self._allow_short):
-            return
-        if not (_ENTRY_START <= cur_time <= _ENTRY_END):
+        # ── Already entered today → skip entry logic ─────────────────────
+        if self._entered:
             return
 
-        # ── Read indicators ───────────────────────────────────────────────
+        # ── Read indicators (needed for setup + trigger) ─────────────────
         ema_hl     = float(self.data.EmaHL[-1])
         ma5m       = float(self.data.MA5m_120[-1])
         ma5m_prev  = float(self.data.MA5m_120_Prev[-1])
@@ -194,55 +214,76 @@ class ReversalStrategy(Strategy):
 
         sl = ema_hl * self.sl_ema_fraction
 
-        # TP calculation: two modes
-        if self.tp_mode == "vol_range":
-            est_range = float(self.data.EstRange[-1])
-            if np.isnan(est_range):
-                tp = ema_hl * self.tp_ema_fraction  # fallback
-            else:
-                tp = est_range * self.tp_vol_fraction
-        else:
-            tp = ema_hl * self.tp_ema_fraction
-
         vol_ok = vol > self.vol_ratio * vol_ma
 
-        # Direction: slope sign + minimum magnitude filter
-        slope_pct = abs(ma5m - ma5m_prev) / ma5m_prev * 100 if ma5m_prev > 0 else 0
-        if slope_pct < self.min_slope_pct:
-            return  # MA too flat — direction ambiguous
+        # Direction: 5m 120MA direction (no slope threshold)
         bullish = ma5m > ma5m_prev
 
-        # ── Step 1: Latch setup ───────────────────────────────────────────
-        if self._allow_long and bullish and not self._setup_long:
-            if close <= bb_lower and vol_ok and ccd > 0:
-                self._setup_long = True
+        # Resolve BC inside zone: direction follows MA
+        if getattr(self, '_bc_inside', False):
+            self._bc_inside = False
+            if bullish:
+                self._allow_long = True
+            else:
+                self._allow_short = True
 
-        if self._allow_short and not bullish and not self._setup_short:
-            if close >= bb_upper and vol_ok and ccd < 0:
-                self._setup_short = True
+        if not (self._allow_long or self._allow_short):
+            return
 
-        # ── Step 2: Trigger on MA5 cross ──────────────────────────────────
-        triggered = False
-        if self._allow_long and bullish and self._setup_long and close > ma5:
-            self._trigger_count += 1
-            triggered = True
-            if self._trigger_count > self.signal_skip:
-                self.buy(size=1)
-                self._sl_price = close - sl
-                self._tp_price = self._day_low + tp   # low + EmaHL × fraction
-                self._entered  = True
+        # ── Exhaustion latch: once price reaches fraction of EstRange, flag stays on ──
+        # Short: bulls exhausted when price ever rose to day_low + EstRange * fraction
+        # Long:  bears exhausted when price ever dropped to day_high - EstRange * fraction
+        exhaust_frac = self.exhaust_fraction
+        if not self._bull_exhausted and self._day_low is not None:
+            if close >= self._day_low + ema_hl * exhaust_frac:
+                self._bull_exhausted = True
+        if not self._bear_exhausted and self._day_high is not None:
+            if close <= self._day_high - ema_hl * exhaust_frac:
+                self._bear_exhausted = True
 
-        elif self._allow_short and not bullish and self._setup_short and close < ma5:
-            self._trigger_count += 1
-            triggered = True
-            if self._trigger_count > self.signal_skip:
-                self.sell(size=1)
-                self._sl_price = close + sl
-                self._tp_price = self._day_high - tp   # high - EmaHL × fraction
-                self._entered  = True
+        # ── Step 1: Latch BB touch + vol (must co-occur on same bar) ──────
+        if self._allow_long and bullish and not self._bb_long_touched:
+            if close <= bb_lower and vol_ok:
+                self._bb_long_touched = True
 
-        # ── Reset setup once MA5 is crossed (opportunity passed) ─────────
+        if self._allow_short and not bullish and not self._bb_short_touched:
+            if close >= bb_upper and vol_ok:
+                self._bb_short_touched = True
+
+        # ── Step 2: Trigger on MA5 cross (must be within entry window) ───
+        # Setup = BB_touched AND (CCD_ok OR exhausted)
+        if _ENTRY_START <= cur_time <= _ENTRY_END:
+            # CCD bypass (09:30+): close above/below intraday VWAP → side still supported
+            vwap = self._sum_cv / self._sum_vol if self._sum_vol > 0 else None
+            vwap_active = cur_time >= dtime(9, 30)
+            above_vwap = vwap_active and vwap is not None and close > vwap
+            below_vwap = vwap_active and vwap is not None and close < vwap
+
+            long_setup = (self._allow_long and bullish and
+                          self._bb_long_touched and
+                          (ccd > 0 or self._bear_exhausted or above_vwap))
+            short_setup = (self._allow_short and not bullish and
+                           self._bb_short_touched and
+                           (ccd < 0 or self._bull_exhausted or below_vwap))
+
+            if long_setup and close > ma5:
+                self._trigger_count += 1
+                if self._trigger_count > self.signal_skip:
+                    self.buy(size=1)
+                    self._sl_price = close - sl
+                    self._entered  = True
+
+            elif short_setup and close < ma5:
+                self._trigger_count += 1
+                if self._trigger_count > self.signal_skip:
+                    self.sell(size=1)
+                    self._sl_price = close + sl
+                    self._entered  = True
+
+        # ── Reset all latches on MA5 cross (opportunity passed) ──────────
         if close > ma5:
-            self._setup_long = False
+            self._bb_long_touched = False
+            self._bear_exhausted  = False
         if close < ma5:
-            self._setup_short = False
+            self._bb_short_touched = False
+            self._bull_exhausted   = False
