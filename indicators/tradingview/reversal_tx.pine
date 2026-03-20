@@ -1,0 +1,560 @@
+// ============================================================
+// Reversal TX — TradingView Indicator v2
+// 台指期（TAIFEX TX）關鍵價轉折策略
+//
+// 方向判斷（BC zone gate）：
+//   BigCost1 = 昨日大戶成本，BigCost2 = 前日大戶成本
+//   - Open > BC zone 上緣 → 只做多
+//   - Open < BC zone 下緣 → 只做空
+//   - Open 在 BC zone 內  → 跟 MA 方向（MA 向上→做多，MA 向下→做空）
+//
+// 進場邏輯（兩步驟，Setup + Trigger）：
+//
+//   Step 1 — Setup（08:45–10:05，latch 機制）：
+//     做多：close <= BB_Lower(15,2) AND volume > vol_ratio × VolMA20
+//     做空：close >= BB_Upper(15,2) AND volume > vol_ratio × VolMA20
+//     BB touch 被 MA5 cross reset 後可再次 latch（計數 +1）
+//
+//   CCD 條件（任一成立即可）：
+//     1. CCD 方向一致（做多 CCD>0 / 做空 CCD<0）
+//     2. Exhaustion bypass：價格已走 >= exhaust_fraction × EmaHL
+//        → 對手方力竭，CCD 方向放寬（latch 不 reset）
+//     3. VWAP bypass（09:30+）：close > 盤中 VWAP → 做多可放寬 CCD
+//     4. 2nd BB touch：BB 觸碰第二次 → CCD 放寬
+//
+//   Step 2 — Trigger（09:10–10:05）：
+//     做多：close > MA5_1m（站上 1 分鐘 5MA）
+//     做空：close < MA5_1m（跌破 1 分鐘 5MA）
+//
+// 出場優先順序：
+//   1. 固定停損（SL = entry ± sl_fraction × EmaHL）
+//   2. SatZone 兩段式出場
+//        Phase 1：High ≥ SatZoneUpper（多）或 Low ≤ SatZoneLower（空）
+//        Phase 2：觸及後 Close < 5MA（多）或 Close > 5MA（空）
+//   3. Pivot trailing stop（09:45 後）
+//        做多：ta.pivotlow(5,5)  做空：ta.pivothigh(5,5)
+//   4. 強制平倉 13:40
+//
+// 線條顏色說明：
+//   Blue     ── 5m 120MA（趨勢方向）
+//   Yellow   ── BigCost1/2（大戶成本）
+//   Green    ── BB Lower（布林下軌，做多 setup 參考）
+//   Red      ── BB Upper（布林上軌，做空 setup 參考）
+//   Aqua     ── 1m 5MA（trigger 參考）
+//   Fuchsia  ── SatZone（滿足區，持倉中顯示）
+//   Red      ── SL 停損線（持倉中顯示）
+//   Pink     ── Trailing stop（09:45 後）
+//   Orange   ── Intraday VWAP（09:30 後顯示）
+//
+// 底色說明：
+//   黃色  = Setup 窗口（08:45–10:05）
+//   藍色  = Entry 窗口（09:10–10:05，且方向已確定）
+//   紫色  = Trailing 區段（09:45–13:40）
+//   灰色  = 當日無方向（BC 資料缺失）
+// ============================================================
+//@version=6
+indicator(
+    title   = "Reversal TX (關鍵價轉折 v2)",
+    overlay = true
+)
+
+// ============================================================
+// Inputs
+// ============================================================
+var string GRP_ENTRY    = "進場參數"
+var string GRP_EXIT     = "出場參數"
+var string GRP_VIZ      = "顯示"
+
+vol_ratio       = input.float(1.2,  "Vol Ratio（量 > ratio × VolMA20）",    step=0.1, minval=0.5, group=GRP_ENTRY)
+exhaust_frac    = input.float(0.5,  "Exhaustion Fraction（力竭比例）",       step=0.1, minval=0.1, group=GRP_ENTRY)
+sl_fraction     = input.float(0.25, "SL = EmaHL ×",                        step=0.05, minval=0.05, group=GRP_EXIT)
+
+show_bb         = input.bool (true, "BB 上下軌（綠/紅）",                    group=GRP_VIZ)
+show_ma5        = input.bool (true, "1m 5MA（Aqua）",                       group=GRP_VIZ)
+show_trend_ma   = input.bool (true, "5m 120MA 趨勢線（藍色）",               group=GRP_VIZ)
+show_bigcost    = input.bool (true, "BigCost 線（黃色）",                    group=GRP_VIZ)
+show_sat        = input.bool (true, "SatZone 線（紫色）",                    group=GRP_VIZ)
+show_sl_ln      = input.bool (true, "SL 線（紅色）",                        group=GRP_VIZ)
+show_trail_ln   = input.bool (true, "Trailing Stop 線（粉紅）",              group=GRP_VIZ)
+show_vwap       = input.bool (true, "Intraday VWAP（橘色，09:30 後）",       group=GRP_VIZ)
+show_bg         = input.bool (true, "時段底色",                              group=GRP_VIZ)
+show_diag       = input.bool (true, "診斷 Label",                           group=GRP_VIZ)
+
+// ============================================================
+// Time Windows (Asia/Taipei = UTC+8)
+// ============================================================
+t_session_start = timestamp("Asia/Taipei", year, month, dayofmonth,  8, 45)
+t_entry_start   = timestamp("Asia/Taipei", year, month, dayofmonth,  9, 10)
+t_entry_end     = timestamp("Asia/Taipei", year, month, dayofmonth, 10,  5)
+t_vwap_start    = timestamp("Asia/Taipei", year, month, dayofmonth,  9, 30)
+t_trail_on      = timestamp("Asia/Taipei", year, month, dayofmonth,  9, 45)
+t_force_exit    = timestamp("Asia/Taipei", year, month, dayofmonth, 13, 40)
+t_day_end       = timestamp("Asia/Taipei", year, month, dayofmonth, 13, 45)
+
+in_session    = time >= t_session_start and time <  t_day_end
+in_setup_win  = time >= t_session_start and time <= t_entry_end
+in_entry_win  = time >= t_entry_start   and time <= t_entry_end
+in_trail_zone = time >= t_trail_on      and time <  t_force_exit
+at_force_exit = time >= t_force_exit    and time <  t_day_end
+vwap_active   = time >= t_vwap_start
+
+// ============================================================
+// Session Start Detection
+// ============================================================
+var bool prev_in_session = false
+entering_session = in_session and not prev_in_session
+prev_in_session := in_session
+
+// ============================================================
+// EmaHL — 20-day EMA of day-session H-L range
+// ============================================================
+var float ema_hl = na
+var float sess_high = na
+var float sess_low  = na
+
+if entering_session
+    if not na(sess_high) and not na(sess_low) and sess_high > sess_low
+        prev_hl = sess_high - sess_low
+        ema_hl := na(ema_hl) ? prev_hl : ema_hl + (2.0 / 21.0) * (prev_hl - ema_hl)
+    sess_high := na
+    sess_low  := na
+
+if in_session
+    sess_high := na(sess_high) ? high : math.max(sess_high, high)
+    sess_low  := na(sess_low)  ? low  : math.min(sess_low,  low)
+
+// ============================================================
+// Settlement Day Detection (volume × 1.9)
+// ============================================================
+_dom = dayofmonth(time, "Asia/Taipei")
+_cur_dow = dayofweek
+_cur_month = month(time, "Asia/Taipei")
+_days_from_1st = _dom - 1
+_dow_1st = ((_cur_dow - 1 - (_days_from_1st % 7) + 7) % 7) + 1
+_first_wed = _dow_1st <= 4 ? 1 + (4 - _dow_1st) : 1 + (11 - _dow_1st)
+_third_wed_dom = _first_wed + 14
+var int _last_settle_month = -1
+var bool is_settlement_day = false
+if entering_session
+    is_settlement_day := false
+    if _cur_month != _last_settle_month and _dom >= _third_wed_dom
+        is_settlement_day := true
+        _last_settle_month := _cur_month
+settle_vol_mult = is_settlement_day ? 1.9 : 1.0
+
+// ============================================================
+// Cumulative Volume + EstRange / SatZone
+// ============================================================
+var float cum_vol = 0.0
+var float[] ema_cum_vol_arr = array.new_float(60, na)
+var float[] today_profile   = array.new_float(60, na)
+var int     vol_day_count   = 0
+var int     prev_slot_5m    = -1
+
+_h = hour(time, "Asia/Taipei")
+_m = minute(time, "Asia/Taipei")
+_t = _h * 60 + _m
+_slot_5m = in_session ? math.max(0, math.min(59, math.floor((_t - 525) / 5))) : -1
+
+var float sat_upper = na
+var float sat_lower = na
+
+slot_changed_5m = _slot_5m >= 0 and _slot_5m != prev_slot_5m
+
+if entering_session
+    if prev_slot_5m >= 0
+        array.set(today_profile, prev_slot_5m, cum_vol)
+    if not na(array.get(today_profile, 0))
+        for i = 0 to 59
+            cv = array.get(today_profile, i)
+            if not na(cv)
+                old_cv = array.get(ema_cum_vol_arr, i)
+                new_cv = na(old_cv) ? cv : old_cv + (2.0 / 21.0) * (cv - old_cv)
+                array.set(ema_cum_vol_arr, i, new_cv)
+        vol_day_count += 1
+    cum_vol      := 0.0
+    prev_slot_5m := -1
+    sat_upper    := na
+    sat_lower    := na
+    for i = 0 to 59
+        array.set(today_profile, i, na)
+
+if in_session
+    cum_vol += volume * settle_vol_mult
+
+if slot_changed_5m
+    if prev_slot_5m >= 0
+        array.set(today_profile, prev_slot_5m, cum_vol)
+        if vol_day_count >= 20 and not na(ema_hl)
+            ema_cv = array.get(ema_cum_vol_arr, prev_slot_5m)
+            if not na(ema_cv) and ema_cv > 0
+                vol_r     = cum_vol / ema_cv
+                est_range = ema_hl * vol_r
+                if not na(sess_low) and not na(sess_high)
+                    sat_upper := sess_low  + est_range - ema_hl / 8.0
+                    sat_lower := sess_high - est_range + ema_hl / 8.0
+    prev_slot_5m := _slot_5m
+
+// ============================================================
+// 5m 120MA Trend Filter
+// ============================================================
+[ma5m_cur, ma5m_prev] = request.security(syminfo.tickerid, "5",
+    [ta.sma(close, 120)[1], ta.sma(close, 120)[2]],
+    lookahead = barmerge.lookahead_on)
+ma_bullish = not na(ma5m_cur) and not na(ma5m_prev) and ma5m_cur > ma5m_prev
+
+// ============================================================
+// BigCost Computation
+// ============================================================
+vol_sma20_bc = ta.sma(volume, 20)
+var float day_big_vol  = 0.0
+var float day_big_cost = 0.0
+var float bigcost1     = na
+var float bigcost2     = na
+
+if entering_session
+    prev_bc   = day_big_vol > 0 ? day_big_cost / day_big_vol : float(na)
+    bigcost2 := bigcost1
+    bigcost1 := prev_bc
+    day_big_vol  := 0.0
+    day_big_cost := 0.0
+
+if in_session and volume > vol_sma20_bc
+    day_big_vol  += volume
+    day_big_cost += volume * hl2
+
+// ============================================================
+// BC Zone → Direction
+// ============================================================
+var bool allow_long  = false
+var bool allow_short = false
+var bool bc_inside   = false
+var float day_open   = na
+
+if entering_session
+    allow_long  := false
+    allow_short := false
+    bc_inside   := false
+    day_open    := open
+    if not na(bigcost1) and not na(bigcost2)
+        bc_lo = math.min(bigcost1, bigcost2)
+        bc_hi = math.max(bigcost1, bigcost2)
+        if open > bc_hi
+            allow_long := true
+        else if open < bc_lo
+            allow_short := true
+        else
+            bc_inside := true
+
+// Resolve BC inside on first bar with MA data
+if bc_inside and not na(ma5m_cur) and not na(ma5m_prev)
+    bc_inside := false
+    if ma_bullish
+        allow_long := true
+    else
+        allow_short := true
+
+// ============================================================
+// Bollinger Bands (15, 2) — 1m chart
+// ============================================================
+bb_basis = ta.sma(close, 15)
+bb_dev   = 2.0 * ta.stdev(close, 15)
+bb_upper = bb_basis + bb_dev
+bb_lower = bb_basis - bb_dev
+
+// ============================================================
+// Volume MA (20)
+// ============================================================
+vol_ma20 = ta.sma(volume, 20)
+
+// ============================================================
+// CCD (5m) — Cumulative Close Delta on 5-min timeframe
+// ============================================================
+ccd_5m = request.security(syminfo.tickerid, "5",
+    ta.cum(close - close[1]),
+    lookahead = barmerge.lookahead_on)
+
+// Use delta from session start as proxy for daily CCD
+var float ccd_base = na
+if entering_session
+    ccd_base := na
+if in_session and na(ccd_base) and not na(ccd_5m)
+    ccd_base := ccd_5m
+ccd_daily = not na(ccd_5m) and not na(ccd_base) ? ccd_5m - ccd_base : float(na)
+
+// ============================================================
+// 1m 5MA (trigger reference)
+// ============================================================
+ma5_1m = ta.sma(close, 5)
+
+// ============================================================
+// Intraday VWAP (running sum(close × vol) / sum(vol))
+// ============================================================
+var float sum_cv  = 0.0
+var float sum_vol = 0.0
+
+if entering_session
+    sum_cv  := 0.0
+    sum_vol := 0.0
+
+if in_session
+    sum_cv  += close * volume
+    sum_vol += volume
+
+intraday_vwap = sum_vol > 0 ? sum_cv / sum_vol : float(na)
+
+// ============================================================
+// Exhaustion Latch (does NOT reset)
+// ============================================================
+var bool bull_exhausted = false   // bulls spent → short OK despite CCD>0
+var bool bear_exhausted = false   // bears spent → long OK despite CCD<0
+
+if entering_session
+    bull_exhausted := false
+    bear_exhausted := false
+
+if in_session and not na(ema_hl)
+    if not bull_exhausted and not na(sess_low)
+        if close >= sess_low + ema_hl * exhaust_frac
+            bull_exhausted := true
+    if not bear_exhausted and not na(sess_high)
+        if close <= sess_high - ema_hl * exhaust_frac
+            bear_exhausted := true
+
+// ============================================================
+// BB Touch Latch + Count (2nd touch bypasses CCD)
+// ============================================================
+var bool  bb_long_touched  = false
+var bool  bb_short_touched = false
+var int   bb_long_count    = 0
+var int   bb_short_count   = 0
+
+if entering_session
+    bb_long_touched  := false
+    bb_short_touched := false
+    bb_long_count    := 0
+    bb_short_count   := 0
+
+vol_ok = volume > vol_ratio * vol_ma20
+
+// Step 1: Latch BB touch + vol (must co-occur on same bar)
+if in_setup_win and allow_long and ma_bullish and not bb_long_touched
+    if close <= bb_lower and vol_ok
+        bb_long_touched := true
+        bb_long_count   += 1
+
+if in_setup_win and allow_short and not ma_bullish and not bb_short_touched
+    if close >= bb_upper and vol_ok
+        bb_short_touched := true
+        bb_short_count   += 1
+
+// ============================================================
+// Position State
+// ============================================================
+var bool  in_pos       = false
+var int   pos_dir      = 0        // +1 = long, -1 = short
+var bool  day_traded   = false
+var float sl_price     = na
+var bool  sat_touched  = false
+var float trail_stop   = na
+
+if entering_session
+    day_traded  := false
+    if in_pos
+        in_pos     := false
+        pos_dir    := 0
+        sl_price   := na
+        sat_touched := false
+        trail_stop := na
+
+// ============================================================
+// Exit Conditions
+// ============================================================
+pivot_low  = ta.pivotlow(low, 5, 5)
+pivot_high = ta.pivothigh(high, 5, 5)
+
+// Trailing stop update
+if in_pos and in_trail_zone
+    if pos_dir > 0 and not na(pivot_low)
+        trail_stop := na(trail_stop) ? pivot_low : math.max(trail_stop, pivot_low)
+    if pos_dir < 0 and not na(pivot_high)
+        trail_stop := na(trail_stop) ? pivot_high : math.min(trail_stop, pivot_high)
+
+// SatZone Phase 1
+if in_pos and not sat_touched
+    if pos_dir > 0 and not na(sat_upper) and high >= sat_upper
+        sat_touched := true
+    if pos_dir < 0 and not na(sat_lower) and low <= sat_lower
+        sat_touched := true
+
+// Exit signals
+exit_sl      = in_pos and not na(sl_price) and
+               ((pos_dir > 0 and close <= sl_price) or (pos_dir < 0 and close >= sl_price))
+exit_sat     = in_pos and sat_touched and
+               ((pos_dir > 0 and close < ma5_1m) or (pos_dir < 0 and close > ma5_1m))
+exit_trail   = in_pos and in_trail_zone and not na(trail_stop) and
+               ((pos_dir > 0 and close < trail_stop) or (pos_dir < 0 and close > trail_stop))
+exit_force   = in_pos and at_force_exit
+exit_signal  = exit_sl or exit_sat or exit_trail or exit_force
+
+if exit_signal
+    in_pos      := false
+    pos_dir     := 0
+    sl_price    := na
+    sat_touched := false
+    trail_stop  := na
+
+// ============================================================
+// Entry Conditions
+// ============================================================
+above_vwap = vwap_active and not na(intraday_vwap) and close > intraday_vwap
+below_vwap = vwap_active and not na(intraday_vwap) and close < intraday_vwap
+
+long_setup  = (allow_long and ma_bullish and bb_long_touched and
+               (ccd_daily > 0 or bear_exhausted or above_vwap or bb_long_count >= 2))
+short_setup = (allow_short and not ma_bullish and bb_short_touched and
+               (ccd_daily < 0 or bull_exhausted or below_vwap or bb_short_count >= 2))
+
+can_enter = not in_pos and not day_traded and in_entry_win and not na(ema_hl)
+
+long_signal  = can_enter and long_setup  and close > ma5_1m
+short_signal = can_enter and short_setup and close < ma5_1m
+
+if long_signal
+    in_pos      := true
+    pos_dir     := 1
+    day_traded  := true
+    sl_price    := close - sl_fraction * ema_hl
+    sat_touched := false
+    trail_stop  := na
+
+if short_signal
+    in_pos      := true
+    pos_dir     := -1
+    day_traded  := true
+    sl_price    := close + sl_fraction * ema_hl
+    sat_touched := false
+    trail_stop  := na
+
+// ============================================================
+// Reset BB latch on MA5 cross (exhaustion does NOT reset)
+// ============================================================
+if close > ma5_1m
+    bb_long_touched := false
+if close < ma5_1m
+    bb_short_touched := false
+
+// ============================================================
+// Diagnostic Label (at entry window start)
+// ============================================================
+var bool prev_in_entry = false
+entering_entry = in_entry_win and not prev_in_entry
+prev_in_entry := in_entry_win
+
+if show_diag and entering_entry and (allow_long or allow_short)
+    _dir_str  = allow_long ? "Long" : "Short"
+    _ma_str   = ma_bullish ? "B" : "S"
+    _bc_str   = not na(bigcost1) ? str.format("BC1={0,number,#}", bigcost1) : "BC=na"
+    _ema_str  = not na(ema_hl) ? str.format("EmaHL={0,number,#}", ema_hl) : ""
+    _ccd_str  = not na(ccd_daily) ? str.format("CCD={0,number,#}", ccd_daily) : "CCD=na"
+    diag_txt  = str.format("{0} MA:{1}\n{2}\n{3}\n{4}",
+                _dir_str, _ma_str, _bc_str, _ema_str, _ccd_str)
+    label.new(bar_index, low,
+        diag_txt,
+        style=label.style_label_up, size=size.tiny,
+        color=color.new(color.black, 30), textcolor=color.white)
+
+// ============================================================
+// BB Touch Label
+// ============================================================
+bb_long_event  = in_setup_win and allow_long  and ma_bullish     and close <= bb_lower and vol_ok and bb_long_count  >= 1
+bb_short_event = in_setup_win and allow_short and not ma_bullish and close >= bb_upper and vol_ok and bb_short_count >= 1
+
+if show_diag and bb_long_event and bb_long_count <= 2
+    _exh_str = bear_exhausted ? " Exh" : ""
+    label.new(bar_index, low,
+        str.format("BB#{0}{1}", bb_long_count, _exh_str),
+        style=label.style_label_up, size=size.tiny,
+        color=color.green, textcolor=color.white)
+
+if show_diag and bb_short_event and bb_short_count <= 2
+    _exh_str = bull_exhausted ? " Exh" : ""
+    label.new(bar_index, high,
+        str.format("BB#{0}{1}", bb_short_count, _exh_str),
+        style=label.style_label_down, size=size.tiny,
+        color=color.red, textcolor=color.white)
+
+// ============================================================
+// Plots
+// ============================================================
+// ── 時段底色
+day_has_dir = allow_long or allow_short
+bgcolor(show_bg and in_setup_win and not in_entry_win and day_has_dir ? color.new(color.yellow, 92) : na, title="Setup 窗口（黃）")
+bgcolor(show_bg and in_entry_win and day_has_dir                     ? color.new(color.blue,   92) : na, title="Entry 窗口（藍）")
+bgcolor(show_bg and in_entry_win and not day_has_dir                 ? color.new(color.gray,   88) : na, title="無方向（灰）")
+bgcolor(show_bg and in_trail_zone                                    ? color.new(color.purple, 94) : na, title="Trail 區段（紫）")
+
+// ── 5m 120MA
+plot(show_trend_ma and in_session ? ma5m_cur : na, "5m MA120 (Blue)",
+     color=color.new(color.blue, 30), linewidth=2, style=plot.style_linebr)
+
+// ── BigCost
+plot(show_bigcost and in_session ? bigcost1 : na, "BigCost1（昨日）",
+     color=color.new(color.yellow, 0),  linewidth=2, style=plot.style_linebr)
+plot(show_bigcost and in_session ? bigcost2 : na, "BigCost2（前日）",
+     color=color.new(color.orange, 50), linewidth=1, style=plot.style_linebr)
+
+// ── BB Upper / Lower
+plot(show_bb and in_session ? bb_upper : na, "BB Upper (Red)",
+     color=color.new(color.red, 50), linewidth=1, style=plot.style_linebr)
+plot(show_bb and in_session ? bb_lower : na, "BB Lower (Green)",
+     color=color.new(color.green, 50), linewidth=1, style=plot.style_linebr)
+
+// ── 1m 5MA
+plot(show_ma5 and in_session ? ma5_1m : na, "1m 5MA (Aqua)",
+     color=color.new(color.aqua, 30), linewidth=1, style=plot.style_linebr)
+
+// ── Intraday VWAP (09:30+)
+plot(show_vwap and in_session and vwap_active ? intraday_vwap : na, "VWAP (Orange)",
+     color=color.new(color.orange, 30), linewidth=1, style=plot.style_linebr)
+
+// ── SatZone
+sat_show_upper = show_sat and in_session and not na(sat_upper)
+sat_show_lower = show_sat and in_session and not na(sat_lower)
+plot(sat_show_upper ? sat_upper : na, "SatZone Upper (Purple)",
+     color=color.new(color.fuchsia, in_pos and pos_dir > 0 ? 0 : 60),
+     linewidth=2, style=plot.style_circles)
+plot(sat_show_lower ? sat_lower : na, "SatZone Lower (Purple)",
+     color=color.new(color.fuchsia, in_pos and pos_dir < 0 ? 0 : 60),
+     linewidth=2, style=plot.style_circles)
+
+// ── SL
+plot(show_sl_ln and in_pos ? sl_price : na, "SL (Red)",
+     color=color.red, linewidth=2, style=plot.style_circles)
+
+// ── Trailing Stop
+plot(show_trail_ln and in_pos and in_trail_zone ? trail_stop : na, "Trail Stop (Pink)",
+     color=color.new(color.red, 50), linewidth=1, style=plot.style_circles)
+
+// ── Entry / Exit Arrows
+plotshape(long_signal,
+          title="Long ▲ IN", style=shape.triangleup,
+          location=location.belowbar, size=size.small,
+          color=color.red, text="B", textcolor=color.red)
+
+plotshape(short_signal,
+          title="Short ▼ IN", style=shape.triangledown,
+          location=location.abovebar, size=size.small,
+          color=color.blue, text="S", textcolor=color.blue)
+
+plotshape(exit_signal,
+          title="Exit ✕ OUT", style=shape.xcross,
+          location=location.abovebar, size=size.tiny,
+          color=color.lime, text="OUT", textcolor=color.lime)
+
+// ============================================================
+// Alerts
+// ============================================================
+alertcondition(long_signal,  title="Reversal Long",  message="Reversal TX — Long Entry ({{ticker}} {{close}})")
+alertcondition(short_signal, title="Reversal Short", message="Reversal TX — Short Entry ({{ticker}} {{close}})")
+alertcondition(exit_signal,  title="Reversal Exit",  message="Reversal TX — Exit ({{ticker}} {{close}})")
