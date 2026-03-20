@@ -92,6 +92,8 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
         self._open_price   = None
         self._bb_long_touched  = False  # latch: BB_Lower + vol_ok
         self._bb_short_touched = False  # latch: BB_Upper + vol_ok
+        self._bb_long_count    = 0     # count BB_Lower touches (2nd touch relaxes CCD)
+        self._bb_short_count   = 0     # count BB_Upper touches
         self._bull_exhausted   = False  # latch: price reached day_low + EstRange * fraction
         self._bear_exhausted   = False  # latch: price reached day_high - EstRange * fraction
         self._trigger_count = 0
@@ -245,10 +247,12 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
         if self._allow_long and bullish and not self._bb_long_touched:
             if close <= bb_lower and vol_ok:
                 self._bb_long_touched = True
+                self._bb_long_count += 1
 
         if self._allow_short and not bullish and not self._bb_short_touched:
             if close >= bb_upper and vol_ok:
                 self._bb_short_touched = True
+                self._bb_short_count += 1
 
         # ── Step 2: Trigger on MA5 cross (must be within entry window) ───
         # Setup = BB_touched AND (CCD_ok OR exhausted)
@@ -261,10 +265,12 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
 
             long_setup = (self._allow_long and bullish and
                           self._bb_long_touched and
-                          (ccd > 0 or self._bear_exhausted or above_vwap))
+                          (ccd > 0 or self._bear_exhausted or above_vwap
+                           or self._bb_long_count >= 2))
             short_setup = (self._allow_short and not bullish and
                            self._bb_short_touched and
-                           (ccd < 0 or self._bull_exhausted or below_vwap))
+                           (ccd < 0 or self._bull_exhausted or below_vwap
+                            or self._bb_short_count >= 2))
 
             if long_setup and close > ma5:
                 self._trigger_count += 1
@@ -280,10 +286,9 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
                     self._sl_price = close + sl
                     self._entered  = True
 
-        # ── Reset all latches on MA5 cross (opportunity passed) ──────────
+        # ── Reset BB latch on MA5 cross (opportunity passed) ────────────
+        # Exhaustion is NOT reset — once the day's range is spent, it stays.
         if close > ma5:
             self._bb_long_touched = False
-            self._bear_exhausted  = False
         if close < ma5:
             self._bb_short_touched = False
-            self._bull_exhausted   = False
