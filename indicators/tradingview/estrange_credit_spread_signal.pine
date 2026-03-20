@@ -54,6 +54,8 @@ is_tue        = dayofweek == dayofweek.tuesday
 // Per-weekday exit time (minutes from midnight)
 // Mon=11:30(690), Tue=11:30(690), Fri=12:00(720)
 _exit_t = is_mon ? 690 : is_tue ? 690 : is_fri ? 720 : 690
+_exit_h = int(math.floor(_exit_t / 60))
+_exit_m = _exit_t % 60
 
 // Entry window ends min_hold_min before exit
 _entry_end_t = _exit_t - min_hold_min
@@ -141,6 +143,7 @@ var int   signal_dir     = 0       // 1 = sell put, -1 = sell call
 var int   sell_strike    = 0
 var int   buy_strike     = 0
 var float entry_credit   = na
+var label _exit_remind_lbl = na
 
 if entering_session
     day_triggered := false
@@ -148,6 +151,9 @@ if entering_session
     sell_strike   := 0
     buy_strike    := 0
     entry_credit  := na
+    if not na(_exit_remind_lbl)
+        label.delete(_exit_remind_lbl)
+        _exit_remind_lbl := na
 
 // Check trigger (require min gap between est_high and est_low)
 gap_ok        = ready and est_high - est_low >= min_gap
@@ -160,6 +166,10 @@ if trigger_long
     signal_dir    := 1
     sell_strike   := int(math.round(est_low / 100) * 100)
     buy_strike    := sell_strike - int(spread_w)
+    _exit_remind_lbl := label.new(bar_index, high,
+        str.format("今日 {0,number,00}:{1,number,00} 收工", _exit_h, _exit_m),
+        style=label.style_label_down, size=size.small,
+        color=color.new(color.orange, 20), textcolor=color.white)
 
 if trigger_short
     // Price hit Est Low → Sell Call Spread
@@ -167,6 +177,10 @@ if trigger_short
     signal_dir    := -1
     sell_strike   := int(math.round(est_high / 100) * 100)
     buy_strike    := sell_strike + int(spread_w)
+    _exit_remind_lbl := label.new(bar_index, low,
+        str.format("今日 {0,number,00}:{1,number,00} 收工", _exit_h, _exit_m),
+        style=label.style_label_up, size=size.small,
+        color=color.new(color.orange, 20), textcolor=color.white)
 
 // ============================================================
 // Display
@@ -231,10 +245,11 @@ if strike_hit and not sl_alerted
         size=size.normal,
         color=color.new(color.red, 0), textcolor=color.white)
     sl_alerted := true
+    if not na(_exit_remind_lbl)
+        label.delete(_exit_remind_lbl)
+        _exit_remind_lbl := na
 
 // Exit reminder at per-weekday exit time (only if not already stopped out)
-_exit_h = int(math.floor(_exit_t / 60))
-_exit_m = _exit_t % 60
 t_exit = timestamp("Asia/Taipei", year, month, dayofmonth, _exit_h, _exit_m)
 at_exit = time >= t_exit and time < t_exit + 60000  // within 1 min of exit
 _exit_label = str.format("{0,number,00}:{1,number,00}", _exit_h, _exit_m)
@@ -244,6 +259,9 @@ if at_exit and day_triggered and not strike_hit
         str.format("{0} 收工\n買回{1}價差", _exit_label, _side),
         style=label.style_label_right, size=size.small,
         color=color.new(color.gray, 30), textcolor=color.white)
+    if not na(_exit_remind_lbl)
+        label.delete(_exit_remind_lbl)
+        _exit_remind_lbl := na
 
 // Preparation labels on the last bar (one at Est High, one at Est Low)
 // Show only when: ready, not triggered, still within entry window
