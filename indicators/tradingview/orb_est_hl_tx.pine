@@ -4,10 +4,10 @@
 //
 // 進場邏輯（08:45–08:57 OR，08:58–09:15 進場窗口，只做多）：
 //   1. Close > OR High（向上突破）
-//   2. 30m 20MA 趨勢向上（Close30 > MA30_20）
+//   2. 5m 120MA 方向向上（MA > MA_prev，每 5 分鐘更新）
 //   3. OR 寬度在 0.5–1.5× RollingOR 內
 //   4. 非週四、非週五（weekday 效應）
-//   5. BigCost 濾網：or_high > max(BigCost1, BigCost2) + 0.5 × sl_dist
+//   5. BigCost 濾網：close（突破價）> max(BigCost1, BigCost2) + 0.5 × sl_dist
 //      BigCost = 日盤成交量 > 20SMA 的 bar 的 VWAP（大戶成本）
 //      BigCost1 = 昨日，BigCost2 = 前日
 //
@@ -29,7 +29,7 @@
 // 線條顏色說明：
 //   Teal    ── OR High（開盤區間高點 08:45–08:57）
 //   Orange  ── OR Low （開盤區間低點）
-//   Blue    ── 30m 20MA（趨勢方向參考）
+//   Blue    ── 5m 120MA（均線方向參考，每 5 分鐘更新）
 //   Yellow  ── BigCost1/2（大戶成本，昨日/前日）
 //   White   ── BigCost 門檻（BC + 0.5×sl_dist，OR High 需突破此線）
 //   Purple  ── SatZone Upper（滿足區上緣，持倉中顯示）
@@ -54,7 +54,7 @@ indicator(
 var string GRP_SL       = "停損"
 var string GRP_OR       = "OR / 進場"
 var string GRP_BIGCOST  = "BigCost 濾網（大戶成本）"
-var string GRP_TREND    = "趨勢濾網（30m 20MA）"
+var string GRP_TREND    = "趨勢濾網（5m 120MA 方向）"
 var string GRP_DOW      = "星期濾網"
 var string GRP_VIZ      = "顯示"
 
@@ -64,7 +64,7 @@ use_or_width   = input.bool (true, "啟用 OR 寬度濾網（0.5–1.5× Rolling
 use_bigcost    = input.bool (true, "啟用 BigCost 濾網",               group=GRP_BIGCOST,
                               tooltip="or_high > max(BigCost1,BigCost2) + 0.5 × sl_dist")
 bigcost_days   = input.int  (2,    "回看天數（1 或 2）",               minval=1, maxval=2, group=GRP_BIGCOST)
-use_trend      = input.bool (true, "啟用 30m 20MA 趨勢濾網",          group=GRP_TREND)
+use_trend      = input.bool (true, "啟用 5m 120MA 方向濾網",          group=GRP_TREND)
 skip_thu       = input.bool (true, "跳過週四（weekday 效應）",          group=GRP_DOW)
 skip_fri       = input.bool (true, "跳過週五（weekday 效應）",          group=GRP_DOW)
 show_or        = input.bool (true, "OR 高低線",                       group=GRP_VIZ)
@@ -73,7 +73,7 @@ show_sat       = input.bool (true, "SatZone 線（紫色）",               grou
 show_sl_ln     = input.bool (true, "SL 線（紅色）",                    group=GRP_VIZ)
 show_dow_ln    = input.bool (true, "Dow Trail 線（粉紅）",              group=GRP_VIZ)
 show_bg        = input.bool (true, "時段底色",                         group=GRP_VIZ)
-show_trend_ma  = input.bool (true, "30m 20MA 趨勢線（藍色）",           group=GRP_VIZ)
+show_trend_ma  = input.bool (true, "5m 120MA 趨勢線（藍色）",           group=GRP_VIZ)
 show_bc_thresh = input.bool (true, "BigCost 門檻線（白色虛線）",         group=GRP_VIZ)
 show_diag      = input.bool (true, "濾網診斷 Label",                    group=GRP_VIZ)
 
@@ -148,15 +148,14 @@ or_filter_pass = (not use_or_width or na(rolling_or) or
 var float ema_hl_sess  = na   // 20-day EMA of day-session H-L range
 
 // ============================================================
-// 30m 20MA Trend Filter
+// 5m 120MA Trend Filter — MA 方向判斷（MA > MA_prev = 向上）
 // ============================================================
-// lookahead_on + [1] = 防重繪標準寫法：
-//   lookahead_on 讓歷史 bar 行為與即時一致，
-//   [1] 確保只取已收盤的前一根 30m bar，不偷看未來
-[close30, ma30_20] = request.security(syminfo.tickerid, "30",
-    [close[1], ta.sma(close, 20)[1]],
+// 對應 Python runner.py: MA5m_120 = shift(1), MA5m_120_Prev = shift(2)
+// lookahead_on + [1]/[2] = 防重繪標準寫法
+[ma5_cur, ma5_prev] = request.security(syminfo.tickerid, "5",
+    [ta.sma(close, 120)[1], ta.sma(close, 120)[2]],
     lookahead = barmerge.lookahead_on)
-trend_ok = not use_trend or na(close30) or na(ma30_20) or close30 > ma30_20
+trend_ok = not use_trend or na(ma5_cur) or na(ma5_prev) or ma5_cur > ma5_prev
 
 // ============================================================
 // Session High/Low and Cumulative Volume
@@ -339,7 +338,7 @@ exit_signal = exit_sl or exit_sat or exit_dow or exit_force
 can_enter   = (not in_pos and not day_traded and or_done and
                in_entry_win and or_filter_pass and wd_ok and
                not na(ema_hl_sess))
-long_signal = can_enter and trend_ok and close > or_high and bigcost_ok(or_high, ema_hl_sess)
+long_signal = can_enter and trend_ok and close > or_high and bigcost_ok(close, ema_hl_sess)
 
 // ============================================================
 // Apply State Changes (exit first, then entry)
@@ -392,11 +391,11 @@ if leaving_or and not na(or_high) and not na(or_low) and not na(day_open) and da
         _wd_str     = wd_ok ? "Y" : (is_thu_skip ? "Thu" : "Fri")
         _bc_str     = not use_bigcost ? "off" : (na(_bc_max) ? "n/a" : (not na(or_high) and not na(ema_hl_sess) and bigcost_ok(or_high, ema_hl_sess) ? "Y" : "N"))
         _bc_val_str = na(_bc_max) ? "" : str.format("\nBC={0,number,#}", _bc_max)
-        _ma_str     = na(ma30_20) ? "" : str.format("\nMA20={0,number,#}", ma30_20)
-        _c30_str    = na(close30) ? "" : str.format(" C30={0,number,#}", close30)
+        _ma_str     = na(ma5_cur) ? "" : str.format("\nMA120={0,number,#}", ma5_cur)
+        _prev_str   = na(ma5_prev) ? "" : str.format(" Prev={0,number,#}", ma5_prev)
         diag_txt    = str.format("Trend:{0} OR:{1} WD:{2} BC:{3}{4}{5}{6}",
                       _trend_str, _or_str, _wd_str, _bc_str,
-                      _bc_val_str, _ma_str, _c30_str)
+                      _bc_val_str, _ma_str, _prev_str)
         label.new(bar_index, or_low,
             diag_txt,
             style=label.style_label_up, size=size.tiny,
@@ -412,8 +411,8 @@ bgcolor(show_bg and in_entry_win and not day_filtered ? color.new(color.blue,   
 bgcolor(show_bg and in_entry_win and day_filtered     ? color.new(color.gray,   88) : na, title="濾網淘汰（灰）")
 bgcolor(show_bg and in_trail_zone                     ? color.new(color.purple, 94) : na, title="Trail 區段（紫）")
 
-// ── 30m 20MA 趨勢線（藍色，日盤期間顯示）─────────────────
-plot(show_trend_ma and in_session ? ma30_20 : na, "30m MA20 (Blue)",
+// ── 5m 120MA 趨勢線（藍色，日盤期間顯示）─────────────────
+plot(show_trend_ma and in_session ? ma5_cur : na, "5m MA120 (Blue)",
      color=color.new(color.blue, 30), linewidth=2, style=plot.style_linebr)
 
 // ── BigCost 線（黃色，參考用）──────────────────────────────
