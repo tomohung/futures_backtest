@@ -232,14 +232,15 @@ mc=10 砍太多（Fri 從 27→11 筆），實戰中可再依經驗調整。
 | Max Spread | 200 | 下單軟體限制 |
 | Min DTE | 0 | 含到期日（DTE=0 是主力收益來源） |
 | Min Gap | 50 | Est High - Est Low < 50 時跳過 |
-| Min Credit | 5 | 過濾 Wed/Fri 的薄利交易 |
+| Min Credit | 5 | 過濾薄利交易 |
+| Min Hold | 60m | 進場距出場不足 60 分鐘則跳過 |
 | Skip Settlement | Yes | 第三週三不做 |
 
 | Day | Exit Time | DTE | 合約 |
 |-----|-----------|-----|------|
 | Mon | 11:30 | 2 | W（週三到期） |
 | Tue | 11:30 | 1 | W |
-| Wed | 10:30 | 0 | W/Monthly（到期日） |
+| **Wed** | **不做** | — | —（10:30 出場 theta 不足，PnL ≈ 0） |
 | **Thu** | **不做** | — | — |
 | Fri | 12:00 | 0 | F（週五到期） |
 

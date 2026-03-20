@@ -4,12 +4,12 @@
 // 在台指期 1 分 K 上顯示選擇權價差單進場訊號。
 // 碰到 EstRange 水位時，跳出要下的單（strike + 方向）。
 //
-// 策略（2026-03-19 weekday optimization）：
-//   D combo: Mon+Tue+Wed+Fri，skip Thu
+// 策略（2026-03-20 weekday optimization）：
+//   D combo: Mon+Tue+Fri，skip Wed+Thu
 //   碰到 Est High → Sell Put Spread
 //   碰到 Est Low  → Sell Call Spread
-//   逐 weekday exit: Mon=11:30, Tue=11:30, Wed=10:30, Fri=12:00
-//   min_credit=5, skip settlement Wed
+//   逐 weekday exit: Mon=11:30, Tue=11:30, Fri=12:00
+//   min_credit=5, min_hold=60m, skip settlement Wed
 // ============================================================
 //@version=6
 indicator(
@@ -31,8 +31,11 @@ min_gap      = input.int(50, "Min Gap", minval=0, maxval=200, step=10,
                          tooltip="Est High - Est Low 最小間距（< 此值不做，避免大波動日）")
 min_credit   = input.float(5.0, "Min Credit", step=1.0, minval=0, maxval=50,
                            tooltip="Credit 低於此值不做（Wed/Fri DTE=0 扣手續費後不划算）")
+skip_wed     = input.bool(true, "Skip Wednesday", tooltip="Wed 不做（10:30 出場 theta 衰減不足，PnL ≈ 0）")
 skip_thu     = input.bool(true, "Skip Thursday", tooltip="Thu 不做（所有 exit time 都虧損）")
 skip_settlement = input.bool(true, "Skip Settlement", tooltip="結算日不做（第三個週三，勝率僅 46%）")
+min_hold_min = input.int(60, "Min Hold (分鐘)", minval=0, maxval=120, step=10,
+                         tooltip="進場距出場不足此分鐘數則不做")
 
 // ============================================================
 // Time
@@ -49,10 +52,12 @@ is_mon        = dayofweek == dayofweek.monday
 is_tue        = dayofweek == dayofweek.tuesday
 
 // Per-weekday exit time (minutes from midnight)
-// Mon=11:30(690), Tue=11:30(690), Wed=10:30(630), Fri=12:00(720)
-_exit_t = is_mon ? 690 : is_tue ? 690 : is_wed ? 630 : is_fri ? 720 : 690
+// Mon=11:30(690), Tue=11:30(690), Fri=12:00(720)
+_exit_t = is_mon ? 690 : is_tue ? 690 : is_fri ? 720 : 690
 
-in_entry_win  = _t >= 570 and _t <= _exit_t   // 09:30 ~ weekday exit
+// Entry window ends min_hold_min before exit
+_entry_end_t = _exit_t - min_hold_min
+in_entry_win  = _t >= 570 and _t <= _entry_end_t   // 09:30 ~ (exit - min_hold)
 
 // Detect 3rd Wednesday (settlement day)
 _dom = dayofmonth(time, "Asia/Taipei")
@@ -121,7 +126,7 @@ if slot_changed_5m
 // ============================================================
 // Trigger Levels + Signal
 // ============================================================
-ready = not na(cur_est_range) and not na(sess_low) and not na(sess_high) and not (skip_settlement and is_3rd_wed) and not (skip_thu and is_thu)
+ready = not na(cur_est_range) and not na(sess_low) and not na(sess_high) and not (skip_settlement and is_3rd_wed) and not (skip_wed and is_wed) and not (skip_thu and is_thu)
 
 est_high = ready ? sess_low  + cur_est_range * frac : na
 est_low  = ready ? sess_high - cur_est_range * frac : na
@@ -273,6 +278,12 @@ if entering_session and skip_settlement and is_3rd_wed
         style=label.style_label_down, size=size.small,
         color=color.new(color.gray, 60), textcolor=color.white)
 
+if entering_session and skip_wed and is_wed and not (skip_settlement and is_3rd_wed)
+    label.new(bar_index, high,
+        "Wed — 不做",
+        style=label.style_label_down, size=size.small,
+        color=color.new(color.gray, 60), textcolor=color.white)
+
 if entering_session and skip_thu and is_thu
     label.new(bar_index, high,
         "Thu — 不做",
@@ -280,7 +291,7 @@ if entering_session and skip_thu and is_thu
         color=color.new(color.gray, 60), textcolor=color.white)
 
 // Background: entry window / in position / stop loss
-bgcolor(in_entry_win and not day_triggered and ready and not (skip_settlement and is_3rd_wed) and not (skip_thu and is_thu) ?
+bgcolor(in_entry_win and not day_triggered and ready and not (skip_settlement and is_3rd_wed) and not (skip_wed and is_wed) and not (skip_thu and is_thu) ?
         color.new(color.blue, 94) : na, title="進場窗口")
 bgcolor(day_triggered and not strike_hit and in_session and _t <= _exit_t ?
         color.new(color.green, 94) : na, title="持倉中")

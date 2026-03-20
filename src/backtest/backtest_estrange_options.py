@@ -274,6 +274,7 @@ def run_backtest(
     w_only: bool = False,
     weekdays: list[str] | None = None,
     min_credit: float = 0,
+    min_hold: int = 0,
 ) -> pd.DataFrame:
     exit_time = time(int(exit_time_str.split(":")[0]), int(exit_time_str.split(":")[1]))
     entry_start = time(9, 30)
@@ -387,6 +388,13 @@ def run_backtest(
 
             if touched_side is None:
                 continue
+
+            # Min holding time filter
+            if min_hold > 0:
+                from datetime import datetime as _dt
+                hold_minutes = (_dt.combine(td, exit_time) - _dt.combine(td, touch_time)).total_seconds() / 60
+                if hold_minutes < min_hold:
+                    continue
 
             er = touch_er
             est_high = touch_est_high
@@ -611,6 +619,7 @@ def main():
     parser.add_argument("--w-only", action="store_true", help="Only use W (Wednesday) contracts, skip F (Friday)")
     parser.add_argument("--weekdays", default=None, help="Only trade on specified weekdays (e.g. Mon,Tue,Fri)")
     parser.add_argument("--min-credit", type=float, default=0, help="Minimum credit to enter trade (pts, default 0)")
+    parser.add_argument("--min-hold", type=int, default=0, help="Minimum holding time in minutes (skip if touch too close to exit)")
     parser.add_argument("--output", default=None, help="Save trades CSV")
     args = parser.parse_args()
 
@@ -632,6 +641,7 @@ def main():
         w_only=args.w_only,
         weekdays=weekday_filter,
         min_credit=args.min_credit,
+        min_hold=args.min_hold,
     )
 
     print_summary(df_trades)
