@@ -1,0 +1,189 @@
+// @version=5
+
+indicator("Bull Bear Force Volume", overlay=false)
+
+
+
+// === User Inputs ===
+
+lookbackPeriod = input.int(20, title="Lookback Period", minval=1, maxval=100)
+
+showCumulative = input.bool(true, title="Show Cumulative Force")
+
+showRolling = input.bool(true, title="Show Rolling Force")
+
+cumulativeColor = input.color(color.lime, title="Cumulative Net Force Color")
+
+rollingColor = input.color(color.new(color.lime, 50), title="Rolling Net Force Color")
+
+zeroLineColor = input.color(color.silver, title="Zero Line Color")
+
+
+
+// === Calculate Bull/Bear Volume ===
+
+// Determine if bar is bullish or bearish
+
+isBullish = close > open
+
+isBearish = close < open
+
+
+
+// Calculate volume force
+
+bullVolume = isBullish ? volume : 0
+
+bearVolume = isBearish ? volume : 0
+
+
+
+// === Cumulative Force ===
+
+var float cumulativeBullForce = 0.0
+
+var float cumulativeBearForce = 0.0
+
+
+
+// Reset on new day
+
+newDay = dayofmonth != dayofmonth[1] or month != month[1] or year != year[1]
+
+if newDay
+
+    cumulativeBullForce := 0.0
+
+    cumulativeBearForce := 0.0
+
+
+
+// Accumulate forces (only if not a new day)
+
+if not newDay
+
+    cumulativeBullForce := cumulativeBullForce + bullVolume
+
+    cumulativeBearForce := cumulativeBearForce + bearVolume
+
+else
+
+    // For the first bar of the day, start with current bar's volume
+
+    cumulativeBullForce := bullVolume
+
+    cumulativeBearForce := bearVolume
+
+
+
+// Net cumulative force
+
+cumulativeNetForce = cumulativeBullForce - cumulativeBearForce
+
+
+
+// === Rolling Force ===
+
+rollingBullForce = math.sum(bullVolume, lookbackPeriod)
+
+rollingBearForce = math.sum(bearVolume, lookbackPeriod)
+
+rollingNetForce = rollingBullForce - rollingBearForce
+
+
+
+// === Plotting ===
+
+// Conditional values for plotting
+
+cumulativeNetForcePlot = showCumulative ? cumulativeNetForce : na
+
+cumulativeBullForcePlot = showCumulative ? cumulativeBullForce : na
+
+cumulativeBearForcePlot = showCumulative ? -cumulativeBearForce : na
+
+
+
+rollingNetForcePlot = showRolling ? rollingNetForce : na
+
+rollingBullForcePlot = showRolling ? rollingBullForce : na
+
+rollingBearForcePlot = showRolling ? -rollingBearForce : na
+
+
+
+// Plot cumulative forces
+
+plot(cumulativeNetForcePlot, color=cumulativeColor, linewidth=2, title="Cumulative Net Force")
+
+// plot(cumulativeBullForcePlot, color=color.new(bullColor, 50), linewidth=1, title="Cumulative Bull Force")
+
+// plot(cumulativeBearForcePlot, color=color.new(bearColor, 50), linewidth=1, title="Cumulative Bear Force")
+
+
+
+// Plot rolling forces
+
+plot(rollingNetForcePlot, color=rollingColor, linewidth=2, title="Rolling Net Force")
+
+// plot(rollingBullForcePlot, color=color.new(bullColor, 75), linewidth=1, title="Rolling Bull Force")
+
+// plot(rollingBearForcePlot, color=color.new(bearColor, 75), linewidth=1, title="Rolling Bear Force")
+
+
+
+// Zero line
+
+hline(0, color=zeroLineColor, linestyle=hline.style_dashed, title="Zero Line")
+
+
+
+// === Labels ===
+
+var label netLabel = na
+
+var label rollingLabel = na
+
+
+
+if barstate.islast
+
+    // Delete existing labels
+
+    if not na(netLabel)
+
+        label.delete(netLabel)
+
+    if not na(rollingLabel)
+
+        label.delete(rollingLabel)
+
+
+
+    // Calculate label spacing to avoid overlap (minimum 5% of the larger value, or 10% of the difference)
+
+    maxValue = math.max(math.abs(rollingNetForce), math.abs(cumulativeNetForce))
+
+    valueDiff = math.abs(rollingNetForce - cumulativeNetForce)
+
+    labelSpacing = math.max(maxValue * 0.05, valueDiff * 0.1, maxValue * 0.02)
+
+
+
+    // Determine label positions based on which value is greater
+
+    // rollingLabel above netLabel if rollingNetForce > cumulativeNetForce, otherwise below
+
+    rollingY = rollingNetForce > cumulativeNetForce ? rollingNetForce + labelSpacing : rollingNetForce
+
+    netY = rollingNetForce > cumulativeNetForce ? cumulativeNetForce : cumulativeNetForce + labelSpacing
+
+
+
+    // Create new labels at the same x position for vertical alignment
+
+    labelX = bar_index + 3
+
+    netLabel := label.new(labelX, netY, text="Net: " + str.tostring(cumulativeNetForce, "#"), color=color.new(cumulativeColor, 80), style=label.style_label_left, textcolor=color.white, size=size.small)
+
+    rollingLabel := label.new(labelX + 6, rollingY, text="Rolling: " + str.tostring(rollingNetForce, "#"), color=color.new(rollingColor, 80), style=label.style_none, textcolor=cumulativeColor, size=size.small)
