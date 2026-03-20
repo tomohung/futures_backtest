@@ -99,11 +99,13 @@ at_force_exit = time >= t_force_exit    and time <  t_day_end
 vwap_active   = time >= t_vwap_start
 
 // ============================================================
-// Session Start Detection
+// Session Start Detection (date-based, works without night-session bars)
 // ============================================================
-var bool prev_in_session = false
-entering_session = in_session and not prev_in_session
-prev_in_session := in_session
+var int _prev_session_dom = -1
+_cur_session_dom = dayofmonth(time, "Asia/Taipei")
+entering_session = in_session and _cur_session_dom != _prev_session_dom
+if in_session
+    _prev_session_dom := _cur_session_dom
 
 // ============================================================
 // EmaHL — 20-day EMA of day-session H-L range
@@ -478,16 +480,16 @@ bb_short_event = in_setup_win and allow_short and not ma_bullish and close >= bb
 
 if show_diag and bb_long_event and bb_long_count <= 2
     _exh_str = bear_exhausted ? " Exh" : ""
-    label.new(bar_index, low,
+    label.new(bar_index, high,
         str.format("BB#{0}{1}", bb_long_count, _exh_str),
-        style=label.style_label_up, size=size.tiny,
+        style=label.style_label_down, size=size.tiny,
         color=color.green, textcolor=color.white)
 
 if show_diag and bb_short_event and bb_short_count <= 2
     _exh_str = bull_exhausted ? " Exh" : ""
-    label.new(bar_index, high,
+    label.new(bar_index, low,
         str.format("BB#{0}{1}", bb_short_count, _exh_str),
-        style=label.style_label_down, size=size.tiny,
+        style=label.style_label_up, size=size.tiny,
         color=color.red, textcolor=color.white)
 
 // ============================================================
@@ -524,14 +526,12 @@ plot(show_ma5 and in_session ? ma5_1m : na, "1m 5MA (Aqua)",
 plot(show_vwap and in_session and vwap_active ? intraday_vwap : na, "VWAP (Orange)",
      color=color.new(color.orange, 30), linewidth=1, style=plot.style_linebr)
 
-// ── SatZone
-sat_show_upper = show_sat and in_session and not na(sat_upper)
-sat_show_lower = show_sat and in_session and not na(sat_lower)
-plot(sat_show_upper ? sat_upper : na, "SatZone Upper (Purple)",
-     color=color.new(color.fuchsia, in_pos and pos_dir > 0 ? 0 : 60),
+// ── SatZone（與 orb_est_hl_tx.pine 同色系）
+plot(show_sat and in_session ? sat_upper : na, "SatZone Upper (Purple)",
+     color=color.new(color.purple, in_pos and pos_dir > 0 ? 0 : 60),
      linewidth=2, style=plot.style_circles)
-plot(sat_show_lower ? sat_lower : na, "SatZone Lower (Purple)",
-     color=color.new(color.fuchsia, in_pos and pos_dir < 0 ? 0 : 60),
+plot(show_sat and in_session ? sat_lower : na, "SatZone Lower (Purple)",
+     color=color.new(color.purple, in_pos and pos_dir < 0 ? 0 : 60),
      linewidth=2, style=plot.style_circles)
 
 // ── SL
