@@ -268,19 +268,25 @@ bb_lower = bb_basis - bb_dev
 vol_ma20 = ta.sma(volume, 20)
 
 // ============================================================
-// CCD (5m) — Cumulative Close Delta on 5-min timeframe
+// CCD (5m) — Cumulative Candle Delta on 5-min timeframe
+// Bull candle (close > open) = +volume, Bear candle = -volume
+// Daily cumsum, shift(1) to avoid lookahead
 // ============================================================
-ccd_5m = request.security(syminfo.tickerid, "5",
-    ta.cum(close - close[1]),
-    lookahead = barmerge.lookahead_on)
+// Compute on 5m: signed volume per candle, cumsum per day
+var float ccd_cum_5m = 0.0
+[ccd_5m_val] = request.security(syminfo.tickerid, "5", [
+    ta.cum(
+        (close > open ? volume : close < open ? -volume : 0.0)
+    )[1]
+], lookahead = barmerge.lookahead_on)
 
-// Use delta from session start as proxy for daily CCD
+// Reset base at session start to get daily CCD
 var float ccd_base = na
 if entering_session
     ccd_base := na
-if in_session and na(ccd_base) and not na(ccd_5m)
-    ccd_base := ccd_5m
-ccd_daily = not na(ccd_5m) and not na(ccd_base) ? ccd_5m - ccd_base : float(na)
+if in_session and na(ccd_base) and not na(ccd_5m_val)
+    ccd_base := ccd_5m_val
+ccd_daily = not na(ccd_5m_val) and not na(ccd_base) ? ccd_5m_val - ccd_base : float(na)
 
 // ============================================================
 // 1m 5MA (trigger reference)
