@@ -272,12 +272,45 @@ mc=10 砍太多（Fri 從 27→11 筆），實戰中可再依經驗調整。
 | Wed | 12 | 100% | +127.3 | +109.2 | inf |
 | Fri | 19 | 89.5% | +157.3 | +128.5 | 8.83 |
 
+### 2026-03-20 修訂：排除 Wed + min-hold + Fri F 合約研究
+
+#### Wed 排除原因
+Wed exit=10:30，17 筆全勝但 PnL ≈ 0（+0.2 pts）。
+多數交易持有 10~30 分鐘，theta 衰減極少，8/17 筆 PnL 為負但小於 credit 所以算 Win。
+扣手續費後不划算，排除。
+
+#### min-hold 濾網（2025-07 ~ 2026-03，Mon+Tue+Fri per-weekday exit）
+
+| min-hold | 筆數 | WR% | PF | PnL |
+|----------|------|-----|----|-----|
+| 0m | 86 | 90.7% | 2.38 | +351.5 |
+| 30m | 83 | 90.4% | 2.43 | +349.0 |
+| **60m** | **76** | **88.2%** | **2.65** | **+334.0** |
+| 90m | 54 | 88.9% | 2.92 | +271.0 |
+
+採用 60m：PF 最佳區間，筆數仍足夠。
+
+#### Fri 合約選擇：W vs F
+
+週五預設選 W 合約（DTE≈5，下週三到期），因流動性較佳。
+但 F 合約（DTE=0，當天到期）theta 衰減極快，Win 時幾乎全收 credit：
+
+| 合約 | 筆數 | WR% | PF | PnL | Avg Credit | Avg/trade |
+|------|------|-----|----|-----|------------|-----------|
+| W（現行）| 24 | 87.5% | 1.48 | +28.5 | 50.9 | +1.2 |
+| **F** | **16** | **87.5%** | **7.87** | **+138.1** | **12.7** | **+8.6** |
+
+F 合約 exit×hold 網格最佳：**exit=12:00, min-hold=0**（+151.6 pts, PF=8.54, 18 筆）。
+
+注意：F 合約 2025-06-27 才上線，樣本 8 個月。目前 Fri 維持用 W 合約（穩定），
+F 合約列為待觀察方向，累積更多樣本後再考慮切換。
+
 ### 限制與注意
 
 1. **回測期間僅 8.5 個月**（2025-07 起），F 合約才於 2025-06-27 推出
-2. 樣本數 89 筆，統計顯著性有限
+2. 樣本數有限（Mon+Tue+Fri 76 筆），統計顯著性待累積
 3. 近期高波動（2026-01~03 台指 29K→35K）可能 inflate 績效
-4. 實際交易需考慮滑價、流動性（尤其 Wed/Fri DTE=0 的 OTM 選擇權）
+4. 實際交易需考慮滑價、流動性（尤其 DTE=0 的 OTM 選擇權）
 5. min_credit=5 可依實戰經驗調整（mc=10 也合理但筆數少太多）
 6. Mon/Tue exit 11:30 為實務可行的次佳解（PnL 最高為 Mon 13:44、Tue 13:00）
 
@@ -288,8 +321,12 @@ mc=10 砍太多（Fri 從 27→11 筆），實戰中可再依經驗調整。
 ### 修改檔案
 
 - `src/backtest/backtest_estrange_options.py`
-  - `run_backtest()` 加 `weekdays`、`min_credit` 參數
-  - CLI 加 `--weekdays`、`--min-credit` 參數
+  - `run_backtest()` 加 `weekdays`、`min_credit`、`min_hold`、`f_only` 參數
+  - CLI 加 `--weekdays`、`--min-credit`、`--min-hold`、`--f-only` 參數
+
+- `indicators/tradingview/estrange_credit_spread_signal.pine`
+  - 新增 skip_wed、min_hold_min input
+  - 進場窗口改為 09:30 ~ (exit - min_hold)
 
 - `src/backtest/optimize_estrange_weekday.py`（新增）
   - Step 1: weekday × exit_time 網格

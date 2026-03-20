@@ -113,6 +113,7 @@ def select_contract(
     min_dte: int = 2,
     max_dte: int | None = None,
     w_only: bool = False,
+    f_only: bool = False,
 ) -> tuple[str | None, str | None]:
     """Select contract for a trading day.
 
@@ -121,6 +122,7 @@ def select_contract(
     min_dte: minimum days to expiry (default 2, skips DTE=0/1).
     max_dte: maximum days to expiry (default None = no limit).
     w_only: only pick W (Wednesday expiry) or Monthly contracts, skip F contracts.
+    f_only: only pick F (Friday expiry) contracts.
     """
     if monthly_only:
         return get_monthly_contract(trade_date), "monthly"
@@ -135,6 +137,8 @@ def select_contract(
         if exp is None:
             continue
         if w_only and "F" in c:
+            continue
+        if f_only and "F" not in c:
             continue
         dte = (exp - trade_date).days
         if dte >= min_dte and (max_dte is None or dte <= max_dte):
@@ -272,6 +276,7 @@ def run_backtest(
     min_dte: int = 2,
     max_dte: int | None = None,
     w_only: bool = False,
+    f_only: bool = False,
     weekdays: list[str] | None = None,
     min_credit: float = 0,
     min_hold: int = 0,
@@ -405,7 +410,7 @@ def run_backtest(
                 continue
 
             # Determine trade
-            contract, contract_reason = select_contract(td, daily_contracts, monthly_only, min_dte, max_dte, w_only)
+            contract, contract_reason = select_contract(td, daily_contracts, monthly_only, min_dte, max_dte, w_only, f_only)
             if contract is None:
                 continue
             spread_width = max(round_to_100(er * spread_pct), 100)
@@ -617,6 +622,7 @@ def main():
     parser.add_argument("--min-dte", type=int, default=2, help="Minimum days to expiry (default 2)")
     parser.add_argument("--max-dte", type=int, default=None, help="Maximum days to expiry (default: no limit)")
     parser.add_argument("--w-only", action="store_true", help="Only use W (Wednesday) contracts, skip F (Friday)")
+    parser.add_argument("--f-only", action="store_true", help="Only use F (Friday) contracts, skip W (Wednesday)")
     parser.add_argument("--weekdays", default=None, help="Only trade on specified weekdays (e.g. Mon,Tue,Fri)")
     parser.add_argument("--min-credit", type=float, default=0, help="Minimum credit to enter trade (pts, default 0)")
     parser.add_argument("--min-hold", type=int, default=0, help="Minimum holding time in minutes (skip if touch too close to exit)")
@@ -639,6 +645,7 @@ def main():
         min_dte=args.min_dte,
         max_dte=args.max_dte,
         w_only=args.w_only,
+        f_only=args.f_only,
         weekdays=weekday_filter,
         min_credit=args.min_credit,
         min_hold=args.min_hold,
