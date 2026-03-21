@@ -112,6 +112,7 @@ class ORBWithEstHLExitStrategy(EstimateHLExitMixin, Strategy):
             return
 
         if (not self._entered
+                and not self._satzone_reached
                 and self._entry_start <= cur_time <= self._entry_end
                 and self._or_high != -np.inf):
 

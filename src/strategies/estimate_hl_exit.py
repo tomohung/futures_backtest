@@ -63,6 +63,7 @@ class EstimateHLExitMixin:
         self._close_buffer: deque = deque(maxlen=5)
         self._target_upper: float | None = None
         self._target_lower: float | None = None
+        self._satzone_reached: bool = False  # day-level: price ever hit SatZone → no new entries
 
     # ------------------------------------------------------------------
     # Per-bar update (call this every bar from next())
@@ -80,6 +81,16 @@ class EstimateHLExitMixin:
         if cur_date != self._hl_prev_date:
             self._reset_estimate_hl_exit()
             self._hl_prev_date = cur_date
+
+        # Track whether price ever reaches SatZone bounds (day's range exhausted)
+        if not self._satzone_reached:
+            high = float(self.data.High[-1])
+            low = float(self.data.Low[-1])
+            sat_upper = float(self.data.SatZoneUpper[-1])
+            sat_lower = float(self.data.SatZoneLower[-1])
+            if (not np.isnan(sat_upper) and high >= sat_upper) or \
+               (not np.isnan(sat_lower) and low <= sat_lower):
+                self._satzone_reached = True
 
         # Rolling close buffer (max 5)
         self._close_buffer.append(float(self.data.Close[-1]))

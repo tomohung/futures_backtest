@@ -22,6 +22,9 @@
 //     3. VWAP bypass（09:30+）：close > 盤中 VWAP → 做多可放寬 CCD
 //     4. 2nd BB touch：BB 觸碰第二次 → CCD 放寬
 //
+//   SatZone 截止：若價格已觸及 SatZoneUpper 或 SatZoneLower，
+//     當日波動視為耗盡，不再產生新進場信號。
+//
 //   Step 2 — Trigger（09:10–10:05）：
 //     做多：close > MA5_1m（站上 1 分鐘 5MA）
 //     做空：close < MA5_1m（跌破 1 分鐘 5MA）
@@ -359,21 +362,28 @@ if in_setup_win and allow_short and not ma_bullish and not bb_short_touched
 // ============================================================
 // Position State
 // ============================================================
-var bool  in_pos       = false
-var int   pos_dir      = 0        // +1 = long, -1 = short
-var bool  day_traded   = false
-var float sl_price     = na
-var bool  sat_touched  = false
-var float trail_stop   = na
+var bool  in_pos           = false
+var int   pos_dir          = 0        // +1 = long, -1 = short
+var bool  day_traded       = false
+var float sl_price         = na
+var bool  sat_touched      = false
+var float trail_stop       = na
+var bool  satzone_reached  = false   // day-level: price ever hit SatZone → no new entries
 
 if entering_session
-    day_traded  := false
+    day_traded       := false
+    satzone_reached  := false
     if in_pos
         in_pos     := false
         pos_dir    := 0
         sl_price   := na
         sat_touched := false
         trail_stop := na
+
+// Track whether price ever reaches SatZone bounds (day's range exhausted)
+if in_session and not satzone_reached
+    if (not na(sat_upper) and high >= sat_upper) or (not na(sat_lower) and low <= sat_lower)
+        satzone_reached := true
 
 // ============================================================
 // Exit Conditions
@@ -423,7 +433,7 @@ long_setup  = (allow_long and ma_bullish and bb_long_touched and
 short_setup = (allow_short and not ma_bullish and bb_short_touched and
                (ccd_daily < 0 or bull_exhausted or below_vwap or bb_short_count >= 2))
 
-can_enter = not in_pos and not day_traded and in_entry_win and not na(ema_hl)
+can_enter = not in_pos and not day_traded and not satzone_reached and in_entry_win and not na(ema_hl)
 
 long_signal  = can_enter and long_setup  and close > ma5_1m
 short_signal = can_enter and short_setup and close < ma5_1m
@@ -462,11 +472,12 @@ prev_in_entry := in_entry_win
 if show_diag and entering_entry and (allow_long or allow_short)
     _dir_str  = allow_long ? "Long" : "Short"
     _ma_str   = ma_bullish ? "B" : "S"
+    _sz_str   = satzone_reached ? " SZ✗" : ""
     _bc_str   = not na(bigcost1) ? str.format("BC1={0,number,#}", bigcost1) : "BC=na"
     _ema_str  = not na(ema_hl) ? str.format("EmaHL={0,number,#}", ema_hl) : ""
     _ccd_str  = not na(ccd_daily) ? str.format("CCD={0,number,#}", ccd_daily) : "CCD=na"
-    diag_txt  = str.format("{0} MA:{1}\n{2}\n{3}\n{4}",
-                _dir_str, _ma_str, _bc_str, _ema_str, _ccd_str)
+    diag_txt  = str.format("{0} MA:{1}{2}\n{3}\n{4}\n{5}",
+                _dir_str, _ma_str, _sz_str, _bc_str, _ema_str, _ccd_str)
     label.new(bar_index, low,
         diag_txt,
         style=label.style_label_up, size=size.tiny,

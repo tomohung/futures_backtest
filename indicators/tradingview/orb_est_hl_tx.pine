@@ -7,7 +7,8 @@
 //   2. 5m 120MA 方向向上（MA > MA_prev，每 5 分鐘更新）
 //   3. OR 寬度在 0.5–1.5× RollingOR 內
 //   4. 非週四、非週五（weekday 效應）
-//   5. BigCost 濾網：close（突破價）> max(BigCost1, BigCost2) + 0.5 × sl_dist
+//   5. SatZone 未觸及（價格未曾觸及 SatZoneUpper/Lower → 當日波動尚未耗盡）
+//   6. BigCost 濾網：close（突破價）> max(BigCost1, BigCost2) + 0.5 × sl_dist
 //      BigCost = 日盤成交量 > 20SMA 的 bar 的 VWAP（大戶成本）
 //      BigCost1 = 昨日，BigCost2 = 前日
 //
@@ -284,11 +285,13 @@ _t   = _h * 60 + _m
 _slot_5m = in_session ? math.max(0, math.min(59, math.floor((_t - 525) / 5))) : -1
 
 var float sat_upper = na   // SatZoneUpper（進場後的目標）
+var float sat_lower = na   // SatZoneLower（用於 satzone_reached 判斷）
 
 slot_changed_5m = _slot_5m >= 0 and _slot_5m != prev_slot_5m
 
 if entering_or
     sat_upper := na
+    sat_lower := na
 
 // Compute new sat_upper at each 5-min slot boundary (1-slot delayed)
 if slot_changed_5m
@@ -302,8 +305,9 @@ if slot_changed_5m
             if not na(ema_cv) and ema_cv > 0
                 vol_ratio  = cum_vol / ema_cv
                 est_range  = ema_hl_sess * vol_ratio
-                if not na(sess_low)
-                    sat_upper := sess_low + est_range - ema_hl_sess / 8.0
+                if not na(sess_low) and not na(sess_high)
+                    sat_upper := sess_low  + est_range - ema_hl_sess / 8.0
+                    sat_lower := sess_high - est_range + ema_hl_sess / 8.0
 
     prev_slot_5m := _slot_5m
 
@@ -316,19 +320,26 @@ wd_ok = (not (skip_thu and dayofweek == dayofweek.thursday) and
 // ============================================================
 // Position State
 // ============================================================
-var bool  in_pos      = false
-var bool  day_traded  = false
-var float sl_price    = na
-var bool  sat_touched = false   // SatZone Phase 1 triggered
-var float dow_stop    = na      // Dow Theory trailing stop
+var bool  in_pos           = false
+var bool  day_traded       = false
+var float sl_price         = na
+var bool  sat_touched      = false   // SatZone Phase 1 triggered
+var float dow_stop         = na      // Dow Theory trailing stop
+var bool  satzone_reached  = false   // day-level: price ever hit SatZone → no new entries
 
 if entering_or
-    day_traded := false
+    day_traded       := false
+    satzone_reached  := false
     if in_pos
         in_pos      := false
         sl_price    := na
         sat_touched := false
         dow_stop    := na
+
+// Track whether price ever reaches SatZone bounds (day's range exhausted)
+if in_session and not satzone_reached
+    if (not na(sat_upper) and high >= sat_upper) or (not na(sat_lower) and low <= sat_lower)
+        satzone_reached := true
 
 // Dow Theory trailing stop (active after 09:45)
 // Uses ta.pivotlow(low, 5, 5): pivot confirmed when center bar is min of 5L+5R window.
@@ -355,8 +366,8 @@ exit_signal = exit_sl or exit_sat or exit_dow or exit_force
 // ============================================================
 // Entry Condition
 // ============================================================
-can_enter   = (not in_pos and not day_traded and or_done and
-               in_entry_win and or_filter_pass and wd_ok and
+can_enter   = (not in_pos and not day_traded and not satzone_reached and
+               or_done and in_entry_win and or_filter_pass and wd_ok and
                not na(ema_hl_sess))
 long_signal = can_enter and trend_ok and close > or_high and bigcost_ok(close, ema_hl_sess)
 
@@ -409,13 +420,14 @@ if leaving_or and not na(or_high) and not na(or_low) and not na(day_open) and da
         _trend_str  = not use_trend ? "off" : trend_ok ? "Y" : "N"
         _or_str     = not use_or_width ? "off" : or_filter_pass ? "Y" : "N"
         _wd_str     = wd_ok ? "Y" : (is_thu_skip ? "Thu" : "Fri")
+        _sz_str     = satzone_reached ? " SZ✗" : ""
         _bc_str     = not use_bigcost ? "off" : (na(_bc_max) ? "n/a" : (not na(or_high) and not na(ema_hl_sess) and bigcost_ok(or_high, ema_hl_sess) ? "Y" : "N"))
         _bc_val_str = na(_bc_max) ? "" : str.format("\nBC={0,number,#}", _bc_max)
         _ma_str     = na(ma5_cur) ? "" : str.format("\nMA120={0,number,#}", ma5_cur)
         _prev_str   = na(ma5_prev) ? "" : str.format(" Prev={0,number,#}", ma5_prev)
-        diag_txt    = str.format("Trend:{0} OR:{1} WD:{2} BC:{3}{4}{5}{6}",
+        diag_txt    = str.format("Trend:{0} OR:{1} WD:{2} BC:{3}{4}{5}{6}{7}",
                       _trend_str, _or_str, _wd_str, _bc_str,
-                      _bc_val_str, _ma_str, _prev_str)
+                      _sz_str, _bc_val_str, _ma_str, _prev_str)
         label.new(bar_index, or_low,
             diag_txt,
             style=label.style_label_up, size=size.tiny,

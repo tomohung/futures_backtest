@@ -195,8 +195,8 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
 
             return  # in position but no exit triggered
 
-        # ── Already entered today → skip entry logic ─────────────────────
-        if self._entered:
+        # ── Already entered today or SatZone reached → skip entry logic ──
+        if self._entered or self._satzone_reached:
             return
 
         # ── Read indicators (needed for setup + trigger) ─────────────────
