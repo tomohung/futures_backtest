@@ -117,7 +117,10 @@ futures_backtest/
 
 ### 1. 下載初始資料
 
-> **注意**：期交所網站只保留最近 **30 個交易日**的資料。歷史資料需手動備份或另行取得。
+> **注意**：期交所網站只保留最近 **30 個交易日**的資料。超過 30 天的歷史資料可從以下 Google Drive 取得：
+>
+> - [台指期貨（TX）](https://drive.google.com/drive/folders/1mLvxQdqEQUty9EOeUQ33BoQcqxToM-SE) — 下載後放入 `data/raw/<年份>/`
+> - [台指選擇權（TXO）](https://drive.google.com/drive/folders/13IRRQqYpsQ8Au-X0XAjOaPrxgGlKHx0n) — 下載後放入 `data/raw_options/<年份>/`
 
 ```bash
 # 自動下載（期交所通常於 18:30 前更新當日資料）
