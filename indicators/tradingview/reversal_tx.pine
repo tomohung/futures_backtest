@@ -24,6 +24,8 @@
 //
 //   SatZone 截止：若價格已觸及 SatZoneUpper 或 SatZoneLower，
 //     當日波動視為耗盡，不再產生新進場信號。
+//   Near-SatZone gate：進場時 session extreme 離 SatZone ≤ 1/8 EmaHL 則跳過，
+//     獲利空間不足（回測 8 筆 WR 50% PF 1.40 vs 其餘 110 筆 PF 2.62）。
 //
 //   Step 2 — Trigger（09:10–10:05）：
 //     做多：close > MA5_1m（站上 1 分鐘 5MA）
@@ -442,8 +444,13 @@ short_setup = (allow_short and not ma_bullish and bb_short_touched and
 
 can_enter = not in_pos and not day_traded and not satzone_reached and in_entry_win and not na(ema_hl)
 
-long_signal  = can_enter and long_setup  and close > ma5_1m
-short_signal = can_enter and short_setup and close < ma5_1m
+// Near-SatZone gate: skip if session extreme within 1/8 EmaHL of SatZone
+_sat_margin  = ema_hl / 8.0
+_near_sat_up = not na(sat_upper) and not na(sess_high) and (sat_upper - sess_high) <= _sat_margin
+_near_sat_dn = not na(sat_lower) and not na(sess_low)  and (sess_low - sat_lower)  <= _sat_margin
+
+long_signal  = can_enter and long_setup  and close > ma5_1m and not _near_sat_up
+short_signal = can_enter and short_setup and close < ma5_1m and not _near_sat_dn
 
 if long_signal
     in_pos      := true

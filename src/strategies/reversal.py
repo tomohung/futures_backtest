@@ -42,6 +42,10 @@ Two-step entry (sequential):
     signal_skip=0 → enter on the 1st trigger (original behaviour)
     signal_skip=1 → skip the 1st trigger, enter on the 2nd
 
+  Near-SatZone gate: skip entry if session extreme is within 1/8 EmaHL of
+    SatZone (insufficient profit room). Backtest: 8 trades WR 50% PF 1.40
+    vs remaining 110 trades PF 2.62.
+
 Exit priority (highest to lowest):
   1. Fixed SL : entry +/- EmaHL * sl_ema_fraction
   2. SatZone two-phase exit (same as EstHL strategy):
@@ -272,19 +276,30 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
                            (ccd < 0 or self._bull_exhausted or below_vwap
                             or self._bb_short_count >= 2))
 
+            # Near-SatZone gate: skip if session extreme is within 1/8 EmaHL of SatZone
+            sat_upper = float(self.data.SatZoneUpper[-1])
+            sat_lower = float(self.data.SatZoneLower[-1])
+            margin = ema_hl / 8
+
             if long_setup and close > ma5:
-                self._trigger_count += 1
-                if self._trigger_count > self.signal_skip:
-                    self.buy(size=1)
-                    self._sl_price = close - sl
-                    self._entered  = True
+                near_sat = (not np.isnan(sat_upper) and self._day_high is not None
+                            and sat_upper - self._day_high <= margin)
+                if not near_sat:
+                    self._trigger_count += 1
+                    if self._trigger_count > self.signal_skip:
+                        self.buy(size=1)
+                        self._sl_price = close - sl
+                        self._entered  = True
 
             elif short_setup and close < ma5:
-                self._trigger_count += 1
-                if self._trigger_count > self.signal_skip:
-                    self.sell(size=1)
-                    self._sl_price = close + sl
-                    self._entered  = True
+                near_sat = (not np.isnan(sat_lower) and self._day_low is not None
+                            and self._day_low - sat_lower <= margin)
+                if not near_sat:
+                    self._trigger_count += 1
+                    if self._trigger_count > self.signal_skip:
+                        self.sell(size=1)
+                        self._sl_price = close + sl
+                        self._entered  = True
 
         # ── Reset BB latch on MA5 cross (opportunity passed) ────────────
         # Exhaustion is NOT reset — once the day's range is spent, it stays.
