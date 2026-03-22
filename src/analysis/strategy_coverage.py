@@ -17,7 +17,7 @@ from backtesting import Backtest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from src.analysis.volatility_capture import build_analysis
+from src.analysis.volatility_capture import FIXED_THRESHOLD, build_analysis
 from src.backtest.runner import (
     load_data_for_orb_est_hl,
     load_data_for_reversal,
@@ -67,7 +67,7 @@ def main():
     # 1. Build volatility potential days
     vol_df = build_analysis()
     vol_df["trade_date"] = pd.to_datetime(vol_df["trade_date"]).dt.normalize()
-    pot = vol_df[vol_df["is_potential_p67"]].copy()
+    pot = vol_df[vol_df["is_potential"]].copy()
 
     # 2. Run strategies
     all_trades = load_all_trades()
@@ -106,7 +106,7 @@ def main():
     n_covered = pot["any_strategy"].sum()
     n_uncovered = n_pot - n_covered
     print(f"\n### 整體覆蓋率")
-    print(f"潛力日（P67）: {n_pot} 日")
+    print(f"潛力日（Fixed {FIXED_THRESHOLD}%）: {n_pot} 日")
     print(f"至少一策略進場: {n_covered} 日 ({n_covered/n_pot*100:.0f}%)")
     print(f"完全未覆蓋: {n_uncovered} 日 ({n_uncovered/n_pot*100:.0f}%)")
 

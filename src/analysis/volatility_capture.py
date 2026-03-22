@@ -36,7 +36,7 @@ CLASSIFY_THRESHOLDS = {
     "Afternoon":  ("Afternoon", 0.40),
 }
 
-FIXED_THRESHOLD = 0.8  # 固定門檻 range_pct%
+FIXED_THRESHOLD = 1.0  # 固定門檻 range_pct%（跨年度較穩定，取代 P67 作為主要篩選）
 
 
 def load_daily_ohlcv() -> pd.DataFrame:
@@ -167,12 +167,8 @@ def build_analysis(year: int | None = None) -> pd.DataFrame:
     if "day_range_seg" in df.columns:
         df.drop(columns=["day_range_seg"], inplace=True)
 
-    # P67 門檻（按年計算）
     df["year"] = pd.to_datetime(df["trade_date"]).dt.year
-    p67 = df.groupby("year")["range_pct"].quantile(0.67).rename("p67_threshold")
-    df = df.merge(p67, on="year", how="left")
-    df["is_potential_p67"] = df["range_pct"] >= df["p67_threshold"]
-    df["is_potential_fixed"] = df["range_pct"] >= FIXED_THRESHOLD
+    df["is_potential"] = df["range_pct"] >= FIXED_THRESHOLD
 
     # 分類（僅對潛力日有意義，但全部都算）
     df["day_type"] = df.apply(classify_day, axis=1)
@@ -192,25 +188,24 @@ def print_report(df: pd.DataFrame, recent_n: int = 20):
 
     years = sorted(df["year"].unique())
 
-    print(f"\n### 年度摘要（P67 門檻）")
-    print(f"| 年度 | 交易日 | 潛力日 | 佔比 | P67門檻 | 均range% |")
-    print(f"|------|-------:|-------:|-----:|--------:|--------:|")
+    print(f"\n### 年度摘要（Fixed {FIXED_THRESHOLD}% 門檻）")
+    print(f"| 年度 | 交易日 | 潛力日 | 佔比 | 均range% |")
+    print(f"|------|-------:|-------:|-----:|--------:|")
     for y in years:
         ydf = df[df["year"] == y]
         n_total = len(ydf)
-        n_pot = ydf["is_potential_p67"].sum()
+        n_pot = ydf["is_potential"].sum()
         pct = n_pot / n_total * 100 if n_total > 0 else 0
-        p67_val = ydf["p67_threshold"].iloc[0]
         avg_range = ydf["range_pct"].mean()
-        print(f"| {y} | {n_total:>5} | {n_pot:>5} | {pct:>4.0f}% | {p67_val:>6.2f}% | {avg_range:>6.2f}% |")
+        print(f"| {y} | {n_total:>5} | {n_pot:>5} | {pct:>4.0f}% | {avg_range:>6.2f}% |")
 
     # --- 潛力日類型分佈 ---
-    pot_df = df[df["is_potential_p67"]].copy()
+    pot_df = df[df["is_potential"]].copy()
     if len(pot_df) == 0:
         print("\n無潛力日資料")
         return
 
-    print(f"\n### 潛力日類型分佈（P67，共 {len(pot_df)} 日）")
+    print(f"\n### 潛力日類型分佈（Fixed {FIXED_THRESHOLD}%，共 {len(pot_df)} 日）")
     type_counts = pot_df["day_type"].value_counts()
     print(f"| 類型 | 筆數 | 佔比 | 平均range% | 平均方向 |")
     print(f"|------|-----:|-----:|-----------:|---------|")
@@ -239,7 +234,7 @@ def print_report(df: pd.DataFrame, recent_n: int = 20):
     print(f"| 日期       | range% | 方向 | 類型        | Early | Late | Mid  | Aft  | 潛力 |")
     print(f"|------------|-------:|------|-------------|------:|-----:|-----:|-----:|------|")
     for _, r in recent.iterrows():
-        pot_mark = "P67" if r["is_potential_p67"] else ("FIX" if r["is_potential_fixed"] else "")
+        pot_mark = "●" if r["is_potential"] else ""
         date_str = str(r['trade_date'])[:10]
         print(f"| {date_str} | {r['range_pct']:>5.2f}% | {r['direction']:<4} "
               f"| {r['day_type']:<11} "
