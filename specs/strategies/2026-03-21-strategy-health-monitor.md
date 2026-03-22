@@ -240,22 +240,69 @@ Range% EMA20 變化較慢，持續數週低波動才會觸發閾值，提供充�
 - 每筆均損益只有 Mon-Wed 的 1/3~1/2
 - 年度損益方向不一致，overfitting 風險高
 
+### Lookback Window 預警實驗（2026-03-22）
+
+測試：過去 N 天中 range_pct 低於閾值的比例，能否提前預警 EstHL 績效衰退。
+
+#### 暫停規則模擬結果
+
+所有暫停規則都讓總損益下降：
+
+| 規則 | 總損益 | 過濾筆數 | 被過濾交易 WR | 被過濾 avg pts |
+|------|--------|---------|-------------|--------------|
+| baseline（無濾網） | +4,682 | 0 | — | — |
+| lb20, <0.90%, >50% 暫停 | +3,801 | 45 | 62% | +20 |
+| lb40, <0.90%, >50% 暫停 | +3,658 | 42 | 62% | +23 |
+| lb60, <0.90%, >50% 暫停 | +3,648 | 44 | 57% | +23 |
+| lb20, <0.80%, >50% 暫停 | +4,635 | 21 | 57% | +4 |
+| lb40, <0.80%, >50% 暫停 | +4,418 | 23 | 57% | +9 |
+
+**被過濾掉的交易幾乎都是賺錢的（WR 54-64%），暫停反而損失更多。**
+
+#### EMA(20) 連續低於閾值天數
+
+| EMA(20) < 1.00% 連續天數 | 筆數 | WR | avg_pnl% |
+|--------------------------|------|-----|----------|
+| 0 天 | 111 | 63.1% | +0.201% |
+| 1-5 天 | 16 | 31.2% | -0.041% |
+| 6-10 天 | 3 | 66.7% | +0.081% |
+| 11-20 天 | 8 | 50.0% | -0.036% |
+| >20 天 | 23 | 56.5% | +0.068% |
+
+1-5 天看似有預警效果（WR 31.2%），但僅 16 筆，統計上不足以建立規則。
+
+#### 結論
+
+**Regime 指標無法作為 EstHL 的提前預警或暫停開關。** 原因：
+1. EstHL 已有足夠的內建濾網（weekday、OR width、BigCost、ADX），低品質交易已被大量過濾
+2. Range% 偏低期間，通過濾網的交易反而品質不差
+3. 所有暫停規則的淨效果都是「過濾掉賺錢的交易」
+
+探索腳本：`src/backtest/explore_regime_lookback.py`
+
+---
+
+## 總結論（2026-03-22）
+
+**Regime 健康監測作為交易濾網或提前預警信號已被完整驗證為無效。**
+
+- ER 是最強單筆預測指標（r=+0.397），但為事後指標，無法提前得知
+- Range% EMA(20) 暫停閾值（<0.74%）僅過濾 4 筆且全部獲利
+- Lookback window 預警（20/40/60 天）：所有暫停規則都降低總損益
+- EMA(20) 連續天數：樣本太少，無統計顯著性
+- Reversal 對所有 regime 指標不敏感（|r| < 0.07）
+
+`regime_health.py` 已從 `morning_briefing.py` 移除，程式碼保留供未來研究參考。
+
 ---
 
 ## 已完成的檔案
 
-| 檔案 | 用途 |
-|------|------|
-| `specs/strategies/2026-03-21-strategy-health-monitor.md` | 本文件 |
-| `src/backtest/strategy_health.py` | 完整版分析（含回測交叉分析，數分鐘） |
-| `src/analysis/regime_health.py` | 輕量版（每日早盤用，秒級完成） |
-| `src/backtest/explore_weekday_regime.py` | 週四/五 × regime 交叉分析 |
-| `src/analysis/morning_briefing.py` | 已整合 regime_health.py |
-
----
-
-## 備選方案（未來方向）
-
-- **分時段 ER**：只看 08:45–10:00（策略進場時段）的 ER，可能比全日 ER 更有即時性
-- **VIXTWN**：`data/external_sources/VIXTWN.csv`，外部波動率指標
-- **成交量集中度**：量集中在少數 bar（大戶掃單）vs 分散（散戶盤）
+| 檔案 | 用途 | 狀態 |
+|------|------|------|
+| `specs/strategies/2026-03-21-strategy-health-monitor.md` | 本文件 | ✅ |
+| `src/backtest/strategy_health.py` | 完整版分析（含回測交叉分析） | 保留，供研究 |
+| `src/analysis/regime_health.py` | 輕量版 regime 快報 | 保留，已從 morning_briefing 移除 |
+| `src/backtest/explore_weekday_regime.py` | 週四/五 × regime 交叉分析 | 保留，供研究 |
+| `src/backtest/explore_regime_lookback.py` | Lookback window 預警探索 | 保留，供研究 |
+| `src/analysis/morning_briefing.py` | 早盤簡報 | ✅ 已移除 regime_health |

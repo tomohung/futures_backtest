@@ -142,9 +142,9 @@ futures_backtest/
 │   ├── strategies/
 │   │   └── orb.py              ← ORBStrategy、ORBPhase4HybridStrategy ✅
 │   ├── analysis/
-│   │   ├── morning_briefing.py  ← 早盤簡報（ETL + key_prices + regime + daily_range）✅
+│   │   ├── morning_briefing.py  ← 早盤簡報（ETL + key_prices + daily_range）✅
 │   │   ├── key_prices.py        ← 關鍵價格 + 支撐壓力 ✅
-│   │   ├── regime_health.py     ← Regime 健康快報（Range%、ER、預警信號）✅
+│   │   ├── regime_health.py     ← Regime 健康快報（已驗證無交易濾網效果，已從 morning_briefing 移除）
 │   │   └── daily_range.py       ← 日盤波動 + VIX 圖表 ✅
 │   └── backtest/
 │       ├── runner.py            ← 資料載入、TrendMA/ADX 計算 ✅
@@ -330,7 +330,7 @@ specs/strategies/orb_<名稱>.md     ← 獨立策略實驗（如 orb_filters.md
 - `specs/strategies/2026-03-09-orb-exit-crossover.md` — Direction A：EstHL進 × ORBLong出，entry_end=9:15，tp×3.0，2021–2026 總損益 +4221
 - `specs/strategies/2026-03-11-portfolio-allocation.md` — **最佳組合**：EstHL + ORBLong 各½口，Sharpe 3.12，固定資金下優於三策略均分
 - `specs/strategies/2026-03-20-settlement-volume-satzone.md` — 結算日 Volume ×1.9 校正 + SatZone fraction 實驗（fraction 失敗，維持 -ema/8）
-- `specs/strategies/2026-03-21-strategy-health-monitor.md` — Regime 健康監測：Range%、ER 指標定義、EstHL 操作閾值、交叉分析方法
+- `specs/strategies/2026-03-21-strategy-health-monitor.md` — Regime 健康監測：Range%、ER 指標定義、交叉分析方法（結論：無法作為交易濾網或提前預警）
 - `specs/strategies/2026-03-21-orblong-research.md` — ORBLong 重新研究：Regime 交叉、SatZone 出場（OR%×fraction）、EstHL 重疊、weekday
 
 ### OR% 濾網（ORBLong 專用）
@@ -364,39 +364,24 @@ OR% = OR寬度（08:45–09:30 最高 - 最低）/ 當日開盤價 × 100
 
 Sharpe 計算也應基於每日損益%（非點數），才能跨年度公平比較。
 
-### Regime 健康監測（策略環境預警）
+### Regime 健康監測（已驗證無效，不作為交易濾網）
 
-監測日盤市場環境是否仍適合 EstHL / Reversal 策略運作。
+曾嘗試用日盤 range_pct、ER 等指標預警 EstHL 策略環境衰退，結論：**無法作為交易濾網或提前預警信號**。
 
-#### 核心指標
+#### 為何無效
 
-| 指標 | 公式 | 用途 |
-|------|------|------|
-| `range_pct` | `(H-L)/Open × 100` | 日盤振幅佔指數% |
-| `efficiency_ratio` (ER) | `\|Close-Open\| / Σ\|1m_close[i]-close[i-1]\|` | 盤中走勢乾淨度（0=震盪，1=趨勢）|
+1. **ER** 對單筆交易預測力最強（r=0.397），但是事後指標，進場時無法得知當日 ER
+2. **Range% EMA(20)** 觸發暫停閾值（<0.74%）的情況極少，僅過濾 4 筆交易且全部獲利
+3. **Lookback window 預警**（20/40/60 天內低於閾值的比例）：所有暫停規則都過濾掉賺錢的交易，總損益下降
+4. **EMA(20) 連續低於閾值天數**：樣本太少（<16 筆），無法建立可靠規則
+5. EstHL 本身的內建濾網（weekday、OR width、BigCost）已充分過濾低品質交易
+6. Reversal 對所有 regime 指標不敏感（|r| < 0.07）
 
-#### EstHL 操作閾值（以 Range% EMA20 為準）
+#### 現狀
 
-| Range% EMA20 | EstHL 歷史績效 | 操作建議 |
-|-------------|---------------|---------|
-| > 0.97% | Q3-Q4: WR 65%, avg +0.21% | 正常做 |
-| 0.74%–0.97% | Q2: WR 65%, avg +0.089% | 縮小部位 |
-| < 0.74% | Q1: WR 39%, avg -0.068% | 暫停 EstHL |
-
-- ER 對單筆交易預測力最強（r=0.397），但 EMA(20) 各年均值幾乎相同（0.064~0.066），不適合做環境級預警
-- Range% EMA20 能反映結構性變化：2023 均值 0.83%（最差年 +355 pts）vs 2024 均值 1.19%（+1321 pts）
-- 週四/五效應是結構性的（結算後空窗期），regime 指標無法替代 weekday 濾網
-
-#### Reversal 對 regime 不敏感
-
-所有指標的相關性都很低（|r| < 0.07），Reversal 的獲利更依賴個別 BB 極值反轉品質。
-
-#### 相關檔案
-
-- `src/analysis/regime_health.py` — 輕量版（每日早盤用，秒級完成）
-- `src/backtest/strategy_health.py` — 完整版（含回測交叉分析，數分鐘）
-- `src/backtest/explore_weekday_regime.py` — 週四/五 × regime 交叉分析
-- `specs/strategies/2026-03-21-strategy-health-monitor.md` — 規格文件
+- `regime_health.py` 保留但已從 `morning_briefing.py` 移除
+- `strategy_health.py` 保留供未來研究參考
+- 詳見 `specs/strategies/2026-03-21-strategy-health-monitor.md`
 
 ---
 
