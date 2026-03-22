@@ -63,6 +63,10 @@
 
 1. 實作 `src/analysis/volatility_capture.py`
 
+## 延伸
+
+- [2026-03-22-strategy-candidates-from-volatility.md](2026-03-22-strategy-candidates-from-volatility.md) — 從分析結果衍生的 4 個候選策略方向
+
 ## 關鍵參考檔案
 
 - `src/analysis/intraday_swing_research.py` — 邊際波幅演算法
