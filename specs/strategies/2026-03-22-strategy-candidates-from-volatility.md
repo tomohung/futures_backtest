@@ -174,23 +174,21 @@ EarlyTrend 未覆蓋 128 日中：
 | 邏輯 | 30 分 K 突破 BB 上軌後確認反轉做空 | 30 分 K 跌破 BB 下軌後確認反轉做多 |
 | 覆蓋缺口 | **EarlyTrend DOWN / Spread** | EarlyTrend UP / Spread |
 
-#### 既有策略做空版本
+#### 既有策略做空版本（已排除）
 
-4. **ORB 做空版**：恢復 ORBLong 的 short side（Phase 4 Hybrid 原本包含做空）
-5. **EstHL 做空版**：移除 long_only 限制
-6. **強化 Reversal DOWN 覆蓋**：分析 100 個漏掉的 DOWN 日，看為何沒觸發
+ORBLong、EstHL 當初就是因為做空勝率低才改為 long-only。Reversal 雖可做空但在高波動日表現差（潛力日勝率僅 40%）。**既有策略的進場邏輯不適合做空**，需要不同的進場型態（如 E1 缺口竭盡、E2 BB 轉折）。
 
 ### 風險
 
 - 做空的勝率歷史上普遍低於做多（市場長期偏多）
-- Phase 4 Hybrid 做空端曾被驗證績效不佳，需確認是否只是參數問題
 - 崩盤日的 OR 極寬，SL 距離大，單筆虧損可能很重
+- E1/E2 是全新的進場邏輯，需從零驗證
 
 ### 建議做法
 
 先做 Step 0 探索：
-1. 跑 ORBLong `long_only=0`、EstHL `long_only=False`，看做空端歷史績效
-2. 分析 Reversal 在 EarlyTrend DOWN 日未進場的原因分佈
+1. **缺口日研究**：統計缺口頻率、補缺口率、缺口大小與當日 range/方向的關係（E1 基礎）
+2. 分析 Reversal 在 EarlyTrend DOWN 日未進場的原因分佈（了解做空的進場困難點）
 3. 定義 E1/E2 四個型態的 entry/exit 規則，建立回測
 
 ---
@@ -297,10 +295,8 @@ EarlyTrend DOWN × Reversal：
 ### 第一優先：策略 E — 早盤做空探索
 
 1. **缺口日研究**：統計缺口頻率、補缺口率、缺口大小與當日 range/方向的關係（E1 的基礎，也可服務其他策略）
-2. 跑 ORBLong `long_only=0`（Phase 4 Hybrid），看做空端歷史績效
-3. 跑 EstHL `long_only=False`，看做空端歷史績效
-4. 分析 Reversal 在 EarlyTrend DOWN 日未進場的原因分佈
-5. 定義 E1/E2 四個型態的 entry/exit 規則，建立回測
+2. 分析 Reversal 在 EarlyTrend DOWN 日未進場的原因分佈（了解做空的進場困難點）
+3. 定義 E1/E2 四個型態的 entry/exit 規則，建立回測
 
 ### 第二優先：策略 A — 持倉延伸
 
