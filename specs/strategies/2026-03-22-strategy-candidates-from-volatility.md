@@ -300,4 +300,27 @@ EarlyTrend DOWN × Reversal：
 
 ### 第二優先：策略 A — 持倉延伸
 
-6. 統計已覆蓋 UP EarlyTrend 日中，10:00 後繼續持倉 vs 現行出場的損益差異
+4. 統計已覆蓋 UP EarlyTrend 日中，10:00 後繼續持倉 vs 現行出場的損益差異
+
+### 第三優先：策略 F — SatZone 後 Credit Spread（選擇權）
+
+**假設**：EarlyTrend 觸碰 SatZone 後，日內波動預算已消耗，後續三種情境：
+
+| 情境 | 機率 | Credit Spread 結果 |
+|------|------|-------------------|
+| 長尾（趨勢延續突破） | 低~中 | 順向 spread 更安全，賺 |
+| 橫盤 | 最高 | 時間價值流逝，賺 |
+| 反向（碰對面 SatZone） | 最低 | 唯一虧損情境 |
+
+**做法概念**：SatZone 觸碰後價格拉回時，賣出反向 credit spread。例如早盤漲到 SatZone upper → 賣 put spread。
+
+**優勢**：
+- 利用已有的 EstRange + SatZone 指標作為進場信號
+- 賣方策略，賺「不會發生的事」
+- 兩種最高機率情境（橫盤 + 長尾）都獲利
+
+**待驗證**：
+- SatZone 觸碰後的實際三情境機率分佈
+- 反向碰到對面 SatZone 的歷史比例（決定策略是否可行）
+- 適合的 strike 距離和到期日選擇
+- 需要 `ticks_options` 資料來回測實際選擇權價格
