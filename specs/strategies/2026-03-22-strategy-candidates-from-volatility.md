@@ -151,11 +151,32 @@ EarlyTrend 未覆蓋 128 日中：
 - DOWN 的 EarlyTrend 平均 oc% = -1.01%，早盤就走出跌勢
 - 未覆蓋 DOWN 日包含極端崩盤日（range 3~9%），潛在收益最大
 
-### 可能方向
+### 子方向
 
-1. **ORB 做空版**：恢復 ORBLong 的 short side，檢驗歷史績效（Phase 4 Hybrid 原本包含做空）
-2. **EstHL 做空版**：移除 long_only 限制，檢驗做空績效
-3. **強化 Reversal DOWN 覆蓋**：分析 100 個漏掉的 DOWN 日，看為何 Reversal 沒觸發（BB 沒碰到？volume 不夠？），嘗試放寬特定條件
+除了既有策略的做空版本，另有 4 個尚未回測的開盤區間突破變型策略，可歸為兩組：
+
+#### E1：竭盡反轉（假突破 → 反向進場）
+
+|  | 做空 | 做多 |
+|--|------|------|
+| 型態 | 開高破低 A轉 | 開低破高 V轉 |
+| 邏輯 | 開盤向上假突破後竭盡，反轉向下 | 開盤向下假突破後竭盡，反轉向上 |
+| 覆蓋缺口 | **EarlyTrend DOWN（最大缺口）** | EarlyTrend UP（與 EstHL/ORBLong 重疊） |
+| 參考案例 | — | 3/2, 3/13 |
+
+#### E2：BB 轉折（30 分 K BB 極值確認）
+
+|  | 做空 | 做多 |
+|--|------|------|
+| 型態 | 轉折翻空 30分K BB>1 | 轉折翻多 30分K BB<0 |
+| 邏輯 | 30 分 K 突破 BB 上軌後確認反轉做空 | 30 分 K 跌破 BB 下軌後確認反轉做多 |
+| 覆蓋缺口 | **EarlyTrend DOWN / Spread** | EarlyTrend UP / Spread |
+
+#### 既有策略做空版本
+
+4. **ORB 做空版**：恢復 ORBLong 的 short side（Phase 4 Hybrid 原本包含做空）
+5. **EstHL 做空版**：移除 long_only 限制
+6. **強化 Reversal DOWN 覆蓋**：分析 100 個漏掉的 DOWN 日，看為何沒觸發
 
 ### 風險
 
@@ -166,9 +187,9 @@ EarlyTrend 未覆蓋 128 日中：
 ### 建議做法
 
 先做 Step 0 探索：
-1. 跑 ORBLong 的 `long_only=0` 版本，看做空端歷史績效
-2. 跑 EstHL 的 `long_only=False` 版本
-3. 分析 Reversal 在 EarlyTrend DOWN 日未進場的原因分佈
+1. 跑 ORBLong `long_only=0`、EstHL `long_only=False`，看做空端歷史績效
+2. 分析 Reversal 在 EarlyTrend DOWN 日未進場的原因分佈
+3. 定義 E1/E2 四個型態的 entry/exit 規則，建立回測
 
 ---
 
