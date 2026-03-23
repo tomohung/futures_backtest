@@ -378,10 +378,12 @@ var float sl_price         = na
 var bool  sat_touched      = false
 var float trail_stop       = na
 var bool  satzone_reached  = false   // day-level: price ever hit SatZone → no new entries
+var bool  near_sat_latch  = false   // day-level: price ever within 1/8 EmaHL of SatZone → no new entries
 
 if entering_session
     day_traded       := false
     satzone_reached  := false
+    near_sat_latch   := false
     if in_pos
         in_pos     := false
         pos_dir    := 0
@@ -444,13 +446,21 @@ short_setup = (allow_short and not ma_bullish and bb_short_touched and
 
 can_enter = not in_pos and not day_traded and not satzone_reached and in_entry_win and not na(ema_hl)
 
-// Near-SatZone gate: skip if session extreme within 1/8 EmaHL of SatZone
+// Near-SatZone gate (latch): once session extreme ever reaches within 1/8 EmaHL
+// of EITHER SatZone bound, lock for the rest of the day — range is exhausted
 _sat_margin  = ema_hl / 8.0
-_near_sat_up = not na(sat_upper) and not na(sess_high) and (sat_upper - sess_high) <= _sat_margin
-_near_sat_dn = not na(sat_lower) and not na(sess_low)  and (sess_low - sat_lower)  <= _sat_margin
+if in_session and not near_sat_latch and not na(ema_hl)
+    _near_up = not na(sat_upper) and not na(sess_high) and (sat_upper - sess_high) <= _sat_margin
+    _near_dn = not na(sat_lower) and not na(sess_low)  and (sess_low - sat_lower)  <= _sat_margin
+    if _near_up or _near_dn
+        near_sat_latch := true
 
-long_signal  = can_enter and long_setup  and close > ma5_1m and not _near_sat_up
-short_signal = can_enter and short_setup and close < ma5_1m and not _near_sat_dn
+long_signal_raw  = can_enter and long_setup  and close > ma5_1m
+short_signal_raw = can_enter and short_setup and close < ma5_1m
+long_signal  = long_signal_raw  and not near_sat_latch
+short_signal = short_signal_raw and not near_sat_latch
+long_blocked_by_sat  = long_signal_raw  and near_sat_latch
+short_blocked_by_sat = short_signal_raw and near_sat_latch
 
 if long_signal
     in_pos      := true
@@ -486,7 +496,7 @@ prev_in_entry := in_entry_win
 if show_diag and entering_entry and (allow_long or allow_short)
     _dir_str  = allow_long ? "Long" : "Short"
     _ma_str   = ma_bullish ? "B" : "S"
-    _sz_str   = satzone_reached ? " SZ✗" : ""
+    _sz_str   = satzone_reached ? " SZ✗" : near_sat_latch ? " NrSZ✗" : ""
     _bc_str   = not na(bigcost1) ? str.format("BC1={0,number,#}", bigcost1) : "BC=na"
     _ema_str  = not na(ema_hl) ? str.format("EmaHL={0,number,#}", ema_hl) : ""
     _ccd_str  = not na(ccd_daily) ? str.format("CCD={0,number,#}", ccd_daily) : "CCD=na"
@@ -577,6 +587,16 @@ plotshape(short_signal,
           title="Short ▼ IN", style=shape.triangledown,
           location=location.abovebar, size=size.small,
           color=color.blue, text="S", textcolor=color.blue)
+
+plotshape(show_diag and long_blocked_by_sat,
+          title="Long blocked (NearSat)", style=shape.triangleup,
+          location=location.belowbar, size=size.tiny,
+          color=color.gray, text="SZ", textcolor=color.gray)
+
+plotshape(show_diag and short_blocked_by_sat,
+          title="Short blocked (NearSat)", style=shape.triangledown,
+          location=location.abovebar, size=size.tiny,
+          color=color.gray, text="SZ", textcolor=color.gray)
 
 plotshape(exit_signal,
           title="Exit ✕ OUT", style=shape.xcross,
