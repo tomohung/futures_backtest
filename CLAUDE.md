@@ -393,3 +393,63 @@ Sharpe 計算也應基於每日損益%（非點數），才能跨年度公平比
 - 價差合約（合約代號含 `/`）在 parse_rpt.py 階段過濾，不寫入 ticks
 - 期交所僅保留最近 30 個交易日資料，需定期排程避免缺口
 - 回答用台灣繁體中文優先，但可視需求保留英文的專有名詞
+
+---
+
+# Research Protocol
+
+## Project Context
+這是一個交易策略研究專案。
+所有研究遵循假設驅動的迭代循環：
+理念 → 假設 → 分佈探索 → 回測驗證 → 歸檔
+
+核心理念與市場背景請參考：
+- specs/trading-principles.md
+- specs/market-context.md
+- specs/data-sources.md
+
+## Hypothesis Naming
+格式：HXXX-簡短名稱（例如 H001-momentum-basic）
+編號從現有最大號 +1 開始
+
+## Slash Commands
+
+### /new-hypothesis
+1. 讀取 specs/ 下所有文件作為背景
+2. 引導使用者描述交易直覺和機會
+3. 建立 research/active/HXXX-名稱/ 目錄
+4. 根據模板生成 proposal.md 和 tasks.md
+5. 確認 Derived From 欄位填寫正確
+
+### /explore
+1. 讀取當前 active hypothesis 的 proposal.md 和 tasks.md
+2. 執行 Phase 1 的所有探索任務
+3. 將結果寫入 results/distribution.md
+4. 在文件末尾明確呈現 GATE 問題，等待人工決定
+
+### /backtest
+1. 確認 distribution.md 的 Gate Decision 已填寫為「進入 Phase 2」
+2. 讀取 proposal.md 了解假設與無效條件
+3. 執行 Phase 2 的所有回測任務
+4. 將結果寫入 results/backtest.md
+5. 在文件末尾明確呈現 Verdict，等待人工決定
+
+### /archive
+1. 讀取該假設的 proposal.md、distribution.md、backtest.md
+2. 根據 Verdict 決定放入 confirmed / rejected / inconclusive
+3. 生成 archive 摘要文件
+4. 將 Derived Hypotheses 列出，詢問是否立即開新假設
+5. 將 active 目錄保留（不刪除），archive 只存摘要
+
+### /status
+列出：
+- 所有 active 假設及當前階段
+- 最近 archive 的 3 個假設
+- 尚未開 proposal 的衍生想法清單
+
+## Behavior Rules
+- 每次對話開始前，主動讀取相關的 specs/ 文件
+- 不在未通過 GATE 的情況下執行回測
+- 發現衍生想法時，記錄在當前結果文件的 Derived Hypotheses，不主動修改其他文件
+- 所有數字結論必須附上樣本數
+- 參數優化後必須做 out-of-sample 驗證才能標記 Confirmed
