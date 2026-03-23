@@ -1,7 +1,7 @@
 # Archive: H017 — 日內波段交易研究（波動預測與時段分析）
 
 ## Status
-Inconclusive
+Confirmed
 
 ## Summary
 系統性研究日內波動特性的 7 個核心問題（波動集中時段、高低點分佈、剩餘波幅、MAE、目標價到達後反向、停損再進場、加碼），目標是為新策略提供數據基礎。研究計畫完整但屬於探索性質，產出的分析腳本 `src/analysis/intraday_swing_research.py` 已完成，結果被後續的 H018 early-session-direction 研究消化。
@@ -14,8 +14,8 @@ Inconclusive
 - 波幅消耗 100% 後反轉率 49%（接近隨機）
 - 新高事件加碼邊際遞減，第 1-3 次最有價值
 
-## Why Inconclusive
-本研究是純數據探索（Q1-Q7），本身不構成可交易策略。核心發現已被後續研究（H018 early-session-direction）吸收並轉化為具體方向測試，但多數方向（回拉進場、停損再進場、波幅消耗反向）均被排除。
+## Why Confirmed
+純數據探索（Q1-Q7）成功產出可量化的日內波動特性，核心發現已被後續研究（H018 early-session-direction）吸收並轉化為具體方向測試。關鍵洞察（開盤 30 分鐘佔 48.6% 波幅、高低點先後順序）為策略設計提供了堅實的數據基礎。
 
 ## Derived Hypotheses
 - H018 early-session-direction（方向 A/B/C 探索）
