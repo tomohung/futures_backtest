@@ -290,25 +290,25 @@ EarlyTrend DOWN × Reversal：
 
 ---
 
-## 下一步（2026-03-22 排序）
+## 下一步（2026-03-23 更新）
 
-### 1. 策略 F Step 0 — SatZone 觸碰後三情境統計
+### 1. 策略 F Step 0 — SatZone 觸碰後三情境統計 → **H032-satzone-scenarios**
 
 最快能驗證的假設，用現有 EstRange/SatZone 資料即可。統計 SatZone 觸碰後：長尾延續、橫盤、反向碰對面 SatZone 的歷史機率分佈。結果直接決定 F 是否值得發展。
 
-### 2. 缺口日研究（E1 基礎）
+### 2. 缺口日研究（E1 基礎） → **H033-gap-day-study**
 
 獨立基礎研究：缺口頻率、補缺口率、缺口大小與當日 range/方向的關係。成果同時服務 E1 和其他策略。
 
-### 3. Reversal DOWN 日漏進場原因
+### 3. Reversal DOWN 日漏進場原因 → 尚未建立假設
 
-分析 Reversal 在 EarlyTrend DOWN 日未進場的原因分佈（BB 沒碰到？volume 不夠？），了解做空進場的結構性困難，為 E1/E2 規則設計提供方向。
+分析 Reversal 在 EarlyTrend DOWN 日未進場的原因分佈（BB 沒碰到？volume 不夠？），了解做空進場的結構性困難，為 E1/E2 規則設計提供方向。可併入 H033 或獨立建立。
 
-### 4. E1/E2 規則定義與回測
+### 4. E1/E2 規則定義與回測 → 尚未建立假設（依賴 H033 結論）
 
 依賴第 2、3 步結論，定義 4 個型態的 entry/exit 規則並回測。
 
-### 5. 策略 A — 持倉延伸
+### 5. 策略 A — 持倉延伸 → 尚未建立假設
 
 統計已覆蓋 UP EarlyTrend 日中，10:00 後繼續持倉 vs 現行出場的損益差異。邊際改善，優先級最低。
 
