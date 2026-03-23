@@ -127,9 +127,22 @@ futures_backtest/
 │   ├── raw/              ← 期貨原始 zip 檔（依年份子目錄，不納入版控）
 │   ├── raw_options/      ← 選擇權原始 zip 檔（依年份子目錄，不納入版控）
 │   └── futures.duckdb    ← DuckDB 資料庫（不納入版控）
-├── specs/
-│   ├── daily_update.md   ← 每日更新系統規格
-│   └── strategies/       ← 策略規格文件
+├── specs/                ← 交易理念與背景（模板）
+│   ├── trading-principles.md
+│   ├── market-context.md
+│   └── data-sources.md
+├── docs/                 ← 系統技術文件
+│   └── daily_update.md
+├── research/             ← 假設驅動的研究記錄
+│   ├── active/HXXX-名稱/    ← 進行中（proposal + tasks + results/）
+│   └── archive/
+│       ├── confirmed/HXXX-名稱/   ← summary.md + spec.md
+│       ├── rejected/HXXX-名稱/
+│       └── inconclusive/HXXX-名稱/
+├── strategies/
+│   ├── live/SXXX-名稱/      ← spec.md + performance.md
+│   └── retired/
+├── .claude/skills/       ← 研究工作流程 skills
 ├── src/
 │   ├── etl/
 │   │   ├── download.py         ← 從期交所自動下載每日 zip ✅
@@ -158,9 +171,7 @@ futures_backtest/
 │       └── summary_all.py       ← 策略跨年度比較 ✅
 ├── indicators/
 │   └── tradingview/      ← TradingView Pine Script 指標
-├── output/               ← 回測結果 CSV（不納入版控）
-├── notebooks/
-└── tests/
+└── output/               ← 回測結果 CSV（不納入版控）
 ```
 
 ## ETL 執行順序
@@ -184,11 +195,7 @@ uv run python src/etl/validate.py         # Step 4: 驗證
 
 ## 下載邏輯（download.py）
 
-- URL：`https://www.taifex.com.tw/file/taifex/Dailydownload/Dailydownload/Daily_YYYY_MM_DD.zip`
-- 期交所通常於 **18:30 前**更新當日資料，預設結束日為今天
-- 自動起始日：磁碟上最新 zip 的隔天
-- 非交易日偵測：HTTP 404 或 magic-byte 檢查（非 `PK\x03\x04` 開頭）
-- 原子性寫入：`.zip.tmp` → rename，防止部分下載殘留
+詳見 `docs/daily_update.md`。
 
 ## 換倉邏輯
 
@@ -203,84 +210,11 @@ uv run python src/etl/validate.py         # Step 4: 驗證
 
 ## EstRange（預估振幅）
 
-跨策略共用的核心指標，用於預估當日振幅、計算 SatZone 出場區和選擇權 credit spread 定價。
+跨策略共用的核心指標。實作：`src/backtest/estimate_hl.py`
+- SatZone 公式：`Upper = session_low + est_range - ema_range/8`
+- 結算日量校正：×1.9（`runner.py` → `adjust_settlement_volume()`）
+- 詳細演算法見原始碼，策略用法見 `strategies/live/S001-esthl/spec.md`
 
-### 演算法（Volume-Weighted Estimated Range）
-
-實作：`src/backtest/estimate_hl.py` → `compute_vol_estimated_range()`
-
-1. 將日盤切成 5 分鐘 slot（08:45, 08:50, ..., 13:40，共 60 slots）
-2. 維護歷史資料：
-   - `ema_range` = EMA(20) of 每日日盤振幅（High - Low）
-   - `ema_cum_vol[slot]` = 每個 slot 的累積量 EMA(20)
-3. 每個 slot boundary 計算：
-   - `vol_ratio = 今日累積量 / ema_cum_vol[slot]`
-   - `est_range = ema_range × vol_ratio`
-4. **延遲 1 個 slot**（5 分鐘），避免 lookahead
-5. 當日 profile 在**收盤後**才加入歷史
-
-### SatZone（滿足區）
-
-```
-SatZoneUpper = session_low + est_range - ema_range / 8
-SatZoneLower = session_high - est_range + ema_range / 8
-```
-
-- `ema_range / 8` 是固定 offset，用前一天的 EMA（非當天 est_range）
-- 用途：EstHL 策略的出場信號（Phase 1 觸碰 + Phase 2 跌破 5MA）
-
-### 結算日 Volume 校正
-
-ohlcv_1m 只存主力合約量，結算日（第三週三）量分散到新舊合約（~55/45），
-主力量僅為實際的一半，導致 EstRange 低估。
-
-- **乘數 = 1.9**（61 個結算日實測合併量/主力量的中位數，盤中恆定）
-- 實作：`runner.py` → `adjust_settlement_volume()` 在載入後直接修改 Volume 欄位
-- 結算日偵測：`_settlement_dates()` — 第三個週三，遇假日順延到下一個交易日
-- Pine Script 同步：三個 `.pine` 都有 `settle_vol_mult` 偵測邏輯
-- 注意：膨脹的量會進入 EMA 歷史，影響隔天 EstRange（已知，目前接受）
-
-### 使用此指標的策略
-
-| 策略 | 用途 |
-|------|------|
-| ORBWithEstHLExitStrategy | SatZone 出場 + EmaHL 計算 SL |
-| EstRange Credit Spread | est_range × fraction 定義 strike |
-| Reversal | SatZone 出場 |
-
-### 相關檔案
-
-- `src/backtest/estimate_hl.py` — 核心演算法
-- `src/backtest/runner.py` — `adjust_settlement_volume()`, `_settlement_dates()`
-- `src/strategies/estimate_hl_exit.py` — SatZone 兩階段出場 mixin
-- `indicators/tradingview/est_range_tx.pine` — TradingView 顯示指標
-- `indicators/tradingview/orb_est_hl_tx.pine` — 含 SatZone 出場的完整策略
-- `specs/strategies/2026-03-20-settlement-volume-satzone.md` — 結算日校正實驗記錄
-
----
-
-## 外部資料來源
-
-### VIXTWN（台灣波動率指數）
-- 路徑：`data/external_sources/VIXTWN.csv`
-- 格式：`Date,VIXTWN`（日頻，交易日）
-- 範圍：2016-11-25 ~ 2026-03-11（2,374 筆）
-- 用途：波動率濾網、高 VIX 環境篩選（如 VIX > 20 避免進場，或反向作為均值回歸的確認）
-- 更新：手動補充，不自動下載
-
----
-
-## 資料現況（截至 2026-03）
-
-| 項目 | 數值 |
-|------|------|
-| 日期範圍 | 2020-12-31 ~ 2026-03-02 |
-| ticks 總筆數 | ~1.24 億筆 |
-| 交易日數 | 1,248 天 |
-| ohlcv_1m 總 bar 數 | 375,648 根 |
-| 每日 bar 數 | 301 根（08:45~13:45） |
-| 每日平均成交量 | ~17.9 萬口 |
-| 換倉次數 | 62 次 |
 
 ## DuckDB 注意事項
 
@@ -299,89 +233,39 @@ with duckdb.connect("data/futures.duckdb") as conn:
 ```
 DuckDB 同時只允許一個寫入連線；多個 process 同時開啟同一 .duckdb 會報 lock error。
 
-## 策略開發工作流程
+## 研究與策略開發
 
-**規則：任何新策略或新 Phase 的實作，必須先在 `specs/strategies/` 下建立規格文件，經確認後才開始寫程式碼。**
+所有研究遵循假設驅動的迭代循環：理念 → 假設 → 分佈探索 → 回測驗證 → 歸檔
+Confirmed 的假設才進入 `strategies/live/`。
 
-### 規格文件命名慣例
-```
-specs/strategies/orb_phase<N>.md   ← 策略 Phase 迭代（如 orb_phase6.md）
-specs/strategies/orb_<名稱>.md     ← 獨立策略實驗（如 orb_filters.md）
-```
+核心理念與市場背景：`specs/trading-principles.md`、`market-context.md`、`data-sources.md`
 
-### 規格文件應包含
-1. **背景與動機** — 上一個 Phase 的結論，本次要解決什麼問題
-2. **假設與方向** — 核心假設，為什麼這個方法可能有效
-3. **Step 0（探索）** — 實作前的資料分析，避免盲目優化
-4. **指標 / 策略設計** — 公式、參數、候選方案
-5. **優化網格** — 測試範圍與固定參數
-6. **成功標準** — 量化目標（PF、win%、年度 PnL 等）
-7. **實作順序** — 需修改 / 新建的檔案清單與順序
-8. **備選方案** — 若主方向失敗的下一步
+### 命名慣例
+- 假設：HXXX-簡短名稱（如 H032-gap-reversal），編號從最大號 +1
+- 策略：SXXX-簡短名稱（如 S001-esthl）
+- 現有研究索引：使用 `/status` 查看
 
-### 現有規格文件索引
-- `specs/strategies/2026-03-03-orb.md` — ORB 策略總覽
-- `specs/strategies/2026-03-03-orb_phase2.md` — Phase 2：固定百分比 SL/TP + 趨勢濾網
-- `specs/strategies/2026-03-04-orb_phase4.md` — Phase 4：自適應 TP（OR 寬度 × 乘數）；`ORBLongStrategy` 為現行最佳
-- `specs/strategies/2026-03-04-orb_longonly.md` — Long-only：僅做多 + ADX 進場濾網
-- `specs/strategies/2026-03-03-orb_filters.md` — 各種濾網實驗紀錄（Rolling OR、Phase 5/6）
-- `specs/strategies/2026-03-04-orb_phase6.md` — Phase 6：市場機制濾網（ADX / ATR% / 滾動勝率）
-- `specs/strategies/2026-03-09-orb-with-est-high-low-exit.md` — ORBWithEstHLExitStrategy，entry_end=9:15，EmaHL bfill，2021–2026 總損益 +3720
-- `specs/strategies/2026-03-09-orb-exit-crossover.md` — Direction A：EstHL進 × ORBLong出，entry_end=9:15，tp×3.0，2021–2026 總損益 +4221
-- `specs/strategies/2026-03-11-portfolio-allocation.md` — **最佳組合**：EstHL + ORBLong 各½口，Sharpe 3.12，固定資金下優於三策略均分
-- `specs/strategies/2026-03-20-settlement-volume-satzone.md` — 結算日 Volume ×1.9 校正 + SatZone fraction 實驗（fraction 失敗，維持 -ema/8）
-- `specs/strategies/2026-03-21-strategy-health-monitor.md` — Regime 健康監測：Range%、ER 指標定義、交叉分析方法（結論：無法作為交易濾網或提前預警）
-- `specs/strategies/2026-03-21-orblong-research.md` — ORBLong 重新研究：Regime 交叉、SatZone 出場（OR%×fraction）、EstHL 重疊、weekday
+### Skills
 
-### OR% 濾網（ORBLong 專用）
+以下工作流程已建為 skills（`.claude/skills/`），可透過 slash command 觸發：
 
-分析 2023–2025 共 190 筆交易，發現 OR 絕對寬度與勝率的關係依指數水位而異，改用相對比例：
+| Command | 用途 |
+|---------|------|
+| `/new-hypothesis` | 建立新假設研究（proposal.md + tasks.md） |
+| `/explore` | 執行 Phase 1 分佈探索，產出 distribution.md + GATE |
+| `/backtest` | 執行 Phase 2 回測驗證，產出 backtest.md + Verdict |
+| `/archive` | 歸檔完成的假設到 confirmed/rejected/inconclusive |
+| `/status` | 顯示所有假設的進度總覽 |
 
-```
-OR% = OR寬度（08:45–09:30 最高 - 最低）/ 當日開盤價 × 100
-```
+### 績效標準化
+跨年度比較用 `損益% = 損益點數 / 進場價 × 100`，Sharpe 也基於損益%。
 
-**最佳範圍：0.3% ≤ OR% ≤ 1.0%**
-
-| OR% 區間 | 筆數 | 勝率 | 平均損益 |
-|----------|------|------|----------|
-| < 0.3%   | 22   | 40%  | -9 pts（開盤太安靜，假突破多）|
-| 0.3–1.0% | 156  | 62%  | +28 pts（甜蜜帶）|
-| > 1.0%   | 12   | 42%  | -12 pts（過度波動，常反轉）|
-
-加入濾網後全期結果（2021–2026）：325筆→274筆，損益 +4,971→+5,262，Sharpe 1.36→1.54。
-
-### 績效標準化原則
-
-**不應直接比較不同年份的絕對損益點數**，因指數水位不同。標準化方式：
-
-```
-損益% = 損益點數 / 進場價 × 100
-每筆均% = 所有交易損益% 的平均值
-```
-
-範例：同樣賺 200 點，指數 20,000 時 = 1.0%，指數 30,000 時 = 0.67%，後者實際上較差。
-
-Sharpe 計算也應基於每日損益%（非點數），才能跨年度公平比較。
-
-### Regime 健康監測（已驗證無效，不作為交易濾網）
-
-曾嘗試用日盤 range_pct、ER 等指標預警 EstHL 策略環境衰退，結論：**無法作為交易濾網或提前預警信號**。
-
-#### 為何無效
-
-1. **ER** 對單筆交易預測力最強（r=0.397），但是事後指標，進場時無法得知當日 ER
-2. **Range% EMA(20)** 觸發暫停閾值（<0.74%）的情況極少，僅過濾 4 筆交易且全部獲利
-3. **Lookback window 預警**（20/40/60 天內低於閾值的比例）：所有暫停規則都過濾掉賺錢的交易，總損益下降
-4. **EMA(20) 連續低於閾值天數**：樣本太少（<16 筆），無法建立可靠規則
-5. EstHL 本身的內建濾網（weekday、OR width、BigCost）已充分過濾低品質交易
-6. Reversal 對所有 regime 指標不敏感（|r| < 0.07）
-
-#### 現狀
-
-- `regime_health.py` 保留但已從 `morning_briefing.py` 移除
-- `strategy_health.py` 保留供未來研究參考
-- 詳見 `specs/strategies/2026-03-21-strategy-health-monitor.md`
+### Behavior Rules
+- 每次對話開始前，主動讀取相關的 specs/ 文件
+- 不在未通過 GATE 的情況下執行回測
+- 衍生想法記錄在當前結果文件的 Derived Hypotheses，不主動修改其他文件
+- 所有數字結論必須附上樣本數
+- 參數優化後必須做 out-of-sample 驗證才能標記 Confirmed
 
 ---
 
@@ -393,63 +277,3 @@ Sharpe 計算也應基於每日損益%（非點數），才能跨年度公平比
 - 價差合約（合約代號含 `/`）在 parse_rpt.py 階段過濾，不寫入 ticks
 - 期交所僅保留最近 30 個交易日資料，需定期排程避免缺口
 - 回答用台灣繁體中文優先，但可視需求保留英文的專有名詞
-
----
-
-# Research Protocol
-
-## Project Context
-這是一個交易策略研究專案。
-所有研究遵循假設驅動的迭代循環：
-理念 → 假設 → 分佈探索 → 回測驗證 → 歸檔
-
-核心理念與市場背景請參考：
-- specs/trading-principles.md
-- specs/market-context.md
-- specs/data-sources.md
-
-## Hypothesis Naming
-格式：HXXX-簡短名稱（例如 H001-momentum-basic）
-編號從現有最大號 +1 開始
-
-## Slash Commands
-
-### /new-hypothesis
-1. 讀取 specs/ 下所有文件作為背景
-2. 引導使用者描述交易直覺和機會
-3. 建立 research/active/HXXX-名稱/ 目錄
-4. 根據模板生成 proposal.md 和 tasks.md
-5. 確認 Derived From 欄位填寫正確
-
-### /explore
-1. 讀取當前 active hypothesis 的 proposal.md 和 tasks.md
-2. 執行 Phase 1 的所有探索任務
-3. 將結果寫入 results/distribution.md
-4. 在文件末尾明確呈現 GATE 問題，等待人工決定
-
-### /backtest
-1. 確認 distribution.md 的 Gate Decision 已填寫為「進入 Phase 2」
-2. 讀取 proposal.md 了解假設與無效條件
-3. 執行 Phase 2 的所有回測任務
-4. 將結果寫入 results/backtest.md
-5. 在文件末尾明確呈現 Verdict，等待人工決定
-
-### /archive
-1. 讀取該假設的 proposal.md、distribution.md、backtest.md
-2. 根據 Verdict 決定放入 confirmed / rejected / inconclusive
-3. 生成 archive 摘要文件
-4. 將 Derived Hypotheses 列出，詢問是否立即開新假設
-5. 將 active 目錄保留（不刪除），archive 只存摘要
-
-### /status
-列出：
-- 所有 active 假設及當前階段
-- 最近 archive 的 3 個假設
-- 尚未開 proposal 的衍生想法清單
-
-## Behavior Rules
-- 每次對話開始前，主動讀取相關的 specs/ 文件
-- 不在未通過 GATE 的情況下執行回測
-- 發現衍生想法時，記錄在當前結果文件的 Derived Hypotheses，不主動修改其他文件
-- 所有數字結論必須附上樣本數
-- 參數優化後必須做 out-of-sample 驗證才能標記 Confirmed
