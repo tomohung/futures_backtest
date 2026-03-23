@@ -39,12 +39,15 @@ H005-reversal, H006-reversal-v2（research/archive/confirmed/）
 - 下單時機：BB latch + 力竭 + 5MA crossing 同時滿足時進場
 - 倉位大小：½ 口（與 EstHL 各半，參考 H004 配置）
 
+## Filters
+- **Near-SatZone latch**：session extreme 曾觸及任一 SatZone 的 1/8 EmaHL 範圍內 → 當日不再進場（振幅已耗盡）
+- **SatZone reached**：價格曾觸及 SatZone → 當日不再進場
+
 ## Constraints
 - 最大持倉數：1
 - 單筆最大風險：依 SatZone 反向計算
 
 ## Source Code
-- Strategy：`src/strategies/orb.py` — ReversalStrategy
-- Exit mixin：`src/strategies/estimate_hl_exit.py`
+- Strategy：`src/strategies/reversal.py` — ReversalStrategy
 - Indicator：`src/backtest/estimate_hl.py`
-- Pine Script：`indicators/tradingview/orb_est_hl_tx.pine`
+- Pine Script：`indicators/tradingview/reversal_tx.pine`
