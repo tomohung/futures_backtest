@@ -49,15 +49,15 @@ Confirmed / Rejected / Inconclusive
 - HXXX：[從這裡衍生出去的假設]
 
 ## Links
-- Proposal：research/active/HXXX-名稱/proposal.md
-- Distribution：research/active/HXXX-名稱/results/distribution.md
-- Backtest：research/active/HXXX-名稱/results/backtest.md
+- Proposal：proposal.md
+- Distribution：results/distribution.md（如存在）
+- Backtest：results/backtest.md（如存在）
 ```
 
-### Step 4：處理原始文件
+### Step 4：搬移原始文件
 
-將 `research/active/HXXX-名稱/` 目錄下的原始 spec 和 proposal 等文件，
-複製到 archive 目錄中（保留 active 目錄不刪除，作為完整記錄）。
+將 `research/active/HXXX-名稱/` 整個目錄搬移到 archive 目錄中，然後刪除 active 下的原始目錄。
+歸檔後 active 裡不應該還留有該假設的目錄。
 
 ### Step 5：衍生假設
 
@@ -66,7 +66,7 @@ Confirmed / Rejected / Inconclusive
 
 ## 注意事項
 
-- active 目錄保留不刪除
-- archive 只存摘要 + 原始文件副本
+- 歸檔後必須刪除 `research/active/HXXX-名稱/` 目錄
+- archive 存 summary.md + 從 active 搬過來的完整文件
 - 如果假設 confirmed，提醒使用者考慮是否要建立 strategies/live/ 下的策略規格
 - 回答用台灣繁體中文，技術術語保留英文
