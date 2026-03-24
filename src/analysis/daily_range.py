@@ -19,6 +19,10 @@ SYMBOL = "TX"
 VIX_BASE = "https://www.taifex.com.tw/file/taifex/Dailydownload/vix/log2data/{ym}new.txt"
 
 
+POTENTIAL_THRESHOLD = 1.0  # range_pct >= 1.0% 為潛力日（H020/H021 定義）
+DENSITY_WINDOW = 20  # 滾動密度窗口（交易日）
+
+
 def get_daily_range(n=20):
     with duckdb.connect(str(DB_PATH), read_only=True) as conn:
         rows = conn.execute("""
@@ -33,6 +37,43 @@ def get_daily_range(n=20):
             LIMIT ?
         """, [SYMBOL, n]).fetchall()
     return list(reversed(rows))
+
+
+def get_potential_density(n=20):
+    """計算最近 n 日的滾動潛力日密度。回傳 [(date, count, pct), ...]"""
+    # 需要額外 DENSITY_WINDOW-1 天來計算第一天的滾動值
+    fetch_n = n + DENSITY_WINDOW - 1
+    with duckdb.connect(str(DB_PATH), read_only=True) as conn:
+        rows = conn.execute("""
+            SELECT
+                timestamp::DATE AS trade_date,
+                MIN_BY(open, timestamp) AS day_open,
+                MAX(high) AS day_high,
+                MIN(low) AS day_low
+            FROM ohlcv_1m
+            WHERE symbol = ?
+              AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+            GROUP BY trade_date
+            ORDER BY trade_date DESC
+            LIMIT ?
+        """, [SYMBOL, fetch_n]).fetchall()
+
+    rows = list(reversed(rows))
+    # 計算 range_pct 並標記潛力日
+    is_potential = []
+    for _, day_open, day_high, day_low in rows:
+        range_pct = float((day_high - day_low) / day_open * 100)
+        is_potential.append(1 if range_pct >= POTENTIAL_THRESHOLD else 0)
+
+    # 滾動計算
+    result = []
+    for i in range(DENSITY_WINDOW - 1, len(rows)):
+        window = is_potential[i - DENSITY_WINDOW + 1:i + 1]
+        count = sum(window)
+        pct = count / DENSITY_WINDOW * 100
+        result.append((rows[i][0], count, pct))
+
+    return result
 
 
 def fetch_vix(ym: str):
@@ -114,11 +155,17 @@ def main():
     trend_dir = "↑ 上升" if trend_coef[0] > 0 else "↓ 下降"
     trend_color = "#e74c3c" if trend_coef[0] > 0 else "#27ae60"
 
+    density_n = 60  # 近 3 個月看密度趨勢
+    density_data = get_potential_density(density_n)
+    density_dates = [r[0] for r in density_data]
+    density_counts = [r[1] for r in density_data]
+    density_pcts = [r[2] for r in density_data]
+
     setup_font()
     weekday_names = ["一", "二", "三", "四", "五", "六", "日"]
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8))
-    fig.suptitle("TX 日盤波動 & VIX 指數", fontsize=15, fontweight="bold", y=0.98)
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 11))
+    fig.suptitle("TX 日盤波動 & VIX & 潛力日密度", fontsize=15, fontweight="bold", y=0.98)
 
     # ── 上圖：日盤波動 ──
     n_bars = len(ranges)
@@ -174,6 +221,42 @@ def main():
     ax2.yaxis.grid(True, linestyle="--", alpha=0.4)
     ax2.set_axisbelow(True)
 
+    # ── 下圖：潛力日密度（折線圖，近 3 個月） ──
+    n_density = len(density_pcts)
+    pcts_arr = np.array(density_pcts)
+
+    ax3.plot(range(n_density), pcts_arr, color="#2196F3", linewidth=1.5, zorder=3)
+    # 填充高低區域
+    ax3.fill_between(range(n_density), pcts_arr, 60,
+                     where=pcts_arr >= 60, color="#e74c3c", alpha=0.2, zorder=2)
+    ax3.fill_between(range(n_density), pcts_arr, 30,
+                     where=pcts_arr <= 30, color="#27ae60", alpha=0.2, zorder=2)
+    ax3.axhline(50, color="#999", linewidth=1, linestyle=":", zorder=2, label="50%")
+    ax3.axhspan(60, 100, color="#e74c3c", alpha=0.05, zorder=1)
+    ax3.axhspan(0, 30, color="#27ae60", alpha=0.05, zorder=1)
+
+    # 標註最新值
+    ax3.annotate(f"{density_pcts[-1]:.0f}%\n({int(density_counts[-1])}/{DENSITY_WINDOW})",
+                 xy=(n_density - 1, density_pcts[-1]),
+                 xytext=(0, 10), textcoords="offset points",
+                 ha="center", fontsize=10, fontweight="bold", color="#2196F3")
+
+    # X 軸：每 10 天標一次
+    tick_step = max(1, n_density // 6)
+    tick_pos = list(range(0, n_density, tick_step))
+    if n_density - 1 not in tick_pos:
+        tick_pos.append(n_density - 1)
+    ax3.set_xticks(tick_pos)
+    ax3.set_xticklabels([str(density_dates[i]) for i in tick_pos],
+                        rotation=30, ha="right", fontsize=8)
+    ax3.set_ylabel("潛力日比例 (%)", fontsize=11)
+    ax3.set_title(f"滾動 {DENSITY_WINDOW} 日潛力日密度（近 {density_n} 交易日）"
+                  "  紅區≥60% 綠區≤30%", fontsize=12)
+    ax3.set_ylim(0, 105)
+    ax3.legend(fontsize=10, loc="lower left")
+    ax3.yaxis.grid(True, linestyle="--", alpha=0.4)
+    ax3.set_axisbelow(True)
+
     plt.tight_layout()
     out_path = Path(__file__).parents[2] / "output" / "daily_range.png"
     out_path.parent.mkdir(exist_ok=True)
@@ -201,6 +284,15 @@ def main():
     print("-" * 32)
     print(f"{'近20日平均':<12} {avg20_range:>8.0f}   {avg20_vix:>6.2f}")
     print(f"\nVIX 趨勢：{trend_dir}（斜率 {trend_coef[0]:+.2f}/日）")
+    latest_density = density_pcts[-1] if density_pcts else 0
+    latest_count = int(density_counts[-1]) if density_counts else 0
+    if latest_density >= 60:
+        regime_label = "高密度（策略活躍期）"
+    elif latest_density <= 30:
+        regime_label = "低密度（策略沉寂期）"
+    else:
+        regime_label = "中等密度"
+    print(f"潛力日密度：{latest_count}/{DENSITY_WINDOW} ({latest_density:.0f}%) — {regime_label}")
 
     plt.show()
 
