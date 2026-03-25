@@ -69,19 +69,19 @@ t_entry_end   = timestamp("Asia/Taipei", year, month, dayofmonth, 10, 30)
 t_trail_on    = timestamp("Asia/Taipei", year, month, dayofmonth,  9, 45)
 t_force_exit  = timestamp("Asia/Taipei", year, month, dayofmonth, 13, 30)
 t_day_end     = timestamp("Asia/Taipei", year, month, dayofmonth, 13, 45)
-t_night_start = timestamp("Asia/Taipei", year, month, dayofmonth, 15,  0)
-
 in_or_window  = time >= t_or_start    and time <= t_or_end
 in_entry_win  = time >= t_entry_start and time <= t_entry_end
 in_trail_zone = time >= t_trail_on    and time <  t_force_exit
 at_force_exit = time >= t_force_exit  and time <  t_day_end
 in_session    = time >= t_or_start    and time <  t_day_end
-in_night      = time >= t_night_start or (hour(time, "Asia/Taipei") < 6)
 
 // ============================================================
-// Regular Session Ticker — 日盤 only（用於 request.security）
+// Tickers for request.security
 // ============================================================
-regTicker = ticker.modify(syminfo.tickerid, session=session.regular)
+// rawTicker: 去除 B-ADJ，用原始價格算 BB/SMA（圖表已是 regular session）
+rawTicker = ticker.modify(syminfo.tickerid, adjustment=adjustment.none)
+// extTicker: extended session，用於取夜盤 H/L
+extTicker = ticker.modify(syminfo.tickerid, session=session.extended, adjustment=adjustment.none)
 
 // ============================================================
 // Taipei Time — used by 30m slot and 5m slot calculations
@@ -147,9 +147,9 @@ if in_session
     sess_low_d  := na(sess_low_d)  ? low  : math.min(sess_low_d,  low)
 
 // 近二日日盤 H/L：用 request.security("D") 取，不依賴 1m 圖的累積天數
-// regTicker 確保只取日盤（regular session）的 daily OHLC
+// rawTicker 確保只取日盤（regular session）的 daily OHLC
 // [1] = 昨日, [2] = 前日, lookahead_on 防重繪
-[day1_high, day1_low, day2_high, day2_low] = request.security(regTicker, "D",
+[day1_high, day1_low, day2_high, day2_low] = request.security(rawTicker, "D",
     [high[1], low[1], high[2], low[2]],
     lookahead = barmerge.lookahead_on)
 
@@ -157,56 +157,40 @@ recent2_high = not na(day1_high) and not na(day2_high) ? math.max(day1_high, day
 recent2_low  = not na(day1_low)  and not na(day2_low)  ? math.min(day1_low,  day2_low)  : day1_low
 
 // ============================================================
-// Night Session OHLC Tracking
+// Night Session H/L — 用 extTicker（extended session）取得含夜盤的 daily H/L
+// 再與 rawTicker（日盤 only）的 daily H/L 比較，推算夜盤極值
 // ============================================================
-var float night_high  = na
-var float night_low   = na
-var float night_close = na
-var float night_high_final  = na   // 完成的夜盤 H/L/C（給日盤用）
-var float night_low_final   = na
-var float night_close_final = na
-var bool  prev_in_night = false
+// extTicker daily bar[1] = 前一交易日的 extended session（日盤 + 當晚夜盤）
+// 夜盤 15:00~05:00 屬於當日 extended bar，隔天日盤開始前已封存
+[ext_high_d1, ext_low_d1] = request.security(extTicker, "D",
+    [high[1], low[1]],
+    lookahead = barmerge.lookahead_on)
 
-entering_night = in_night and not prev_in_night
+// night_high_final / night_low_final：用 extended daily H/L 近似
+// 當 ext_high > day_high 時，夜盤推得更高；否則 ext_high = day_high
+night_high_final = ext_high_d1
+night_low_final  = ext_low_d1
 
-if entering_night
-    night_high  := na
-    night_low   := na
-    night_close := na
-
-if in_night
-    night_high  := na(night_high) ? high : math.max(night_high, high)
-    night_low   := na(night_low)  ? low  : math.min(night_low,  low)
-    night_close := close
-
-// 日盤開始時封存夜盤數據
-if entering_or and not na(night_high)
-    night_high_final  := night_high
-    night_low_final   := night_low
-    night_close_final := night_close
-
-prev_in_night := in_night
-
-night_new_high = not na(night_high_final) and not na(recent2_high) and night_high_final > recent2_high
-night_new_low  = not na(night_low_final)  and not na(recent2_low)  and night_low_final  < recent2_low
+night_new_high = not na(ext_high_d1) and not na(recent2_high) and ext_high_d1 > recent2_high
+night_new_low  = not na(ext_low_d1)  and not na(recent2_low)  and ext_low_d1  < recent2_low
 
 // ============================================================
 // 30m SMA(20) Direction + BB%B(20, open) — DAY SESSION ONLY
 //
-// 使用 regular session ticker + request.security("30") 確保只含日盤 bar。
-// 即使圖表是 extended session，30m 指標也不被夜盤汙染。
+// rawTicker + "30"：日盤 30m bar，adjustment=none 避免 B-ADJ 干擾。
 // lookahead_on + [1]/[2] = 用已完成的 bar，無重繪。
 // ============================================================
-[ma30_cur, ma30_prev] = request.security(regTicker, "30",
+[ma30_cur, ma30_prev] = request.security(rawTicker, "30",
     [ta.sma(close, 20)[1], ta.sma(close, 20)[2]],
     lookahead = barmerge.lookahead_on)
 
 // BB%B(20, open): 用 open 價計算 BB，取前一根已完成 bar 的 bands
 // 再用當根 open（= 今日第一根 30m 的 open = 08:45 開盤價）算 %B
-[bb_open_sma, bb_open_std, cur_30m_open_sec] = request.security(regTicker, "30",
+[bb_open_sma, bb_open_std, cur_30m_open_sec] = request.security(rawTicker, "30",
     [ta.sma(open, 20)[1], ta.stdev(open, 20, false)[1], open],
     lookahead = barmerge.lookahead_on)
 
+// DEBUG: 對照組 — [0] 版 SMA + 前一根 open + 在 30m context 內算完的 BB%B
 bb_lower_val = not na(bb_open_sma) and not na(bb_open_std) ? bb_open_sma - 2.0 * bb_open_std : float(na)
 bb_width_val = not na(bb_open_std) ? 4.0 * bb_open_std : float(na)
 bbpctb_val   = not na(bb_width_val) and bb_width_val > 0 and not na(cur_30m_open_sec) ? (cur_30m_open_sec - bb_lower_val) / bb_width_val : float(na)
@@ -415,18 +399,18 @@ if leaving_or and show_diag
     is_wed_skip = skip_wed and dayofweek == dayofweek.wednesday
     is_thu_skip = skip_thu and dayofweek == dayofweek.thursday
 
-    // 額外診斷：顯示原始數值幫助 debug
+    // 額外診斷
     _nH_val = na(night_high_final) ? "na" : str.tostring(math.round(night_high_final))
     _r2H_val = na(recent2_high) ? "na" : str.tostring(math.round(recent2_high))
     _nL_val = na(night_low_final) ? "na" : str.tostring(math.round(night_low_final))
     _r2L_val = na(recent2_low) ? "na" : str.tostring(math.round(recent2_low))
     _bb_raw = na(bbpctb_val) ? "na" : str.format("{0,number,#.##}", bbpctb_val)
 
-    diag_txt = str.format("MA:{0} BB:{1}\nnH:{2} nL:{3}\nORB:{4} WD:{5}\n{6}\nnH:{7} r2H:{8}\nnL:{9} r2L:{10}\nBBraw:{11} or#:{12} s#:{13}",
+    diag_txt = str.format("MA:{0} BB:{1}\nnH:{2} nL:{3}\nORB:{4} WD:{5}\n{6}\nextH:{7} r2H:{8}\nextL:{9} r2L:{10}\nBBraw:{11}",
                 _ma_dir_str, _bb_str, _n_high_str, _n_low_str,
                 _orb_str, _wd_str, _signal_str,
                 _nH_val, _r2H_val, _nL_val, _r2L_val,
-                _bb_raw, dbg_or_count, dbg_sess_bars)
+                _bb_raw)
 
     lbl_color = _signal_str != "—" ? color.new(color.yellow, 20) : color.new(color.gray, 50)
     label.new(bar_index, or_low, diag_txt,
