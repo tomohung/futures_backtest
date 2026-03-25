@@ -1,0 +1,534 @@
+// ============================================================
+// Exhaustion TX — TradingView Indicator v6
+// 台指期（TAIFEX TX）趨勢竭盡反轉 + EstHL SatZone Exit
+//
+// 進場邏輯（雙向）：
+//   多方竭盡做空：
+//     1. 30m SMA(20) 方向向上（MA > MA_prev）
+//     2. 30m BB%B(20, open, 2σ) > 1（開盤價超出上軌）
+//     3. 夜盤 high > 近二日日盤 high（創新高）
+//     4. ORB(08:45–08:58) 被跌破（09:00 後 low < OR Low）
+//     5. ORB% >= 0.25%
+//     6. 非週三、非週四
+//
+//   空方竭盡做多：
+//     1. 30m SMA(20) 方向向下（MA < MA_prev）
+//     2. 30m BB%B(20, open, 2σ) < 0（開盤價低於下軌）
+//     3. 夜盤 low < 近二日日盤 low（創新低）
+//     4. ORB(08:45–08:58) 被突破（09:00 後 high > OR High）
+//     5. ORB% >= 0.25%
+//     6. 非週三、非週四
+//
+// 出場（同 EstHL）：
+//   1. 固定停損（SL = entry ± sl_fraction × EmaHL）
+//   2. SatZone 兩段式（觸碰 → 穿越 5MA）
+//   3. Dow Theory 追蹤停損（09:45 後）
+//   4. 強制平倉 13:30
+//
+// 線條顏色：
+//   Teal/Orange ── OR High/Low
+//   Blue        ── 30m MA20 方向
+//   Purple      ── SatZone（持倉中）
+//   Red         ── SL
+//   Pink        ── Dow Trail
+//   Gray dashed ── 夜盤 High/Low
+// ============================================================
+//@version=6
+indicator(
+    title   = "Exhaustion TX (趨勢竭盡反轉)",
+    overlay = true
+)
+
+// ============================================================
+// Inputs
+// ============================================================
+var string GRP_ENTRY   = "進場條件"
+var string GRP_SL      = "停損"
+var string GRP_FILTER  = "濾網"
+var string GRP_VIZ     = "顯示"
+
+sl_fraction    = input.float(0.25, "SL = EmaHL ×", step=0.05, minval=0.05, group=GRP_SL)
+min_orb_pct    = input.float(0.25, "最低 ORB%", step=0.05, minval=0.0, group=GRP_FILTER, tooltip="ORB 寬度 / 開盤價 × 100")
+skip_wed       = input.bool (true, "跳過週三", group=GRP_FILTER)
+skip_thu       = input.bool (true, "跳過週四", group=GRP_FILTER)
+show_or        = input.bool (true, "OR 高低線", group=GRP_VIZ)
+show_sat       = input.bool (true, "SatZone 線", group=GRP_VIZ)
+show_sl_ln     = input.bool (true, "SL 線", group=GRP_VIZ)
+show_dow_ln    = input.bool (true, "Dow Trail 線", group=GRP_VIZ)
+show_bg        = input.bool (true, "時段底色", group=GRP_VIZ)
+show_night     = input.bool (true, "夜盤 H/L 線（灰色虛線）", group=GRP_VIZ)
+show_diag      = input.bool (true, "濾網診斷 Label", group=GRP_VIZ)
+
+// ============================================================
+// Time Windows (Asia/Taipei = UTC+8)
+// ============================================================
+t_or_start    = timestamp("Asia/Taipei", year, month, dayofmonth,  8, 45)
+t_or_end      = timestamp("Asia/Taipei", year, month, dayofmonth,  8, 58)
+t_entry_start = timestamp("Asia/Taipei", year, month, dayofmonth,  9,  0)
+t_entry_end   = timestamp("Asia/Taipei", year, month, dayofmonth, 10, 30)
+t_trail_on    = timestamp("Asia/Taipei", year, month, dayofmonth,  9, 45)
+t_force_exit  = timestamp("Asia/Taipei", year, month, dayofmonth, 13, 30)
+t_day_end     = timestamp("Asia/Taipei", year, month, dayofmonth, 13, 45)
+t_night_start = timestamp("Asia/Taipei", year, month, dayofmonth, 15,  0)
+
+in_or_window  = time >= t_or_start    and time <= t_or_end
+in_entry_win  = time >= t_entry_start and time <= t_entry_end
+in_trail_zone = time >= t_trail_on    and time <  t_force_exit
+at_force_exit = time >= t_force_exit  and time <  t_day_end
+in_session    = time >= t_or_start    and time <  t_day_end
+in_night      = time >= t_night_start or (hour(time, "Asia/Taipei") < 6)
+
+// ============================================================
+// Taipei Time — used by 30m slot and 5m slot calculations
+// ============================================================
+_h = hour(time, "Asia/Taipei")
+_m = minute(time, "Asia/Taipei")
+_min_of_day_global = _h * 60 + _m
+
+// ============================================================
+// OR / Day Session Transitions
+// ============================================================
+var bool prev_in_or = false
+entering_or = in_or_window     and not prev_in_or
+leaving_or  = not in_or_window and prev_in_or
+prev_in_or := in_or_window
+
+// ============================================================
+// Opening Range (08:45–08:58)
+// ============================================================
+var float or_high  = na
+var float or_low   = na
+var float day_open = na
+var bool  or_done  = false
+
+if entering_or
+    or_high  := na
+    or_low   := na
+    day_open := open
+    or_done  := false
+
+if in_or_window
+    or_high := na(or_high) ? high : math.max(or_high, high)
+    or_low  := na(or_low)  ? low  : math.min(or_low,  low)
+
+if leaving_or
+    or_done := true
+
+// ============================================================
+// EmaHL + Recent 2 Days' H/L — day session only
+// ⚠️ 必須在同一個 entering_or 區塊內先讀 sess_high_d 再重置
+// ============================================================
+var float ema_hl_sess = na
+var float sess_high_d = na
+var float sess_low_d  = na
+var float day1_high = na   // 昨日日盤 high
+var float day1_low  = na
+var float day2_high = na   // 前日日盤 high
+var float day2_low  = na
+
+if entering_or
+    // 先用前一日的 sess H/L 更新 EmaHL 和近二日高低（讀取後再重置）
+    if not na(sess_high_d) and not na(sess_low_d) and sess_high_d > sess_low_d
+        prev_hl      = sess_high_d - sess_low_d
+        ema_hl_sess := na(ema_hl_sess) ? prev_hl : ema_hl_sess + (2.0 / 21.0) * (prev_hl - ema_hl_sess)
+        day2_high   := day1_high
+        day2_low    := day1_low
+        day1_high   := sess_high_d
+        day1_low    := sess_low_d
+    // 重置當日追蹤
+    sess_high_d := na
+    sess_low_d  := na
+
+if in_session
+    sess_high_d := na(sess_high_d) ? high : math.max(sess_high_d, high)
+    sess_low_d  := na(sess_low_d)  ? low  : math.min(sess_low_d,  low)
+
+recent2_high = not na(day1_high) and not na(day2_high) ? math.max(day1_high, day2_high) : day1_high
+recent2_low  = not na(day1_low)  and not na(day2_low)  ? math.min(day1_low,  day2_low)  : day1_low
+
+// ============================================================
+// Night Session OHLC Tracking
+// ============================================================
+var float night_high  = na
+var float night_low   = na
+var float night_close = na
+var float night_high_final  = na   // 完成的夜盤 H/L/C（給日盤用）
+var float night_low_final   = na
+var float night_close_final = na
+var bool  prev_in_night = false
+
+entering_night = in_night and not prev_in_night
+
+if entering_night
+    night_high  := na
+    night_low   := na
+    night_close := na
+
+if in_night
+    night_high  := na(night_high) ? high : math.max(night_high, high)
+    night_low   := na(night_low)  ? low  : math.min(night_low,  low)
+    night_close := close
+
+// 日盤開始時封存夜盤數據
+if entering_or and not na(night_high)
+    night_high_final  := night_high
+    night_low_final   := night_low
+    night_close_final := night_close
+
+prev_in_night := in_night
+
+night_new_high = not na(night_high_final) and not na(recent2_high) and night_high_final > recent2_high
+night_new_low  = not na(night_low_final)  and not na(recent2_low)  and night_low_final  < recent2_low
+
+// ============================================================
+// 30m SMA(20) Direction + BB%B(20, open) — DAY SESSION ONLY
+//
+// ⚠️ request.security("30") 包含夜盤 bar，會汙染 MA 和 BB。
+//    改為在 1 分 K 上手動追蹤日盤 30m bar，自行計算指標。
+//
+// 30m bar 邊界：08:45, 09:15, 09:45, 10:15, 10:45, 11:15, 11:45, 12:15, 12:45, 13:15
+// 每日 10 根 30m bar。SMA(20) 需要 20 根 = 2 個交易日。
+// ============================================================
+var float[] bar30_close_buf = array.new_float(20, na)  // 最近 20 根 30m close
+var float[] bar30_open_buf  = array.new_float(20, na)  // 最近 20 根 30m open
+var float   cur_30m_open    = na   // 當前 30m bar 的 open
+var float   cur_30m_close   = na   // 當前 30m bar 的 close（持續更新）
+var int     cur_30m_slot    = -1   // 當前 30m slot index (0~9)
+
+// 30m slot: floor((minute_of_day - 525) / 30), 525 = 8*60+45
+_slot_30m = in_session ? math.max(0, math.min(9, math.floor((_min_of_day_global - 525) / 30))) : -1
+
+// 偵測 30m bar 切換
+slot_30m_changed = _slot_30m >= 0 and _slot_30m != cur_30m_slot
+
+if entering_or
+    // 日盤開始，重置 30m 追蹤
+    cur_30m_open  := na
+    cur_30m_close := na
+    cur_30m_slot  := -1
+
+if slot_30m_changed and cur_30m_slot >= 0
+    // 前一根 30m bar 完成，推入 buffer
+    if not na(cur_30m_close)
+        // shift buffer: drop oldest, append newest
+        for i = 0 to 18
+            array.set(bar30_close_buf, i, array.get(bar30_close_buf, i + 1))
+            array.set(bar30_open_buf,  i, array.get(bar30_open_buf,  i + 1))
+        array.set(bar30_close_buf, 19, cur_30m_close)
+        array.set(bar30_open_buf,  19, cur_30m_open)
+
+if slot_30m_changed or entering_or
+    // 新的 30m bar 開始
+    if in_session
+        cur_30m_open  := open
+        cur_30m_close := close
+        cur_30m_slot  := _slot_30m
+else if in_session
+    // 持續更新當前 30m bar 的 close
+    cur_30m_close := close
+
+// 計算 SMA(20) on 30m closes + BB%B(20, open)
+// 只在 30m slot 切換時更新（避免每根 1m bar 都重算造成 prev 被覆蓋）
+var float ma30_val      = na
+var float ma30_prev_val = na
+var float bb_lower_val  = na
+var float bb_width_val  = na
+var float bbpctb_val    = na
+
+if slot_30m_changed or entering_or
+    _sum_close = 0.0
+    _sum_open  = 0.0
+    _sum_open2 = 0.0
+    _count     = 0
+    for i = 0 to 19
+        cv = array.get(bar30_close_buf, i)
+        ov = array.get(bar30_open_buf,  i)
+        if not na(cv) and not na(ov)
+            _sum_close += cv
+            _sum_open  += ov
+            _sum_open2 += ov * ov
+            _count     += 1
+
+    if _count == 20
+        _ma_close = _sum_close / 20.0
+        _ma_open  = _sum_open  / 20.0
+        _var_open = _sum_open2 / 20.0 - _ma_open * _ma_open
+        _std_open = _var_open > 0 ? math.sqrt(_var_open) : 0.0
+
+        ma30_prev_val := ma30_val
+        ma30_val      := _ma_close
+        bb_lower_val  := _ma_open - 2.0 * _std_open
+        bb_width_val  := 4.0 * _std_open  // upper - lower
+
+    // BB%B 用「當前 30m bar 的 open」（08:45 開盤即可用）
+    if not na(cur_30m_open) and not na(bb_width_val) and bb_width_val > 0
+        bbpctb_val := (cur_30m_open - bb_lower_val) / bb_width_val
+
+ma30_up   = not na(ma30_val) and not na(ma30_prev_val) and ma30_val > ma30_prev_val
+ma30_down = not na(ma30_val) and not na(ma30_prev_val) and ma30_val < ma30_prev_val
+bb_above  = not na(bbpctb_val) and bbpctb_val > 1.0
+bb_below  = not na(bbpctb_val) and bbpctb_val < 0.0
+
+// ============================================================
+// Settlement Day Detection (same as EstHL)
+// ============================================================
+_dom = dayofmonth(time, "Asia/Taipei")
+_cur_dow = dayofweek
+_cur_month = month(time, "Asia/Taipei")
+_days_from_1st = _dom - 1
+_dow_1st = ((_cur_dow - 1 - (_days_from_1st % 7) + 7) % 7) + 1
+_first_wed = _dow_1st <= 4 ? 1 + (4 - _dow_1st) : 1 + (11 - _dow_1st)
+_third_wed_dom = _first_wed + 14
+var int _last_settle_month = -1
+var bool is_settlement_day = false
+if entering_or
+    is_settlement_day := false
+    if _cur_month != _last_settle_month and _dom >= _third_wed_dom
+        is_settlement_day := true
+        _last_settle_month := _cur_month
+settle_vol_mult = is_settlement_day ? 1.9 : 1.0
+
+// ============================================================
+// SatZone Computation (same as EstHL)
+// ============================================================
+var float sess_high_sz = na
+var float sess_low_sz  = na
+var float cum_vol      = 0.0
+var float[] ema_cum_vol_arr = array.new_float(60, na)
+var float[] today_profile   = array.new_float(60, na)
+var int     vol_day_count   = 0
+var int     prev_slot_5m    = -1
+
+if entering_or
+    if prev_slot_5m >= 0
+        array.set(today_profile, prev_slot_5m, cum_vol)
+    if not na(array.get(today_profile, 0))
+        for i = 0 to 59
+            cv = array.get(today_profile, i)
+            if not na(cv)
+                old_cv = array.get(ema_cum_vol_arr, i)
+                new_cv = na(old_cv) ? cv : old_cv + (2.0 / 21.0) * (cv - old_cv)
+                array.set(ema_cum_vol_arr, i, new_cv)
+        vol_day_count += 1
+    sess_high_sz := na
+    sess_low_sz  := na
+    cum_vol      := 0.0
+    prev_slot_5m := -1
+    for i = 0 to 59
+        array.set(today_profile, i, na)
+
+if in_session
+    sess_high_sz := na(sess_high_sz) ? high : math.max(sess_high_sz, high)
+    sess_low_sz  := na(sess_low_sz)  ? low  : math.min(sess_low_sz,  low)
+    cum_vol      += volume * settle_vol_mult
+
+// 5-min slot index: 0 = 08:45, 1 = 08:50, ..., 59 = 13:40
+_slot_5m = in_session ? math.max(0, math.min(59, math.floor((_min_of_day_global - 525) / 5))) : -1
+
+var float sat_upper = na
+var float sat_lower = na
+slot_changed_5m = _slot_5m >= 0 and _slot_5m != prev_slot_5m
+
+if entering_or
+    sat_upper := na
+    sat_lower := na
+
+if slot_changed_5m
+    if prev_slot_5m >= 0
+        array.set(today_profile, prev_slot_5m, cum_vol)
+        if vol_day_count >= 20 and not na(ema_hl_sess)
+            ema_cv = array.get(ema_cum_vol_arr, prev_slot_5m)
+            if not na(ema_cv) and ema_cv > 0
+                vol_ratio  = cum_vol / ema_cv
+                est_range  = ema_hl_sess * vol_ratio
+                if not na(sess_low_sz) and not na(sess_high_sz)
+                    sat_upper := sess_low_sz  + est_range - ema_hl_sess / 8.0
+                    sat_lower := sess_high_sz - est_range + ema_hl_sess / 8.0
+    prev_slot_5m := _slot_5m
+
+// ============================================================
+// Filters
+// ============================================================
+orb_pct    = or_done and not na(or_high) and not na(or_low) and not na(day_open) and day_open > 0 ? (or_high - or_low) / day_open * 100 : 0.0
+orb_pct_ok = orb_pct >= min_orb_pct
+wd_ok      = not (skip_wed and dayofweek == dayofweek.wednesday) and not (skip_thu and dayofweek == dayofweek.thursday)
+
+// ============================================================
+// Signal Detection
+// ============================================================
+// 多方竭盡做空：MA↑ + BB>1 + 夜盤新高 + ORB 破低
+bull_exhaust = ma30_up and bb_above and night_new_high
+// 空方竭盡做多：MA↓ + BB<0 + 夜盤新低 + ORB 破高
+bear_exhaust = ma30_down and bb_below and night_new_low
+
+// ============================================================
+// Position State
+// ============================================================
+var int   pos_dir         = 0      // 0=flat, 1=long, -1=short
+var bool  day_traded      = false
+var float sl_price        = na
+var bool  sat_touched     = false
+var float dow_stop        = na
+var float entry_price     = na
+
+if entering_or
+    day_traded := false
+    if pos_dir != 0
+        pos_dir     := 0
+        sl_price    := na
+        sat_touched := false
+        dow_stop    := na
+        entry_price := na
+
+in_pos = pos_dir != 0
+
+// ============================================================
+// Exit Logic (priority: SL > SatZone > Dow > Force)
+// ============================================================
+ma5 = ta.sma(close, 5)
+
+// SatZone touch detection
+if pos_dir == 1 and not sat_touched and not na(sat_upper) and high >= sat_upper
+    sat_touched := true
+if pos_dir == -1 and not sat_touched and not na(sat_lower) and low <= sat_lower
+    sat_touched := true
+
+// Dow Theory trailing (09:45+)
+pivot_low  = ta.pivotlow(low, 5, 5)
+pivot_high = ta.pivothigh(high, 5, 5)
+
+if in_pos and in_trail_zone
+    if pos_dir == 1 and not na(pivot_low)
+        dow_stop := na(dow_stop) ? pivot_low : math.max(dow_stop, pivot_low)
+    if pos_dir == -1 and not na(pivot_high)
+        dow_stop := na(dow_stop) ? pivot_high : math.min(dow_stop, pivot_high)
+
+exit_sl_long  = pos_dir ==  1 and not na(sl_price) and close <= sl_price
+exit_sl_short = pos_dir == -1 and not na(sl_price) and close >= sl_price
+exit_sl       = exit_sl_long or exit_sl_short
+
+exit_sat_long  = pos_dir ==  1 and sat_touched and close < ma5
+exit_sat_short = pos_dir == -1 and sat_touched and close > ma5
+exit_sat       = exit_sat_long or exit_sat_short
+
+exit_dow_long  = pos_dir ==  1 and in_trail_zone and not na(dow_stop) and close < dow_stop
+exit_dow_short = pos_dir == -1 and in_trail_zone and not na(dow_stop) and close > dow_stop
+exit_dow       = exit_dow_long or exit_dow_short
+
+exit_force = in_pos and at_force_exit
+exit_signal = exit_sl or exit_sat or exit_dow or exit_force
+
+// ============================================================
+// Entry Logic
+// ============================================================
+can_enter = not in_pos and not day_traded and or_done and in_entry_win and orb_pct_ok and wd_ok and not na(ema_hl_sess)
+
+// 多方竭盡 → 做空：close < or_low
+short_signal = can_enter and bull_exhaust and close < or_low
+// 空方竭盡 → 做多：close > or_high
+long_signal  = can_enter and bear_exhaust and close > or_high
+
+// ============================================================
+// Apply State Changes (exit first, then entry)
+// ============================================================
+if exit_signal
+    pos_dir     := 0
+    sl_price    := na
+    sat_touched := false
+    dow_stop    := na
+    entry_price := na
+
+if long_signal
+    pos_dir     := 1
+    day_traded  := true
+    entry_price := close
+    sl_price    := close - sl_fraction * ema_hl_sess
+    sat_touched := false
+    dow_stop    := na
+
+if short_signal
+    pos_dir     := -1
+    day_traded  := true
+    entry_price := close
+    sl_price    := close + sl_fraction * ema_hl_sess
+    sat_touched := false
+    dow_stop    := na
+
+// ============================================================
+// Diagnostic Label
+// ============================================================
+if leaving_or and show_diag
+    _ma_dir_str = ma30_up ? "↑" : ma30_down ? "↓" : "—"
+    _bb_str     = bb_above ? ">1" : bb_below ? "<0" : str.format("{0,number,#.##}", nz(bbpctb_val))
+    _n_high_str = night_new_high ? "Y" : "N"
+    _n_low_str  = night_new_low  ? "Y" : "N"
+    _orb_str    = str.format("{0,number,#.##}%", orb_pct)
+    _wd_str     = wd_ok ? "Y" : "N"
+    _signal_str = bull_exhaust and orb_pct_ok and wd_ok ? "SHORT?" : bear_exhaust and orb_pct_ok and wd_ok ? "LONG?" : "—"
+    is_wed_skip = skip_wed and dayofweek == dayofweek.wednesday
+    is_thu_skip = skip_thu and dayofweek == dayofweek.thursday
+
+    diag_txt = str.format("MA:{0} BB:{1}\nnH:{2} nL:{3}\nORB:{4} WD:{5}\n{6}",
+                _ma_dir_str, _bb_str, _n_high_str, _n_low_str,
+                _orb_str, _wd_str, _signal_str)
+
+    lbl_color = _signal_str != "—" ? color.new(color.yellow, 20) : color.new(color.gray, 50)
+    label.new(bar_index, or_low, diag_txt,
+        style=label.style_label_up, size=size.tiny,
+        color=lbl_color, textcolor=color.white)
+
+// ============================================================
+// Plots
+// ============================================================
+// ── 時段底色 ─────────────────────────────────────────────
+day_filtered = or_done and (not orb_pct_ok or not wd_ok)
+has_signal   = bull_exhaust or bear_exhaust
+bgcolor(show_bg and in_or_window ? color.new(color.yellow, 88) : na, title="OR 窗口（黃）")
+bgcolor(show_bg and in_entry_win and has_signal and not day_filtered ? color.new(color.orange, 85) : na, title="信號窗口（橘）")
+bgcolor(show_bg and in_entry_win and day_filtered ? color.new(color.gray, 88) : na, title="濾網淘汰（灰）")
+bgcolor(show_bg and in_trail_zone and in_pos ? color.new(color.purple, 94) : na, title="Trail 區段（紫）")
+
+// ── OR 高低線 ────────────────────────────────────────────
+show_or_line = show_or and not na(or_high) and (in_or_window or (or_done and in_entry_win))
+plot(show_or_line ? or_high : na, "OR High (Teal)", color=color.teal, linewidth=2, style=plot.style_linebr)
+plot(show_or_line ? or_low  : na, "OR Low (Orange)", color=color.orange, linewidth=2, style=plot.style_linebr)
+
+// ── 夜盤 H/L（灰色虛線，日盤期間顯示）───────────────────
+plot(show_night and in_session and not na(night_high_final) ? night_high_final : na,
+     "Night High (Gray)", color=color.new(color.gray, 40), linewidth=1, style=plot.style_cross)
+plot(show_night and in_session and not na(night_low_final) ? night_low_final : na,
+     "Night Low (Gray)", color=color.new(color.gray, 40), linewidth=1, style=plot.style_cross)
+
+// ── SatZone（持倉中不透明，無持倉半透明）──────────────────
+sat_target = pos_dir == 1 ? sat_upper : pos_dir == -1 ? sat_lower : na
+plot(show_sat and not na(sat_target) ? sat_target : na, "SatZone Target (Purple)",
+     color=color.new(color.purple, in_pos ? 0 : 60), linewidth=2, style=plot.style_circles)
+
+// ── SL 線（持倉中顯示）──────────────────────────────────
+plot(show_sl_ln and in_pos ? sl_price : na, "SL (Red)",
+     color=color.red, linewidth=2, style=plot.style_circles)
+
+// ── Dow Trail（持倉中顯示）──────────────────────────────
+plot(show_dow_ln and in_pos and in_trail_zone ? dow_stop : na, "Dow Trail (Pink)",
+     color=color.new(color.red, 50), linewidth=1, style=plot.style_circles)
+
+// ── 進場箭頭 ─────────────────────────────────────────────
+plotshape(long_signal, title="Long ▲", style=shape.triangleup,
+          location=location.belowbar, size=size.small,
+          color=color.red, text="L", textcolor=color.red)
+plotshape(short_signal, title="Short ▼", style=shape.triangledown,
+          location=location.abovebar, size=size.small,
+          color=color.green, text="S", textcolor=color.green)
+
+// ── 出場箭頭 ─────────────────────────────────────────────
+plotshape(exit_signal and pos_dir[1] == 1, title="Exit Long ✕", style=shape.xcross,
+          location=location.abovebar, size=size.small, color=color.white, text="OUT", textcolor=color.white)
+plotshape(exit_signal and pos_dir[1] == -1, title="Exit Short ✕", style=shape.xcross,
+          location=location.belowbar, size=size.small, color=color.white, text="OUT", textcolor=color.white)
+
+// ============================================================
+// Alerts
+// ============================================================
+alertcondition(long_signal,  title="Exhaustion Long",  message="Exhaustion TX — Long Entry ({{ticker}} {{close}})")
+alertcondition(short_signal, title="Exhaustion Short", message="Exhaustion TX — Short Entry ({{ticker}} {{close}})")
+alertcondition(exit_signal,  title="Exhaustion Exit",  message="Exhaustion TX — Exit ({{ticker}} {{close}})")
