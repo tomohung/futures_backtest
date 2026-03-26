@@ -2,11 +2,11 @@
 // Reversal TX — TradingView Indicator v2
 // 台指期（TAIFEX TX）關鍵價轉折策略
 //
-// 方向判斷（BC zone gate）：
-//   BigCost1 = 昨日大戶成本，BigCost2 = 前日大戶成本
-//   - Open > BC zone 上緣 → 只做多
-//   - Open < BC zone 下緣 → 只做空
-//   - Open 在 BC zone 內  → 跟 MA 方向（MA 向上→做多，MA 向下→做空）
+// 方向判斷（VWAP zone gate）：
+//   VWAP1 = 昨日日盤 VWAP，VWAP2 = 前日日盤 VWAP
+//   - Open > VWAP zone 上緣 → 只做多
+//   - Open < VWAP zone 下緣 → 只做空
+//   - Open 在 VWAP zone 內  → 跟 MA 方向（MA 向上→做多，MA 向下→做空）
 //
 // 進場邏輯（兩步驟，Setup + Trigger）：
 //
@@ -42,7 +42,7 @@
 //
 // 線條顏色說明：
 //   Blue     ── 5m 120MA（趨勢方向）
-//   Yellow   ── BigCost1/2（大戶成本）
+//   Yellow   ── VWAP1/2（日盤 VWAP）
 //   Green    ── BB Lower（布林下軌，做多 setup 參考）
 //   Red      ── BB Upper（布林上軌，做空 setup 參考）
 //   Aqua     ── 1m 5MA（trigger 參考）
@@ -55,7 +55,7 @@
 //   黃色  = Setup 窗口（08:45–10:05）
 //   藍色  = Entry 窗口（09:10–10:05，且方向已確定）
 //   紫色  = Trailing 區段（09:45–13:40）
-//   灰色  = 當日無方向（BC 資料缺失）
+//   灰色  = 當日無方向（VWAP 資料缺失）
 //
 // 實盤備註：
 //   當日若 EstHL 已做多停損，Reversal 同向做多信號可考慮略過。
@@ -84,7 +84,7 @@ sl_fraction     = input.float(0.25, "SL = EmaHL ×",                        step
 show_bb         = input.bool (true, "BB 上下軌（綠/紅）",                    group=GRP_VIZ)
 show_ma5        = input.bool (true, "1m 5MA（Aqua）",                       group=GRP_VIZ)
 show_trend_ma   = input.bool (true, "5m 120MA 趨勢線（藍色）",               group=GRP_VIZ)
-show_bigcost    = input.bool (true, "BigCost 線（黃色）",                    group=GRP_VIZ)
+show_vwap_line  = input.bool (true, "VWAP 線（黃色）",                      group=GRP_VIZ)
 show_sat        = input.bool (true, "SatZone 線（紫色）",                    group=GRP_VIZ)
 show_sl_ln      = input.bool (true, "SL 線（紅色）",                        group=GRP_VIZ)
 show_trail_ln   = input.bool (true, "Trailing Stop 線（粉紅）",              group=GRP_VIZ)
@@ -218,51 +218,50 @@ if slot_changed_5m
 ma_bullish = not na(ma5m_cur) and not na(ma5m_prev) and ma5m_cur > ma5m_prev
 
 // ============================================================
-// BigCost Computation
+// VWAP Computation（日盤 VWAP，對應 Python VWAP1 / VWAP2）
 // ============================================================
-vol_sma20_bc = ta.sma(volume, 20)
-var float day_big_vol  = 0.0
-var float day_big_cost = 0.0
-var float bigcost1     = na
-var float bigcost2     = na
+var float day_vwap_cv  = 0.0       // cumulative close × volume
+var float day_vwap_vol = 0.0       // cumulative volume
+var float vwap1        = na        // 昨日 VWAP
+var float vwap2        = na        // 前日 VWAP
 
 if entering_session
-    prev_bc   = day_big_vol > 0 ? day_big_cost / day_big_vol : float(na)
-    bigcost2 := bigcost1
-    bigcost1 := prev_bc
-    day_big_vol  := 0.0
-    day_big_cost := 0.0
+    prev_vwap   = day_vwap_vol > 0 ? day_vwap_cv / day_vwap_vol : float(na)
+    vwap2      := vwap1
+    vwap1      := prev_vwap
+    day_vwap_cv  := 0.0
+    day_vwap_vol := 0.0
 
-if in_session and volume > vol_sma20_bc
-    day_big_vol  += volume
-    day_big_cost += volume * hl2
+if in_session
+    day_vwap_vol += volume
+    day_vwap_cv  += volume * close
 
 // ============================================================
-// BC Zone → Direction
+// VWAP Zone → Direction
 // ============================================================
 var bool allow_long  = false
 var bool allow_short = false
-var bool bc_inside   = false
+var bool vwap_inside = false
 var float day_open   = na
 
 if entering_session
-    allow_long  := false
-    allow_short := false
-    bc_inside   := false
-    day_open    := open
-    if not na(bigcost1) and not na(bigcost2)
-        bc_lo = math.min(bigcost1, bigcost2)
-        bc_hi = math.max(bigcost1, bigcost2)
-        if open > bc_hi
+    allow_long   := false
+    allow_short  := false
+    vwap_inside  := false
+    day_open     := open
+    if not na(vwap1) and not na(vwap2)
+        vwap_lo = math.min(vwap1, vwap2)
+        vwap_hi = math.max(vwap1, vwap2)
+        if open > vwap_hi
             allow_long := true
-        else if open < bc_lo
+        else if open < vwap_lo
             allow_short := true
         else
-            bc_inside := true
+            vwap_inside := true
 
-// Resolve BC inside on first bar with MA data
-if bc_inside and not na(ma5m_cur) and not na(ma5m_prev)
-    bc_inside := false
+// Resolve VWAP inside on first bar with MA data
+if vwap_inside and not na(ma5m_cur) and not na(ma5m_prev)
+    vwap_inside := false
     if ma_bullish
         allow_long := true
     else
@@ -497,7 +496,7 @@ if show_diag and entering_entry and (allow_long or allow_short)
     _dir_str  = allow_long ? "Long" : "Short"
     _ma_str   = ma_bullish ? "B" : "S"
     _sz_str   = satzone_reached ? " SZ✗" : near_sat_latch ? " NrSZ✗" : ""
-    _bc_str   = not na(bigcost1) ? str.format("BC1={0,number,#}", bigcost1) : "BC=na"
+    _bc_str   = not na(vwap1) ? str.format("VWAP1={0,number,#}", vwap1) : "VWAP=na"
     _ema_str  = not na(ema_hl) ? str.format("EmaHL={0,number,#}", ema_hl) : ""
     _ccd_str  = not na(ccd_daily) ? str.format("CCD={0,number,#}", ccd_daily) : "CCD=na"
     diag_txt  = str.format("{0} MA:{1}{2}\n{3}\n{4}\n{5}",
@@ -541,10 +540,10 @@ bgcolor(show_bg and in_trail_zone                                    ? color.new
 plot(show_trend_ma and in_session ? ma5m_cur : na, "5m MA120 (Blue)",
      color=color.new(color.blue, 30), linewidth=2, style=plot.style_linebr)
 
-// ── BigCost
-plot(show_bigcost and in_session ? bigcost1 : na, "BigCost1（昨日）",
+// ── VWAP
+plot(show_vwap_line and in_session ? vwap1 : na, "VWAP1（昨日）",
      color=color.new(color.yellow, 0),  linewidth=2, style=plot.style_linebr)
-plot(show_bigcost and in_session ? bigcost2 : na, "BigCost2（前日）",
+plot(show_vwap_line and in_session ? vwap2 : na, "VWAP2（前日）",
      color=color.new(color.orange, 50), linewidth=1, style=plot.style_linebr)
 
 // ── BB Upper / Lower

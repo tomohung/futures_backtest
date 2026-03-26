@@ -8,9 +8,9 @@
 //   3. OR 寬度在 0.5–1.5× RollingOR 內
 //   4. 非週四、非週五（weekday 效應）
 //   5. SatZone 未觸及（價格未曾觸及 SatZoneUpper/Lower → 當日波動尚未耗盡）
-//   6. BigCost 濾網：close（突破價）> max(BigCost1, BigCost2) + 0.5 × sl_dist
-//      BigCost = 日盤成交量 > 20SMA 的 bar 的 VWAP（大戶成本）
-//      BigCost1 = 昨日，BigCost2 = 前日
+//   6. VWAP 濾網：close（突破價）> max(VWAP1, VWAP2) + 0.5 × sl_dist
+//      VWAP = 日盤全部 bar 的 sum(close×volume)/sum(volume)
+//      VWAP1 = 昨日，VWAP2 = 前日
 //
 // 出場優先順序：
 //   1. 固定停損（SL = entry - sl_fraction × EmaHL）
@@ -31,8 +31,8 @@
 //   Teal    ── OR High（開盤區間高點 08:45–08:57）
 //   Orange  ── OR Low （開盤區間低點）
 //   Blue    ── 5m 120MA（均線方向參考，每 5 分鐘更新）
-//   Yellow  ── BigCost1/2（大戶成本，昨日/前日）
-//   White   ── BigCost 門檻（BC + 0.5×sl_dist，OR High 需突破此線）
+//   Yellow  ── VWAP1/2（日盤 VWAP，昨日/前日）
+//   White   ── VWAP 門檻（VWAP + 0.5×sl_dist，OR High 需突破此線）
 //   Purple  ── SatZone Upper（滿足區上緣，持倉中顯示）
 //   Red     ── SL（固定停損線）
 //   Pink    ── Dow Theory 追蹤停損（09:45 後）
@@ -54,7 +54,7 @@ indicator(
 // ============================================================
 var string GRP_SL       = "停損"
 var string GRP_OR       = "OR / 進場"
-var string GRP_BIGCOST  = "BigCost 濾網（大戶成本）"
+var string GRP_VWAP     = "VWAP 濾網"
 var string GRP_TREND    = "趨勢濾網（5m 120MA 方向）"
 var string GRP_DOW      = "星期濾網"
 var string GRP_VIZ      = "顯示"
@@ -62,20 +62,20 @@ var string GRP_VIZ      = "顯示"
 sl_fraction    = input.float(0.25, "SL = EmaHL ×",                  step=0.05, minval=0.05, group=GRP_SL,
                               tooltip="固定停損 = 進場價 - sl_fraction × EmaHL")
 use_or_width   = input.bool (true, "啟用 OR 寬度濾網（0.5–1.5× RollingOR）", group=GRP_OR)
-use_bigcost    = input.bool (true, "啟用 BigCost 濾網",               group=GRP_BIGCOST,
-                              tooltip="or_high > max(BigCost1,BigCost2) + 0.5 × sl_dist")
-bigcost_days   = input.int  (2,    "回看天數（1 或 2）",               minval=1, maxval=2, group=GRP_BIGCOST)
+use_vwap_filter = input.bool (true, "啟用 VWAP 濾網",                 group=GRP_VWAP,
+                              tooltip="or_high > max(VWAP1,VWAP2) + 0.5 × sl_dist")
+vwap_days      = input.int  (2,    "回看天數（1 或 2）",               minval=1, maxval=2, group=GRP_VWAP)
 use_trend      = input.bool (true, "啟用 5m 120MA 方向濾網",          group=GRP_TREND)
 skip_thu       = input.bool (true, "跳過週四（weekday 效應）",          group=GRP_DOW)
 skip_fri       = input.bool (true, "跳過週五（weekday 效應）",          group=GRP_DOW)
 show_or        = input.bool (true, "OR 高低線",                       group=GRP_VIZ)
-show_bigcost   = input.bool (true, "BigCost 線（黃色）",               group=GRP_VIZ)
+show_vwap_line = input.bool (true, "VWAP 線（黃色）",                 group=GRP_VIZ)
 show_sat       = input.bool (true, "SatZone 線（紫色）",               group=GRP_VIZ)
 show_sl_ln     = input.bool (true, "SL 線（紅色）",                    group=GRP_VIZ)
 show_dow_ln    = input.bool (true, "Dow Trail 線（粉紅）",              group=GRP_VIZ)
 show_bg        = input.bool (true, "時段底色",                         group=GRP_VIZ)
 show_trend_ma  = input.bool (true, "5m 120MA 趨勢線（藍色）",           group=GRP_VIZ)
-show_bc_thresh = input.bool (true, "BigCost 門檻線（白色虛線）",         group=GRP_VIZ)
+show_vwap_thresh = input.bool (true, "VWAP 門檻線（白色虛線）",          group=GRP_VIZ)
 show_diag      = input.bool (true, "濾網診斷 Label",                    group=GRP_VIZ)
 
 // ============================================================
@@ -225,45 +225,36 @@ if in_session
     cum_vol   += volume * settle_vol_mult
 
 // ============================================================
-// BigCost Computation（大戶成本，對應 Python BigCost1 / BigCost2）
+// VWAP Computation（日盤 VWAP，對應 Python VWAP1 / VWAP2）
 //
-// 演算法（與 src/backtest/runner.py build_bigcost 相同）：
-//   - 日盤每根 1 分鐘 bar：若 volume > 20-bar SMA(volume)，納入計算
-//   - BigCost = sum(volume × hl2) / sum(volume)（高量 VWAP）
-//   - 每日日盤結束後儲存，BigCost1 = 昨日，BigCost2 = 前日
-//
-// ⚠️  在 1 分鐘圖上直接計算，不需 request.security_lower_tf。
+// 演算法（與 src/backtest/runner.py 相同）：
+//   - 日盤全部 1 分鐘 bar：sum(close × volume) / sum(volume)
+//   - 每日日盤結束後儲存，VWAP1 = 昨日，VWAP2 = 前日
 // ============================================================
-vol_sma20 = ta.sma(volume, 20)    // 20-bar 成交量 SMA（1 分鐘）
+var float day_vwap_cv  = 0.0       // cumulative close × volume
+var float day_vwap_vol = 0.0       // cumulative volume
+var float vwap1        = na        // 昨日 VWAP
+var float vwap2        = na        // 前日 VWAP
 
-var float day_big_vol  = 0.0
-var float day_big_cost = 0.0
-var float bigcost1     = na        // 昨日大戶成本
-var float bigcost2     = na        // 前日大戶成本
-
-// 每日日盤開始時（entering_or）：封存前一日結果，重置累計
 if entering_or
-    prev_bc   = day_big_vol > 0 ? day_big_cost / day_big_vol : float(na)
-    bigcost2 := bigcost1
-    bigcost1 := prev_bc
-    day_big_vol  := 0.0
-    day_big_cost := 0.0
+    prev_vwap   = day_vwap_vol > 0 ? day_vwap_cv / day_vwap_vol : float(na)
+    vwap2      := vwap1
+    vwap1      := prev_vwap
+    day_vwap_cv  := 0.0
+    day_vwap_vol := 0.0
 
-// 日盤期間累計大量 bar
-if in_session and volume > vol_sma20
-    day_big_vol  += volume
-    day_big_cost += volume * hl2
+if in_session
+    day_vwap_vol += volume
+    day_vwap_cv  += volume * close
 
-// BigCost 濾網：突破點需高於最近 N 日大戶成本 + 0.5 × sl_dist
-// （sl_dist 在此先用 EmaHL 暫估；進場時以實際 ema_hl_d 計算）
-_bc_max = (bigcost_days >= 2 and not na(bigcost1) and not na(bigcost2) ? math.max(bigcost1, bigcost2) :
-           not na(bigcost1) ? bigcost1 : float(na))
+// VWAP 濾網：突破點需高於最近 N 日 VWAP + 0.5 × sl_dist
+_vwap_max = (vwap_days >= 2 and not na(vwap1) and not na(vwap2) ? math.max(vwap1, vwap2) : not na(vwap1) ? vwap1 : float(na))
 
-bigcost_ok(or_h, ema_hl) =>
-    not use_bigcost or na(_bc_max) or (or_h > _bc_max + 0.5 * sl_fraction * ema_hl)
+vwap_filter_ok(or_h, ema_hl) =>
+    not use_vwap_filter or na(_vwap_max) or (or_h > _vwap_max + 0.5 * sl_fraction * ema_hl)
 
-// BigCost 門檻線（用於視覺化）
-_bc_threshold = not na(_bc_max) and not na(ema_hl_sess) ? _bc_max + 0.5 * sl_fraction * ema_hl_sess : float(na)
+// VWAP 門檻線（用於視覺化）
+_vwap_threshold = not na(_vwap_max) and not na(ema_hl_sess) ? _vwap_max + 0.5 * sl_fraction * ema_hl_sess : float(na)
 
 // ============================================================
 // SatZone Computation — EstRange (Volume-Weighted)
@@ -369,7 +360,7 @@ exit_signal = exit_sl or exit_sat or exit_dow or exit_force
 can_enter   = (not in_pos and not day_traded and not satzone_reached and
                or_done and in_entry_win and or_filter_pass and wd_ok and
                not na(ema_hl_sess))
-long_signal = can_enter and trend_ok and close > or_high and bigcost_ok(close, ema_hl_sess)
+long_signal = can_enter and trend_ok and close > or_high and vwap_filter_ok(close, ema_hl_sess)
 
 // ============================================================
 // Apply State Changes (exit first, then entry)
@@ -421,11 +412,11 @@ if leaving_or and not na(or_high) and not na(or_low) and not na(day_open) and da
         _or_str     = not use_or_width ? "off" : or_filter_pass ? "Y" : "N"
         _wd_str     = wd_ok ? "Y" : (is_thu_skip ? "Thu" : "Fri")
         _sz_str     = satzone_reached ? " SZ✗" : ""
-        _bc_str     = not use_bigcost ? "off" : (na(_bc_max) ? "n/a" : (not na(or_high) and not na(ema_hl_sess) and bigcost_ok(or_high, ema_hl_sess) ? "Y" : "N"))
-        _bc_val_str = na(_bc_max) ? "" : str.format("\nBC={0,number,#}", _bc_max)
+        _bc_str     = not use_vwap_filter ? "off" : (na(_vwap_max) ? "n/a" : (not na(or_high) and not na(ema_hl_sess) and vwap_filter_ok(or_high, ema_hl_sess) ? "Y" : "N"))
+        _bc_val_str = na(_vwap_max) ? "" : str.format("\nVWAP={0,number,#}", _vwap_max)
         _ma_str     = na(ma5_cur) ? "" : str.format("\nMA120={0,number,#}", ma5_cur)
         _prev_str   = na(ma5_prev) ? "" : str.format(" Prev={0,number,#}", ma5_prev)
-        diag_txt    = str.format("Trend:{0} OR:{1} WD:{2} BC:{3}{4}{5}{6}{7}",
+        diag_txt    = str.format("Trend:{0} OR:{1} WD:{2} VWAP:{3}{4}{5}{6}{7}",
                       _trend_str, _or_str, _wd_str, _bc_str,
                       _sz_str, _bc_val_str, _ma_str, _prev_str)
         label.new(bar_index, or_low,
@@ -447,15 +438,15 @@ bgcolor(show_bg and in_trail_zone                     ? color.new(color.purple, 
 plot(show_trend_ma and in_session ? ma5_cur : na, "5m MA120 (Blue)",
      color=color.new(color.blue, 30), linewidth=2, style=plot.style_linebr)
 
-// ── BigCost 線（黃色，參考用）──────────────────────────────
-plot(show_bigcost ? bigcost1 : na, "BigCost1（昨日）",
+// ── VWAP 線（黃色，參考用）──────────────────────────────
+plot(show_vwap_line ? vwap1 : na, "VWAP1（昨日）",
      color=color.new(color.yellow, 0),  linewidth=2, style=plot.style_linebr)
-plot(show_bigcost ? bigcost2 : na, "BigCost2（前日）",
+plot(show_vwap_line ? vwap2 : na, "VWAP2（前日）",
      color=color.new(color.orange, 50), linewidth=1, style=plot.style_linebr)
 
-// ── BigCost 門檻線（白色虛線，OR 高點需突破此線才進場）─────
-show_bc_line = show_bc_thresh and not na(_bc_threshold) and in_session and or_done
-plot(show_bc_line ? _bc_threshold : na, "BigCost Threshold (White)",
+// ── VWAP 門檻線（白色虛線，OR 高點需突破此線才進場）─────
+show_vwap_ln = show_vwap_thresh and not na(_vwap_threshold) and in_session and or_done
+plot(show_vwap_ln ? _vwap_threshold : na, "VWAP Threshold (White)",
      color=color.new(color.white, 20), linewidth=1, style=plot.style_cross)
 
 // ── OR 高低線（OR 窗口 + 進場窗口，進場窗口結束後隱藏）──
