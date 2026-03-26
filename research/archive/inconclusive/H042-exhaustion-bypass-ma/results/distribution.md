@@ -82,9 +82,9 @@ Exhaustion 是比 BB%B 極端更有效的 bypass 篩選條件。Exhaustion 定�
 | 極端後傾向反轉 | BB%B 極端 + 被擋只有 4 筆，無法判斷 | **樣本不足** |
 
 ## Gate Decision
-- [ ] 進入 Phase 2
+- [x] 進入 Phase 2（假設已修改為 Exhaustion bypass MA，Phase 1 數據支持）
 - [ ] Archive（原因：）
-- [x] 修改假設（修改內容：見下方）
+- [x] 修改假設（修改內容：見下方，已完成）
 
 ### 假設轉向
 

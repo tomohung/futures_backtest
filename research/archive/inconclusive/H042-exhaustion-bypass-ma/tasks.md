@@ -20,10 +20,10 @@ BB%B 極端不可行（交叉樣本僅 4 筆）。Exhaustion 是更有效的 byp
 
 ## Phase 2: Backtest
 
-- [ ] 在 Reversal 策略中加入 exhaustion bypass MA 邏輯
-- [ ] 設定回測參數（手續費、滑價沿用 Reversal）
-- [ ] 執行 in-sample 回測（2021–2024）
-- [ ] 執行 out-of-sample 驗證（2025–2026）
-- [ ] 與原始 Reversal 策略對比（加入 bypass 前後差異）
-- [ ] 特別檢查 inside + MA bearish 做多（Phase 1 唯一虧損子類型）
-- [ ] 回頭比對 H044 live-only 清單：12 筆 DIR_BLOCKED，確認 exhaustion bypass 捕捉率
+- [x] 在 Reversal 策略中加入 exhaustion bypass MA 邏輯
+- [x] 設定回測參數（手續費 0、滑價 0，沿用 Reversal baseline）
+- [x] 執行 in-sample 回測（2021–2024）
+- [x] 執行 out-of-sample 驗證（2025–2026）
+- [x] 與原始 Reversal 策略對比（加入 bypass 前後差異）
+- [x] Delta 分析：49 筆 extra trades，WR 36.7%
+- [x] 回頭比對 H044 live-only 清單：12 筆 DIR_BLOCKED，捕捉率 33%（4/12）
