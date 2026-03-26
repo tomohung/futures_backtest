@@ -19,8 +19,9 @@
 //     1. CCD 方向一致（做多 CCD>0 / 做空 CCD<0）
 //     2. Exhaustion bypass：價格已走 >= exhaust_fraction × EmaHL
 //        → 對手方力竭，CCD 方向放寬（latch 不 reset）
-//     3. VWAP bypass（09:30+）：close > 盤中 VWAP → 做多可放寬 CCD
-//     4. 2nd BB touch：BB 觸碰第二次 → CCD 放寬
+//     3. 2nd BB touch：BB 觸碰第二次 → CCD 放寬
+//
+//   H039 audit: 移除 VWAP bypass（無邊際貢獻）。
 //
 //   SatZone 截止：若價格已觸及 SatZoneUpper 或 SatZoneLower，
 //     當日波動視為耗盡，不再產生新進場信號。
@@ -435,13 +436,10 @@ if exit_signal
 // ============================================================
 // Entry Conditions
 // ============================================================
-above_vwap = vwap_active and not na(intraday_vwap) and close > intraday_vwap
-below_vwap = vwap_active and not na(intraday_vwap) and close < intraday_vwap
-
 long_setup  = (allow_long and ma_bullish and bb_long_touched and
-               (ccd_daily > 0 or bear_exhausted or above_vwap or bb_long_count >= 2))
+               (ccd_daily > 0 or bear_exhausted or bb_long_count >= 2))
 short_setup = (allow_short and not ma_bullish and bb_short_touched and
-               (ccd_daily < 0 or bull_exhausted or below_vwap or bb_short_count >= 2))
+               (ccd_daily < 0 or bull_exhausted or bb_short_count >= 2))
 
 can_enter = not in_pos and not day_traded and not satzone_reached and in_entry_win and not na(ema_hl)
 

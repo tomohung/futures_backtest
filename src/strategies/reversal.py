@@ -16,24 +16,12 @@ Two-step entry (sequential):
 
   Step 1 — Setup (latch flag when ALL of the following are true):
     Long  : close <= BB_Lower (1m BB(15,2) oversold) AND volume > vol_ratio * VolMA20
-            AND (CCD_5m > 0 OR bear_exhausted)
     Short : close >= BB_Upper (1m BB overbought)     AND volume > vol_ratio * VolMA20
-            AND (CCD_5m < 0 OR bull_exhausted)
-
-  Exhaustion bypass: if price has already moved >= exhaust_fraction (default 0.618)
-    of EstRange from the day extreme, the opposing side is considered spent and
-    CCD direction is relaxed.
-    Short: bull_exhausted = close >= day_low + EstRange * exhaust_fraction
-    Long:  bear_exhausted = close <= day_high - EstRange * exhaust_fraction
-
-  Intraday VWAP bypass (09:30+ only):
-    Long  : close > intraday VWAP (sum(close*vol)/sum(vol)) → CCD < 0 acceptable
-    Short : close < intraday VWAP → CCD > 0 acceptable
-    Rationale: 45 min into session, still above/below avg cost = side is strong
 
   Step 2 — Trigger (entry on FIRST bar after setup where):
-    Long  : close > MA5_1m  (price crosses back above 1m 5-MA)
-    Short : close < MA5_1m  (price crosses back below 1m 5-MA)
+    CCD gate: CCD_5m > 0 (long) or CCD_5m < 0 (short)
+              OR bb_count >= 2 (2nd BB touch bypasses CCD requirement)
+    Price:    close > MA5_1m (long) or close < MA5_1m (short)
 
   The setup flag resets when close crosses MA5 (opportunity passed).
   Once triggered and entered, no further entries are taken that day.
@@ -57,6 +45,15 @@ Exit priority (highest to lowest):
 Setup window: session start (08:45) – 10:05 (setup can latch before entry window)
 Entry window: 09:10 – 10:05 (trigger/entry must occur within this window)
 One entry per day maximum (after skipping signal_skip triggers).
+
+  Exhaustion bypass: if price has already moved >= exhaust_fraction (default 0.5)
+    of EstRange from the day extreme, the opposing side is considered spent and
+    CCD direction is relaxed.
+    Short: bull_exhausted = close >= day_low + EstRange * exhaust_fraction
+    Long:  bear_exhausted = close <= day_high - EstRange * exhaust_fraction
+
+H039 audit: removed intraday VWAP bypass (no marginal contribution).
+CCD gate: ccd_ok OR exhausted OR bb_count >= 2.
 
 Data loader: load_data_for_reversal() in src/backtest/runner.py
 """
@@ -95,14 +92,12 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
         self._open_price   = None
         self._bb_long_touched  = False  # latch: BB_Lower + vol_ok
         self._bb_short_touched = False  # latch: BB_Upper + vol_ok
-        self._bb_long_count    = 0     # count BB_Lower touches (2nd touch relaxes CCD)
+        self._bb_long_count    = 0     # count BB_Lower touches (2nd touch bypasses CCD)
         self._bb_short_count   = 0     # count BB_Upper touches
         self._bull_exhausted   = False  # latch: price reached day_low + EstRange * fraction
         self._bear_exhausted   = False  # latch: price reached day_high - EstRange * fraction
         self._near_sat_latch   = False  # latch: session extreme ever within 1/8 EmaHL of SatZone
         self._trigger_count = 0
-        self._sum_cv      = 0.0   # running sum(close * volume) for intraday VWAP
-        self._sum_vol     = 0.0   # running sum(volume)
         self._day_high    = None
         self._day_low     = None
         self._sl_price    = None
@@ -136,13 +131,10 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
                 else:                              # inside zone → follow MA
                     self._bc_inside = True
 
-        # ── Track daily extremes + running VWAP ─────────────────────────
+        # ── Track daily extremes ──────────────────────────────────────
         if self._day_low is not None:
             self._day_low  = min(self._day_low,  float(self.data.Low[-1]))
             self._day_high = max(self._day_high, float(self.data.High[-1]))
-        vol = float(self.data.Volume[-1])
-        self._sum_cv  += close * vol
-        self._sum_vol += vol
 
         # ── SatZone exit mixin: record bar ────────────────────────────────
         self._record_bar()
@@ -237,8 +229,6 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
             return
 
         # ── Exhaustion latch: once price reaches fraction of EstRange, flag stays on ──
-        # Short: bulls exhausted when price ever rose to day_low + EstRange * fraction
-        # Long:  bears exhausted when price ever dropped to day_high - EstRange * fraction
         exhaust_frac = self.exhaust_fraction
         if not self._bull_exhausted and self._day_low is not None:
             if close >= self._day_low + ema_hl * exhaust_frac:
@@ -259,21 +249,15 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
                 self._bb_short_count += 1
 
         # ── Step 2: Trigger on MA5 cross (must be within entry window) ───
-        # Setup = BB_touched AND (CCD_ok OR exhausted)
+        # Setup = BB_touched AND (CCD_ok OR exhausted OR 2nd BB touch)
         if _ENTRY_START <= cur_time <= _ENTRY_END:
-            # CCD bypass (09:30+): close above/below intraday VWAP → side still supported
-            vwap = self._sum_cv / self._sum_vol if self._sum_vol > 0 else None
-            vwap_active = cur_time >= dtime(9, 30)
-            above_vwap = vwap_active and vwap is not None and close > vwap
-            below_vwap = vwap_active and vwap is not None and close < vwap
-
             long_setup = (self._allow_long and bullish and
                           self._bb_long_touched and
-                          (ccd > 0 or self._bear_exhausted or above_vwap
+                          (ccd > 0 or self._bear_exhausted
                            or self._bb_long_count >= 2))
             short_setup = (self._allow_short and not bullish and
                            self._bb_short_touched and
-                           (ccd < 0 or self._bull_exhausted or below_vwap
+                           (ccd < 0 or self._bull_exhausted
                             or self._bb_short_count >= 2))
 
             # Near-SatZone latch: once session extreme ever reaches within
@@ -304,7 +288,6 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
                     self._entered  = True
 
         # ── Reset BB latch on MA5 cross (opportunity passed) ────────────
-        # Exhaustion is NOT reset — once the day's range is spent, it stays.
         if close > ma5:
             self._bb_long_touched = False
         if close < ma5:
