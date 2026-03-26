@@ -30,8 +30,11 @@ Two-step entry (sequential):
     signal_skip=0 → enter on the 1st trigger (original behaviour)
     signal_skip=1 → skip the 1st trigger, enter on the 2nd
 
-  Near-SatZone gate: skip ALL entries if session extreme is within 1/8 EmaHL
+  Near-SatZone gate: skip entries if session extreme is within 1/8 EmaHL
     of EITHER SatZone bound (daily range nearly exhausted in any direction).
+    The latch resets when price pulls back >= sat_pullback_fraction * EmaHL
+    from the extreme that triggered it (H044: pullback allows re-entry after
+    confirmed reversal from SatZone extreme).
 
 Exit priority (highest to lowest):
   1. Fixed SL : entry +/- EmaHL * sl_ema_fraction
@@ -79,6 +82,7 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
     sl_ema_fraction:  float = 0.25     # SL = EmaHL * fraction
     exhaust_fraction: float = 0.5      # moved >= fraction of EstRange → opposing side exhausted, relax CCD
     signal_skip:      int   = 0        # skip first N triggers before entering
+    sat_pullback_fraction: float = 0.5 # near-SatZone latch resets after pullback >= fraction * EmaHL
 
     def init(self):
         self._prev_date   = None
@@ -97,6 +101,8 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
         self._bull_exhausted   = False  # latch: price reached day_low + EstRange * fraction
         self._bear_exhausted   = False  # latch: price reached day_high - EstRange * fraction
         self._near_sat_latch   = False  # latch: session extreme ever within 1/8 EmaHL of SatZone
+        self._sat_extreme_high = None   # day_high when near-sat triggered (for pullback reset)
+        self._sat_extreme_low  = None   # day_low when near-sat triggered
         self._trigger_count = 0
         self._day_high    = None
         self._day_low     = None
@@ -260,8 +266,9 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
                            (ccd < 0 or self._bull_exhausted
                             or self._bb_short_count >= 2))
 
-            # Near-SatZone latch: once session extreme ever reaches within
-            # 1/8 EmaHL of EITHER SatZone bound, lock for the rest of the day.
+            # Near-SatZone latch: activates when session extreme reaches within
+            # 1/8 EmaHL of EITHER SatZone bound.  Resets when price pulls back
+            # >= sat_pullback_fraction * EmaHL from the extreme (H044).
             sat_upper = float(self.data.SatZoneUpper[-1])
             sat_lower = float(self.data.SatZoneLower[-1])
             margin = ema_hl / 8
@@ -272,6 +279,18 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
                                and self._day_low - sat_lower <= margin)
                 if near_sat_up or near_sat_dn:
                     self._near_sat_latch = True
+                    self._sat_extreme_high = self._day_high
+                    self._sat_extreme_low = self._day_low
+
+            # Pullback reset: price pulled back enough from the extreme
+            if self._near_sat_latch and ema_hl > 0:
+                pb = ema_hl * self.sat_pullback_fraction
+                if (self._sat_extreme_high is not None
+                        and self._sat_extreme_high - close >= pb):
+                    self._near_sat_latch = False
+                if (self._sat_extreme_low is not None
+                        and close - self._sat_extreme_low >= pb):
+                    self._near_sat_latch = False
 
             if long_setup and close > ma5 and not self._near_sat_latch:
                 self._trigger_count += 1

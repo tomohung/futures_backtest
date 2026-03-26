@@ -29,3 +29,4 @@
 - [ ] 執行 out-of-sample 驗證（2025–2026）
 - [ ] 與原始 Reversal 策略對比
 - [ ] 參數敏感度：BB%B 門檻、「多日」定義（2 日 vs 3 日）
+- [ ] 回頭比對 H044 live-only 清單：22 筆 TRIGGER_MISSED（91% 勝率），確認捕捉率

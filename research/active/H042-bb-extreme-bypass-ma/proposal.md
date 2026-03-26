@@ -31,3 +31,15 @@ Reversal 策略使用 30 分 K 20MA 方向作為進場濾網，避免逆勢交�
 - 唯一差異：當 30 分 K BB%B 極端時，跳過 MA 方向檢查
 - 可視為 Exhaustion 策略的變形——用 BB%B 極端值替代 EstRange 走完 50% 作為「耗竭」判定
 - 需確認 30 分 K BB%B 的計算方式：BB(20, open) 是以 open 為基準的 20 期 BB
+
+### H044 實盤比對的相關發現
+H044 分析了 Reversal 實盤 vs 回測差異（2024/11~2026/03）：
+- 48 筆「實盤有做、回測沒做」的交易中，**12 筆是 DIR_BLOCKED**（方向被 BC zone + MA 擋住）
+  - 其中 7 筆是 `inside_follow_ma` 但 MA 方向與實盤相反
+  - 其中 3 筆是 `short_only` 但 MA 是 bullish，使用者做多且獲利
+  - 這 12 筆勝率 83%、Total +1,072 pts
+- **但單純放寬 BC zone inside → both 的回測影響極小**（+24 pts / 5 年），因為其他條件（BB touch + vol + trigger）仍會過濾大部分
+- **進一步放寬 outside 方向（MA 衝突時 → both）反而讓 PF 從 1.28 降到 1.24**
+- → 這支持了 H042 的方向：不是「無條件」放寬，而是用 **BB%B 極端值作為有條件 bypass** 的篩選標準，可能比單純放寬 BC zone 更有效
+- 詳見：`research/active/H044-reversal-live-vs-backtest/results/distribution.md`
+- **驗證基準**：H042 完成後，應回頭比對 H044 的 live-only 清單（12 筆 DIR_BLOCKED + 22 筆 TRIGGER_MISSED），確認是否成功捕捉到這些實盤交易

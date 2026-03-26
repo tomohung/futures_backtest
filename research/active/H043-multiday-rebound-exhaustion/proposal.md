@@ -31,3 +31,15 @@ S002-reversal + S003-exhaustion（H036）概念延伸
 - 核心差異在進場情境：BB%B 極端 + MA 方向一致 = 反彈/回調竭盡
 - 與 S003 Exhaustion 的差異：Exhaustion 要求夜盤創新高/低 + ORB 反向突破；H043 使用 Reversal 的 BB latch + trigger 機制
 - 「昨/前日成本」可用 VWAP 或收盤價定義，Phase 1 時再決定
+
+### H044 實盤比對的相關發現
+H044 分析了 Reversal 實盤 vs 回測差異（2024/11~2026/03）：
+- 48 筆「實盤有做、回測沒做」中，最大宗是 **TRIGGER_MISSED（31 筆，87% 勝率，+3,385 pts）**
+  - 方向對、BB 有 setup，但 MA5 crossing + CCD/exhaustion 觸發條件未同時滿足
+  - 使用者能以肉眼確認轉折，不需所有條件同時滿足
+- 另有 12 筆 DIR_BLOCKED：BC zone + MA 方向與實盤相反
+  - 單純放寬 BC zone 在回測中幾乎無效（+24 pts / 5 年）
+  - 放寬 outside 方向反而讓 PF 下降
+- → H043 的「多日趨勢 + 反彈竭盡」框架可能是比「單純放寬方向」更好的解法：它不是無條件放寬，而是在特定多日情境下（BC zone 位置 + MA 方向 + BB%B 極端）賦予更高信心的進場理由
+- 詳見：`research/active/H044-reversal-live-vs-backtest/results/distribution.md`
+- **驗證基準**：H043 完成後，應回頭比對 H044 的 live-only 清單（22 筆 TRIGGER_MISSED，91% 勝率），確認是否成功捕捉到這些實盤交易

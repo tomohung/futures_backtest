@@ -1,7 +1,7 @@
 # Proposal: SatZone Fraction 策略別調校
 
 ## ID
-H044
+H047
 
 ## Derived From
 H031 的 Phase 1 分佈探索 + 補充分析

@@ -29,3 +29,4 @@
 - [ ] 執行 out-of-sample 驗證（2025–2026）
 - [ ] 與原始 Reversal 策略對比（加入 bypass 前後差異）
 - [ ] 參數敏感度：BB%B 門檻（1.0 / 0.0 vs 1.1 / -0.1 等）
+- [ ] 回頭比對 H044 live-only 清單：12 筆 DIR_BLOCKED + 22 筆 TRIGGER_MISSED，確認捕捉率

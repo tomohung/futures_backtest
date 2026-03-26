@@ -26,6 +26,7 @@ H005-reversal, H006-reversal-v2（research/archive/confirmed/）
 | BB period | 20 | Low |
 | BB std | 2.0 | Low |
 | exhaust_fraction | 0.5 | Medium |
+| sat_pullback_fraction | 0.5 | Medium |
 | VWAP bypass start | 09:30 | Low |
 | EstRange EMA | 20 | Low |
 | Settlement vol mult | 1.9 | Low |
@@ -40,7 +41,7 @@ H005-reversal, H006-reversal-v2（research/archive/confirmed/）
 - 倉位大小：½ 口（與 EstHL 各半，參考 H004 配置）
 
 ## Filters
-- **Near-SatZone latch**：session extreme 曾觸及任一 SatZone 的 1/8 EmaHL 範圍內 → 當日不再進場（振幅已耗盡）
+- **Near-SatZone latch（含 pullback reset）**：session extreme 曾觸及任一 SatZone 的 1/8 EmaHL 範圍內 → 暫停進場。但若價格從極端拉回 ≥ EmaHL × 0.5，則解鎖允許進場（H044 發現：碰到 SatZone 後拉回正是 Reversal 核心場景）
 - **SatZone reached**：價格曾觸及 SatZone → 當日不再進場
 
 ## Constraints
