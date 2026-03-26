@@ -290,14 +290,14 @@ def adjust_settlement_volume(df: "pd.DataFrame") -> "pd.DataFrame":
 
 
 def load_data_for_orb_est_hl(start=None, end=None):
-    """Load day-session data with Estimate H-L zones, 30m 20MA, and BigCost columns.
+    """Load day-session data with Estimate H-L zones, 30m 20MA, and VWAP columns.
 
     Columns added:
         EmaHL, SatZoneUpper, SatZoneLower, EstHL, EstHighLevel, EstLowLevel, EmaVol
             — from compute_estimate_hl_zones()
         MA30_20  — 20-period MA of 30m closes (day-session only), 1-slot delayed
         Close30  — last 30m close (day-session only), 1-slot delayed
-        BigCost  — yesterday's institutional cost (heavy-volume VWAP)
+        VWAP1..N — day-session VWAP (shifted by N days)
     """
     import pandas as pd
 
@@ -316,23 +316,13 @@ def load_data_for_orb_est_hl(start=None, end=None):
             ORDER BY timestamp
         """).df().set_index("timestamp")
 
-        df_bigcost = conn.execute("""
-            WITH vol_ma AS (
-                SELECT timestamp::DATE AS date, timestamp, close, volume,
-                       AVG(volume) OVER (
-                           PARTITION BY timestamp::DATE
-                           ORDER BY timestamp
-                           ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
-                       ) AS vol_20ma
-                FROM ohlcv_1m
-                WHERE symbol = 'TX'
-                  AND timestamp::TIME BETWEEN TIME '08:45:00' AND TIME '13:45:00'
-            ),
-            filtered AS (
-                SELECT date, close, volume FROM vol_ma WHERE volume >= vol_20ma
-            )
-            SELECT date, ROUND(SUM(close * volume) / SUM(volume))::INT AS big_cost
-            FROM filtered GROUP BY date ORDER BY date
+        df_vwap = conn.execute("""
+            SELECT timestamp::DATE AS date,
+                   ROUND(SUM(close * volume) / SUM(volume))::INT AS vwap
+            FROM ohlcv_1m
+            WHERE symbol = 'TX'
+              AND timestamp::TIME BETWEEN TIME '08:45:00' AND TIME '13:45:00'
+            GROUP BY date ORDER BY date
         """).df()
 
     df_day.columns = ["Open", "High", "Low", "Close", "Volume"]
@@ -433,14 +423,14 @@ def load_data_for_orb_est_hl(start=None, end=None):
     day_dates = pd.DatetimeIndex(df_day.index).normalize()
     df_day["DailyADX"] = adx_series.reindex(day_dates).values
 
-    # BigCost: yesterday (shift 1) and day-before-yesterday (shift 2)
-    df_bigcost["date"] = pd.to_datetime(df_bigcost["date"])
-    df_bigcost = df_bigcost.set_index("date")
+    # VWAP: yesterday (shift 1) and prior days (shift 2..5)
+    df_vwap["date"] = pd.to_datetime(df_vwap["date"])
+    df_vwap = df_vwap.set_index("date")
     for i in range(1, 6):
-        df_bigcost[f"BigCost{i}"] = df_bigcost["big_cost"].shift(i)
+        df_vwap[f"VWAP{i}"] = df_vwap["vwap"].shift(i)
     day_dates = pd.DatetimeIndex(df_day.index).normalize()
     for i in range(1, 6):
-        df_day[f"BigCost{i}"] = df_bigcost[f"BigCost{i}"].reindex(day_dates).values
+        df_day[f"VWAP{i}"] = df_vwap[f"VWAP{i}"].reindex(day_dates).values
 
     # Back-fill EmaHL and related columns within each day so that pre-9:00 bars
     # (which fall in the 08:45 slot and receive NaN from compute_estimate_hl_zones)
@@ -468,7 +458,7 @@ def load_data_for_reversal(start=None, end=None):
         EmaHL, EmaVol, SatZone*, EstHL*, EstHighLevel, EstLowLevel
             — from compute_estimate_hl_zones()
         MA30_20, Close30  — 30m 20MA and last close (continuous day+night), shift(1)
-        BigCost1, BigCost2 — yesterday / day-before institutional VWAP
+        VWAP1, VWAP2 — yesterday / day-before day-session VWAP
         BB_Upper, BB_Lower, BB_Middle — 1m Bollinger Bands (period=15, 2σ), shift(1)
         VolMA20   — 1m volume 20-period MA, shift(1)
         MA5_1m    — 1m close 5-period SMA, shift(1)
@@ -493,23 +483,13 @@ def load_data_for_reversal(start=None, end=None):
             ORDER BY timestamp
         """).df().set_index("timestamp")
 
-        df_bigcost = conn.execute("""
-            WITH vol_ma AS (
-                SELECT timestamp::DATE AS date, timestamp, close, volume,
-                       AVG(volume) OVER (
-                           PARTITION BY timestamp::DATE
-                           ORDER BY timestamp
-                           ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
-                       ) AS vol_20ma
-                FROM ohlcv_1m
-                WHERE symbol = 'TX'
-                  AND timestamp::TIME BETWEEN TIME '08:45:00' AND TIME '13:45:00'
-            ),
-            filtered AS (
-                SELECT date, close, volume FROM vol_ma WHERE volume >= vol_20ma
-            )
-            SELECT date, ROUND(SUM(close * volume) / SUM(volume))::INT AS big_cost
-            FROM filtered GROUP BY date ORDER BY date
+        df_vwap = conn.execute("""
+            SELECT timestamp::DATE AS date,
+                   ROUND(SUM(close * volume) / SUM(volume))::INT AS vwap
+            FROM ohlcv_1m
+            WHERE symbol = 'TX'
+              AND timestamp::TIME BETWEEN TIME '08:45:00' AND TIME '13:45:00'
+            GROUP BY date ORDER BY date
         """).df()
 
     df_day.columns = ["Open", "High", "Low", "Close", "Volume"]
@@ -543,14 +523,14 @@ def load_data_for_reversal(start=None, end=None):
     df_day["MA5m_120"]      = ma5m_120.shift(1).reindex(df_day.index, method="ffill")
     df_day["MA5m_120_Prev"] = ma5m_120.shift(2).reindex(df_day.index, method="ffill")
 
-    # BigCost1 (yesterday) and BigCost2 (day-before)
-    df_bigcost["date"] = pd.to_datetime(df_bigcost["date"])
-    df_bigcost = df_bigcost.set_index("date")
+    # VWAP1 (yesterday) and VWAP2 (day-before)
+    df_vwap["date"] = pd.to_datetime(df_vwap["date"])
+    df_vwap = df_vwap.set_index("date")
     for i in range(1, 3):
-        df_bigcost[f"BigCost{i}"] = df_bigcost["big_cost"].shift(i)
+        df_vwap[f"VWAP{i}"] = df_vwap["vwap"].shift(i)
     day_dates = pd.DatetimeIndex(df_day.index).normalize()
     for i in range(1, 3):
-        df_day[f"BigCost{i}"] = df_bigcost[f"BigCost{i}"].reindex(day_dates).values
+        df_day[f"VWAP{i}"] = df_vwap[f"VWAP{i}"].reindex(day_dates).values
 
     # Bollinger Bands on 1m close (period=15, 2σ, ddof=0) — matches TradingView
     close_roll = df_day["Close"].rolling(15)

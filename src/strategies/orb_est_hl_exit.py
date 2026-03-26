@@ -6,7 +6,7 @@ Entry: ORB breakout (8:45–8:57 range, 8:58–9:15 window), long-only by defaul
 Entry filters (all must pass):
   1. Close > or_high (upward breakout)
   2. Close30 > MA30_20 (30m 20MA uptrend, day-session only)
-  3. or_high > max(BigCost1..N) + 0.5 × sl_dist  (breakout above institutional cost)
+  3. or_high > max(VWAP1..N) + 0.5 × sl_dist  (breakout above institutional cost)
   4. 0.5 × RollingOR ≤ ORWidth ≤ 1.5 × RollingOR (normal opening range width)
 
 Exit priority (highest to lowest):
@@ -17,7 +17,7 @@ Exit priority (highest to lowest):
 
 Parameters:
   sl_ema_fraction : float = 0.25   SL distance as fraction of EmaHL
-  bigcost_days    : int   = 2      Days of BigCost history to take max of (1–5)
+  vwap_days    : int   = 2      Days of VWAP history to take max of (1–5)
   long_only       : bool  = True   Disable short trades
   adx_min         : float = 0.0   Min daily ADX14 to trade (0 = disabled)
   or_end_min      : int   = 537    OR end time as minutes since midnight (default 8:57)
@@ -29,7 +29,7 @@ Note: load_data_for_orb_est_hl() back-fills EmaHL to pre-9:00 bars within each d
   EmaHL at 9:00 is a pure prior-day EMA (no lookahead), so back-filling to 8:58/8:59
   is valid and enables early breakout entries that were previously blocked by NaN.
 
-Backtest results (2021–2026-03, long-only, bigcost_days=2, OR-width filter,
+Backtest results (2021–2026-03, long-only, vwap_days=2, OR-width filter,
                   entry_end=9:15, EmaHL bfill, skip_thursday=True, skip_friday=True):
   2021 :  43 trades  WR 58.1%  PF 1.66  EV +10.7 pts/trade  +460 pts
   2022 :  29 trades  WR 65.5%  PF 3.20  EV +24.9 pts/trade  +723 pts
@@ -60,7 +60,7 @@ class ORBWithEstHLExitStrategy(EstimateHLExitMixin, Strategy):
     sl_ema_fraction: float = 0.25
     adx_min: float = 0.0    # 0 = disabled; e.g. 20 to require ADX > 20
     long_only: bool = True
-    bigcost_days: int = 2   # lookback window for BigCost filter (1–5)
+    vwap_days: int = 2   # lookback window for VWAP filter (1–5)
     or_end_min: int = 537   # OR end time in minutes since midnight (default 8:57)
     entry_end_min: int = 555  # entry window end in minutes since midnight (default 9:15)
     skip_thursday: bool = True   # 週四不進場（weekday 效應：WR 42%, -164 pts）
@@ -122,8 +122,8 @@ class ORBWithEstHLExitStrategy(EstimateHLExitMixin, Strategy):
             else:
                 ma30    = float(self.data.MA30_20[-1])
                 close30 = float(self.data.Close30[-1])
-                bc_vals = [float(getattr(self.data, f"BigCost{i}")[-1])
-                           for i in range(1, self.bigcost_days + 1)]
+                bc_vals = [float(getattr(self.data, f"VWAP{i}")[-1])
+                           for i in range(1, self.vwap_days + 1)]
                 or_width   = float(self.data.ORWidth[-1])
                 rolling_or = float(self.data.RollingOR[-1])
                 sl_dist = self.sl_ema_fraction * ema_hl

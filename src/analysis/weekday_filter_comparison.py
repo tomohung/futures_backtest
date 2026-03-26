@@ -154,7 +154,7 @@ def main():
     df_est = load_data_for_orb_est_hl(start=START, end=END)
     bt2 = Backtest(df_est, ORBWithEstHLExitStrategy, cash=200_000, commission=0.0, trade_on_close=True)
 
-    common_est = dict(long_only=True, sl_ema_fraction=0.25, bigcost_days=2)
+    common_est = dict(long_only=True, sl_ema_fraction=0.25, vwap_days=2)
 
     # A) 現行：skip_thu + skip_fri
     stats_ea = bt2.run(**common_est, skip_thursday=True, skip_friday=True)

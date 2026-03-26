@@ -53,7 +53,7 @@ def run_est_hl_both_directions():
         skip_thursday=False,
         skip_friday=False,
         sl_ema_fraction=0.25,
-        bigcost_days=2,
+        vwap_days=2,
     )
     return stats["_trades"].copy()
 

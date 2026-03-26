@@ -33,7 +33,7 @@ YEARS = [
 
 ESTHL_PARAMS = dict(
     sl_ema_fraction=0.25,
-    bigcost_days=2,
+    vwap_days=2,
     long_only=True,
     skip_thursday=True,
     skip_friday=True,
@@ -58,23 +58,13 @@ def load_data_for_esthl(or_vol_adjust=False, or_vol_alpha=0.3):
             ORDER BY timestamp
         """).df().set_index("timestamp")
 
-        df_bigcost = conn.execute("""
-            WITH vol_ma AS (
-                SELECT timestamp::DATE AS date, timestamp, close, volume,
-                       AVG(volume) OVER (
-                           PARTITION BY timestamp::DATE
-                           ORDER BY timestamp
-                           ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
-                       ) AS vol_20ma
-                FROM ohlcv_1m
-                WHERE symbol = 'TX'
-                  AND timestamp::TIME BETWEEN TIME '08:45:00' AND TIME '13:45:00'
-            ),
-            filtered AS (
-                SELECT date, close, volume FROM vol_ma WHERE volume >= vol_20ma
-            )
-            SELECT date, ROUND(SUM(close * volume) / SUM(volume))::INT AS big_cost
-            FROM filtered GROUP BY date ORDER BY date
+        df_vwap = conn.execute("""
+            SELECT timestamp::DATE AS date,
+                   ROUND(SUM(close * volume) / SUM(volume))::INT AS vwap
+            FROM ohlcv_1m
+            WHERE symbol = 'TX'
+              AND timestamp::TIME BETWEEN TIME '08:45:00' AND TIME '13:45:00'
+            GROUP BY date ORDER BY date
         """).df()
 
     df_day.columns = ["Open", "High", "Low", "Close", "Volume"]
@@ -103,12 +93,12 @@ def load_data_for_esthl(or_vol_adjust=False, or_vol_alpha=0.3):
     df_day["MA30_20"] = ma30_20_shifted.reindex(df_day.index, method="ffill")
     df_day["Close30"] = close30_shifted.reindex(df_day.index, method="ffill")
 
-    # BigCost
-    df_bigcost["date"] = pd.to_datetime(df_bigcost["date"])
-    bc = df_bigcost.set_index("date")["big_cost"]
+    # VWAP
+    df_vwap["date"] = pd.to_datetime(df_vwap["date"])
+    vw = df_vwap.set_index("date")["vwap"]
     day_dates = pd.DatetimeIndex(df_day.index).normalize()
     for i in range(1, 6):
-        df_day[f"BigCost{i}"] = bc.shift(i).reindex(day_dates).values
+        df_day[f"VWAP{i}"] = vw.shift(i).reindex(day_dates).values
 
     # OR width and RollingOR
     day_date_col = pd.DatetimeIndex(df_day.index).date

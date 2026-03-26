@@ -33,8 +33,8 @@ def main():
                         help="SL = fraction × EmaHL (default 0.25)")
     parser.add_argument("--adx-min", type=float, default=0.0,
                         help="Minimum daily ADX to trade (0 = disabled)")
-    parser.add_argument("--bigcost-days", type=int, default=2,
-                        help="BigCost lookback days 1–5 (default 2)")
+    parser.add_argument("--vwap-days", type=int, default=2,
+                        help="VWAP lookback days 1–5 (default 2)")
     parser.add_argument("--short", action="store_true",
                         help="Also take short trades (default: long-only)")
     parser.add_argument("--no-skip-thursday", action="store_true",
@@ -60,7 +60,7 @@ def main():
     stats = bt.run(sl_ema_fraction=args.sl_fraction,
                    adx_min=args.adx_min,
                    long_only=not args.short,
-                   bigcost_days=args.bigcost_days,
+                   vwap_days=args.vwap_days,
                    skip_thursday=not args.no_skip_thursday,
                    skip_friday=not args.no_skip_friday)
     print_summary(stats)

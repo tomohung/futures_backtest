@@ -115,7 +115,7 @@ or_pct_min=0.3, or_pct_max=1.0, thu_or_pct_min=0.7
 |-----|------|
 | TrendMA（連續日夜 10d MA） | EmaHL, SatZone*, EstRange* |
 | RollingOR | MA30_20, Close30 |
-| DailyADX | BigCost1, BigCost2 |
+| DailyADX | VWAP1, VWAP2 |
 | | ORWidth, GapSize, NightReturn |
 
 ## 成功標準

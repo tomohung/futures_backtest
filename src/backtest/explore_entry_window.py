@@ -41,7 +41,7 @@ OR_END_MINS = [534, 535, 536, 537]
 ENTRY_END_MINS = [545, 550, 555]
 
 # Fixed params (best known from prior optimization)
-FIXED = dict(sl_ema_fraction=0.25, bigcost_days=2, long_only=True, adx_min=0.0)
+FIXED = dict(sl_ema_fraction=0.25, vwap_days=2, long_only=True, adx_min=0.0)
 
 
 def fmt_min(m):

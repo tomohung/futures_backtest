@@ -123,7 +123,7 @@ def run_esthl() -> pd.DataFrame:
     trades = bt.run(
         sl_ema_fraction=0.25,
         long_only=True,
-        bigcost_days=2,
+        vwap_days=2,
         skip_thursday=True,
         skip_friday=True,
     )["_trades"].copy()

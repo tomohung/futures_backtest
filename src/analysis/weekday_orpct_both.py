@@ -160,7 +160,7 @@ def main():
     bt2 = Backtest(df2, ORBWithEstHLExitStrategy, cash=200_000, commission=0.0, trade_on_close=True)
     stats2 = bt2.run(
         long_only=True, skip_thursday=False, skip_friday=False,
-        sl_ema_fraction=0.25, bigcost_days=2,
+        sl_ema_fraction=0.25, vwap_days=2,
     )
     est_trades = enrich_with_or(stats2["_trades"], or_df)
     print_strategy_analysis(est_trades, "EstHL")

@@ -32,7 +32,7 @@ def main():
     trades = bt.run(
         sl_ema_fraction=0.25,
         long_only=True,
-        bigcost_days=2,
+        vwap_days=2,
         skip_thursday=False,
         skip_friday=False,
     )["_trades"].copy()

@@ -46,7 +46,7 @@ YEARS = [
 
 EST_HL_PARAMS = dict(
     sl_ema_fraction=0.25,
-    bigcost_days=2,
+    vwap_days=2,
     long_only=True,
     skip_thursday=True,
     skip_friday=True,

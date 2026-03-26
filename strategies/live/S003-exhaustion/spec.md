@@ -97,6 +97,6 @@ H036-trend-exhaustion-reversal（research/archive/confirmed/）
 |---|-----------|---------------|-----------------|
 | 方向 | 順勢 | 反轉 | 反轉 |
 | 進場 | ORB 突破順勢 | BB + 力竭 | BB(open) + 夜盤極端 + ORB 反向 |
-| 條件 | MA↑, BigCost | BB touch + EstRange 50% | MA 極端 + 夜盤新高低 |
+| 條件 | MA↑, VWAP | BB touch + EstRange 50% | MA 極端 + 夜盤新高低 |
 | 交易日 | Mon~Wed | 每日 | Mon, Tue, Fri |
 | 年均交易 | ~60 | ~80 | ~17 |

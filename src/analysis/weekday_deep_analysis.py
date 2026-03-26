@@ -89,7 +89,7 @@ def run_est_hl():
         skip_thursday=False,
         skip_friday=False,
         sl_ema_fraction=0.25,
-        bigcost_days=2,
+        vwap_days=2,
     )
     return enrich_trades(stats["_trades"])
 

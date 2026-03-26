@@ -112,7 +112,7 @@ def main():
     bt2 = Backtest(df2, ORBWithEstHLExitStrategy, cash=200_000, commission=0.0, trade_on_close=True)
     stats2 = bt2.run(
         long_only=False, skip_thursday=False, skip_friday=False,
-        sl_ema_fraction=0.25, bigcost_days=2,
+        sl_ema_fraction=0.25, vwap_days=2,
     )
     analyze("EstHL", stats2["_trades"])
 

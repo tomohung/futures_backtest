@@ -1,7 +1,7 @@
 """Generate 1-minute candlestick charts with Reversal strategy indicators.
 
 Indicators plotted:
-  Price panel: MA5(1m), SatZone Upper/Lower, BigCost1/2, VWAP
+  Price panel: MA5(1m), SatZone Upper/Lower, VWAP1/2, VWAP
   Volume panel: VolMA20
   Sub-panels: BB%(15,2), CCD_5m
 """
@@ -80,13 +80,13 @@ def plot_day(df_all, trade_date: str, output_dir: Path):
         add_plots.append(mpf.make_addplot(
             day["SatZoneLower"], color="red", width=1.2, linestyle=":", alpha=0.9))
 
-    # BigCost1 / BigCost2
-    if "BigCost1" in day.columns and day["BigCost1"].notna().any():
+    # VWAP1 / VWAP2
+    if "VWAP1" in day.columns and day["VWAP1"].notna().any():
         add_plots.append(mpf.make_addplot(
-            day["BigCost1"], color="#ff6600", width=1.0, linestyle="-", alpha=0.7))
-    if "BigCost2" in day.columns and day["BigCost2"].notna().any():
+            day["VWAP1"], color="#ff6600", width=1.0, linestyle="-", alpha=0.7))
+    if "VWAP2" in day.columns and day["VWAP2"].notna().any():
         add_plots.append(mpf.make_addplot(
-            day["BigCost2"], color="#ff6600", width=1.0, linestyle="--", alpha=0.5))
+            day["VWAP2"], color="#ff6600", width=1.0, linestyle="--", alpha=0.5))
 
     # --- Volume panel: VolMA20 ---
     if "VolMA20" in day.columns:

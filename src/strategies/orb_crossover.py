@@ -2,7 +2,7 @@
 Crossover experiments combining ORBLong and EstHL entry/exit mechanisms.
 
 Direction A: EstHL entry × ORBLong exit
-  Entry : strict 08:58–09:05 window, 30m 20MA filter, BigCost filter, OR width filter
+  Entry : strict 08:58–09:05 window, 30m 20MA filter, VWAP filter, OR width filter
   Exit  : fixed % SL + OR-width TP + trailing stop after 09:45 + force 13:30
 
 Direction B: ORBLong entry × EstHL exit
@@ -178,7 +178,7 @@ class EstHLEntryORBLongExitStrategy(Strategy):
     Entry filters (all must pass):
       1. Close > or_high (upward breakout of 08:45–08:57 range)
       2. Close30 > MA30_20 (30m 20MA uptrend)
-      3. or_high > max(BigCost1..N) + 0.5 × sl_dist (breakout above institutional cost)
+      3. or_high > max(VWAP1..N) + 0.5 × sl_dist (breakout above institutional cost)
       4. 0.5 × RollingOR <= ORWidth <= 1.5 × RollingOR (normal OR width)
 
     Exit priority:
@@ -192,12 +192,12 @@ class EstHLEntryORBLongExitStrategy(Strategy):
       sl_pct             : float = 0.004   fixed SL percentage (0.4%)
       tp_or_multiplier   : float = 3.0     TP = entry + N * max(ORWidth, or_min_width)
       or_min_width       : float = 20.0    minimum effective OR width for TP calc
-      bigcost_days       : int   = 2       BigCost lookback days (1-5)
+      vwap_days       : int   = 2       VWAP lookback days (1-5)
       entry_end_minute   : int   = 5       entry window end = 09:HH (minutes past 09:00)
                                            e.g. 5 → 09:05, 15 → 09:15
       long_only          : bool  = True    disable short trades
 
-    Backtest results (2021-2026 YTD, long-only, bigcost_days=2, tp_or_multiplier=3.0,
+    Backtest results (2021-2026 YTD, long-only, vwap_days=2, tp_or_multiplier=3.0,
                       entry_end_minute=15):
       2021 : 53 trades  PF 1.59  +867 pts   (vs ORBLong -498, EstHL +535)
       2022 : 37 trades  PF 1.52  +484 pts   (vs ORBLong +228, EstHL +831)
@@ -211,7 +211,7 @@ class EstHLEntryORBLongExitStrategy(Strategy):
     sl_pct: float = 0.004           # fixed SL percentage (0.4%)
     tp_or_multiplier: float = 3.0   # TP = entry + mult × max(ORWidth, or_min_width)
     or_min_width: float = 20.0      # minimum effective OR width for TP calc
-    bigcost_days: int = 2           # BigCost lookback days (1–5)
+    vwap_days: int = 2           # VWAP lookback days (1–5)
     entry_end_minute: int = 15      # entry window end = 09:XX (minutes past 09:00)
     long_only: bool = True
 
@@ -265,8 +265,8 @@ class EstHLEntryORBLongExitStrategy(Strategy):
             sl_dist = close * self.sl_pct
             eff_or  = max(or_width, self.or_min_width)
 
-            bc_vals   = [float(getattr(self.data, f"BigCost{i}")[-1])
-                         for i in range(1, self.bigcost_days + 1)]
+            bc_vals   = [float(getattr(self.data, f"VWAP{i}")[-1])
+                         for i in range(1, self.vwap_days + 1)]
             valid_bc  = [v for v in bc_vals if not np.isnan(v)]
 
             if close > self._or_high:

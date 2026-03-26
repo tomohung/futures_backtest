@@ -45,7 +45,7 @@ def load_all_trades() -> dict[str, pd.DataFrame]:
 
     df_esthl = load_data_for_orb_est_hl()
     esthl = _run_strategy("EstHL", df_esthl, ORBWithEstHLExitStrategy, dict(
-        sl_ema_fraction=0.25, long_only=True, bigcost_days=2,
+        sl_ema_fraction=0.25, long_only=True, vwap_days=2,
         skip_thursday=True, skip_friday=True,
     ))
     print(f"  EstHL: {len(esthl)} trades")

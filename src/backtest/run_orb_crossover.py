@@ -42,8 +42,8 @@ def main():
                         help="Direction A: fixed SL percentage (default 0.004)")
     parser.add_argument("--tp-multiplier", type=float, default=3.0,
                         help="Direction A: TP = entry + mult × OR width (default 3.0)")
-    parser.add_argument("--bigcost-days", type=int, default=2,
-                        help="Direction A: BigCost lookback days (default 2)")
+    parser.add_argument("--vwap-days", type=int, default=2,
+                        help="Direction A: VWAP lookback days (default 2)")
     parser.add_argument("--entry-end", type=int, default=15,
                         help="Direction A: entry window end minute past 09:00 (default 15 → 09:15)")
     parser.add_argument("--short", action="store_true",
@@ -60,7 +60,7 @@ def main():
         bt = Backtest(df, EstHLEntryORBLongExitStrategy,
                       cash=200_000, commission=0.0, trade_on_close=True)
         stats = bt.run(sl_pct=args.sl_pct, tp_or_multiplier=args.tp_multiplier,
-                       bigcost_days=args.bigcost_days, entry_end_minute=args.entry_end,
+                       vwap_days=args.vwap_days, entry_end_minute=args.entry_end,
                        long_only=not args.short)
         label = "a"
     else:

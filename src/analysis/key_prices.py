@@ -94,39 +94,6 @@ def get_key_prices():
 
         vwap = {row[0]: row[1] for row in vwap_rows}
 
-        # 大戶成本：1分K volume >= 20MA(volume) 的 bar 才計入，再算 VWAP
-        big_rows = conn.execute("""
-            WITH vol_ma AS (
-                SELECT
-                    timestamp::DATE AS date,
-                    timestamp,
-                    close,
-                    volume,
-                    AVG(volume) OVER (
-                        PARTITION BY timestamp::DATE
-                        ORDER BY timestamp
-                        ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
-                    ) AS ma20_vol
-                FROM ohlcv_1m
-                WHERE symbol = ?
-                  AND timestamp::DATE IN (?, ?)
-                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
-            ),
-            filtered AS (
-                SELECT date, close, volume
-                FROM vol_ma
-                WHERE volume >= ma20_vol
-            )
-            SELECT
-                date,
-                ROUND(SUM(close * volume) / SUM(volume))::INT AS big_cost
-            FROM filtered
-            GROUP BY date
-            ORDER BY date DESC
-        """, [SYMBOL, last_day, prev_day]).fetchall()
-
-        big_cost = {row[0]: row[1] for row in big_rows}
-
         # 前天 10點前 15分K 收盤（扣底值，08:45~09:59）
         bars_15m_pre10 = conn.execute("""
             WITH bars_15m AS (
@@ -196,7 +163,6 @@ def get_key_prices():
         "day": {"high": day[0], "low": day[1], "close": day[2]},
         "night": {"high": night[0], "low": night[1], "close": night[2]} if has_night else None,
         "vwap": vwap,
-        "big_cost": big_cost,
         "ma30_20": ma_row[0] if ma_row else None,
         "ma30_20_up": ma_row[1] if ma_row else None,
         "bars_15m_pre10": bars_15m_pre10,
@@ -315,15 +281,12 @@ def print_report(data):
     # ── 成本：昨 vs 前天並排 ─────────────────────────────
     vwap_last = d["vwap"].get(ld)
     vwap_prev = d["vwap"].get(pd_)
-    big_last  = d["big_cost"].get(ld)
-    big_prev  = d["big_cost"].get(pd_)
 
     print()
     print("### 成本")
-    print(f"|               | 昨 {ld.strftime('%m/%d')} | 前天 {pd_.strftime('%m/%d')} |")
-    print(f"|---------------|--------:|----------:|")
-    print(f"| 平均成本 VWAP | {n(vwap_last)} | {n(vwap_prev)} |")
-    print(f"| 大戶成本      | {n(big_last)}  | {n(big_prev)}  |")
+    print(f"|          | 昨 {ld.strftime('%m/%d')} | 前天 {pd_.strftime('%m/%d')} |")
+    print(f"|----------|--------:|----------:|")
+    print(f"| VWAP     | {n(vwap_last)} | {n(vwap_prev)} |")
 
     # ── 趨勢 ─────────────────────────────────────────────
     ma_dir = ud(ref, ma)
@@ -671,7 +634,7 @@ def plot_sr_chart(data, n_days=20):
 
 
 def plot_30m_chart(data, n_days=20):
-    """畫日盤 30 分K + 20MA + 大戶成本（昨、前天），存 PNG 並複製到剪貼簿。"""
+    """畫日盤 30 分K + 20MA + VWAP（昨、前天），存 PNG 並複製到剪貼簿。"""
     import subprocess
 
     bars = get_30m_bars(n_days)
@@ -710,12 +673,12 @@ def plot_30m_chart(data, n_days=20):
     ma20_d   = ma20[display_idx]
     ts_disp  = [ts_list[i] for i in display_idx]
 
-    # 大戶成本
-    big_cost  = data.get("big_cost", {})
+    # VWAP
+    vwap      = data.get("vwap", {})
     last_day  = data["last_day"]
     prev_day  = data["prev_day"]
-    big_last  = big_cost.get(last_day)
-    big_prev  = big_cost.get(prev_day)
+    vwap_last = vwap.get(last_day)
+    vwap_prev = vwap.get(prev_day)
 
     _setup_font()
     fig, ax = plt.subplots(figsize=(16, 7))
@@ -746,14 +709,14 @@ def plot_30m_chart(data, n_days=20):
         ax.plot(x_disp[valid], ma20_d[valid], color="#f9ca24", linewidth=1.5,
                 label="20MA", zorder=4)
 
-    # 大戶成本水平線
-    if big_last is not None:
-        ax.axhline(big_last, color="#ff9f43", linewidth=1.5, linestyle="-.", alpha=0.9, zorder=5)
-        ax.text(nd - 0.5, big_last, f" 昨大戶 {big_last:,} ({last_day.strftime('%m/%d')})",
+    # VWAP 水平線
+    if vwap_last is not None:
+        ax.axhline(vwap_last, color="#ff9f43", linewidth=1.5, linestyle="-.", alpha=0.9, zorder=5)
+        ax.text(nd - 0.5, vwap_last, f" 昨VWAP {vwap_last:,} ({last_day.strftime('%m/%d')})",
                 color="#ff9f43", fontsize=8, va="bottom", zorder=6)
-    if big_prev is not None:
-        ax.axhline(big_prev, color="#a29bfe", linewidth=1.5, linestyle="-.", alpha=0.9, zorder=5)
-        ax.text(nd - 0.5, big_prev, f" 前天大戶 {big_prev:,} ({prev_day.strftime('%m/%d')})",
+    if vwap_prev is not None:
+        ax.axhline(vwap_prev, color="#a29bfe", linewidth=1.5, linestyle="-.", alpha=0.9, zorder=5)
+        ax.text(nd - 0.5, vwap_prev, f" 前天VWAP {vwap_prev:,} ({prev_day.strftime('%m/%d')})",
                 color="#a29bfe", fontsize=8, va="bottom", zorder=6)
 
     # 夜盤收盤線

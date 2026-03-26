@@ -76,8 +76,8 @@ class ReversalFollowStrategy(Strategy):
             self._day_low  = float(self.data.Low[-1])
             self._day_high = float(self.data.High[-1])
 
-            bc1 = float(self.data.BigCost1[-1])
-            bc2 = float(self.data.BigCost2[-1])
+            bc1 = float(self.data.VWAP1[-1])
+            bc2 = float(self.data.VWAP2[-1])
             if not (np.isnan(bc1) or np.isnan(bc2)):
                 bc_lo, bc_hi = min(bc1, bc2), max(bc1, bc2)
                 if self._open_price > bc_hi:

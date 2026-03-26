@@ -2,7 +2,7 @@
 Reversal Strategy（轉折回歸策略）
 
 Entry premise (BC zone gate):
-  BigCost1 = yesterday's institutional VWAP, BigCost2 = day-before.
+  VWAP1 = yesterday's institutional VWAP, VWAP2 = day-before.
   - Open above BC zone       → long only  (price already strong)
   - Open below BC zone       → short only (price already weak)
   - Open inside BC zone      → direction follows MA (bullish → long, bearish → short)
@@ -125,8 +125,8 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
             self._day_low  = float(self.data.Low[-1])
             self._day_high = float(self.data.High[-1])
 
-            bc1 = float(self.data.BigCost1[-1])
-            bc2 = float(self.data.BigCost2[-1])
+            bc1 = float(self.data.VWAP1[-1])
+            bc2 = float(self.data.VWAP2[-1])
             if not (np.isnan(bc1) or np.isnan(bc2)):
                 bc_lo, bc_hi = min(bc1, bc2), max(bc1, bc2)
                 if self._open_price > bc_hi:       # above zone → long only

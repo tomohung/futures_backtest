@@ -7,7 +7,7 @@ S001
 H001-estimate-high-low-exit-strategy, H002-orb-with-est-high-low-exit（research/archive/confirmed/）
 
 ## Description
-早盤 ORB 進場搭配 EstRange SatZone 兩段式出場。定義 08:45–08:57 的 Opening Range，於 08:58–09:15 窗口突破 OR High 做多，經 BigCost 大戶成本濾網、30 分 K 20MA 方向濾網、OR% 相對寬度濾網篩選。出場採 SatZone 兩段式（觸碰 → 跌破 5MA）+ Dow Theory trailing stop。Long-only，跳過週四/五。
+早盤 ORB 進場搭配 EstRange SatZone 兩段式出場。定義 08:45–08:57 的 Opening Range，於 08:58–09:15 窗口突破 OR High 做多，經 VWAP 濾網、30 分 K 20MA 方向濾網、OR% 相對寬度濾網篩選。出場採 SatZone 兩段式（觸碰 → 跌破 5MA）+ Dow Theory trailing stop。Long-only，跳過週四/五。
 
 ## Entry Conditions
 1. OR 定義：08:45–08:57（13 bars）的 High / Low
@@ -15,7 +15,7 @@ H001-estimate-high-low-exit-strategy, H002-orb-with-est-high-low-exit（research
 3. 觸發：1 分 K close > OR High
 4. 方向：僅做多
 5. 濾網：
-   - BigCost：近 2 日大戶成本方向一致
+   - VWAP：近 2 日 VWAP 方向一致
    - 30 分 K 20MA 方向向上
    - OR% 介於 0.3%–1.0%（OR 寬度 / 開盤價 × 100）
 6. 排除：週四、週五不交易
@@ -32,7 +32,7 @@ H001-estimate-high-low-exit-strategy, H002-orb-with-est-high-low-exit（research
 | OR period | 08:45–08:57 | Low |
 | Entry end | 09:15 | Low |
 | SL multiplier | 0.25 | Medium |
-| BigCost lookback | 2 days | Low |
+| VWAP lookback | 2 days | Low |
 | Skip weekdays | Thu, Fri | Low |
 | EstRange EMA | 20 | Low |
 | Settlement vol mult | 1.9 | Low |

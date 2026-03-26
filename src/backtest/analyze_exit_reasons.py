@@ -30,7 +30,7 @@ class ORBEstHLWithReason(EstimateHLExitMixin, Strategy):
 
     sl_ema_fraction: float = 0.25
     long_only: bool = True
-    bigcost_days: int = 2
+    vwap_days: int = 2
     or_end_min: int = 537
     entry_end_min: int = 555
     skip_thursday: bool = True
@@ -89,8 +89,8 @@ class ORBEstHLWithReason(EstimateHLExitMixin, Strategy):
             if not np.isnan(ema_hl):
                 ma30    = float(self.data.MA30_20[-1])
                 close30 = float(self.data.Close30[-1])
-                bc_vals = [float(getattr(self.data, f"BigCost{i}")[-1])
-                           for i in range(1, self.bigcost_days + 1)]
+                bc_vals = [float(getattr(self.data, f"VWAP{i}")[-1])
+                           for i in range(1, self.vwap_days + 1)]
                 or_width   = float(self.data.ORWidth[-1])
                 rolling_or = float(self.data.RollingOR[-1])
                 sl_dist = self.sl_ema_fraction * ema_hl
