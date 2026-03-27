@@ -2,12 +2,12 @@
 
 ## Phase 1: Distribution Research
 
-- [ ] 定義「多日趨勢 + 反彈/回調竭盡」的篩選條件（BB%B + MA 方向 + 前幾日走勢）
-- [ ] 統計 BB%B > 1 + MA↓ 與 BB%B < 0 + MA↑ 的歷史出現頻率
-- [ ] 分析這些情境下的日內走勢特徵（反轉幅度、時間）
-- [ ] 對比：此情境 vs 一般 Reversal setup 的 MFE/MAE 差異
-- [ ] 探索「昨/前日成本」的最佳定義（VWAP vs 收盤價）
-- [ ] 視覺化：多日走勢 + BB%B 極端 + 日內反轉的典型 pattern
+- [x] 定義篩選條件：open vs BC zone + 5m 120MA 方向，4 種情境分類
+- [x] 統計頻率 → H043 目標 20.8%（rebound_short 10.6% + pullback_long 10.2%），逐年穩定
+- [x] BB setup 觸發率 → H043 場景 80%（高於 aligned 72%）
+- [x] MFE/MAE 比較 → **H043 無 edge**：MFE>MAE 僅 48.6%，Net -0.027~-0.040
+- [x] VWAP vs Close → VWAP 更穩定，建議沿用
+- [ ] ~~視覺化~~（數據不支持假設，略過）
 
 ---
 ### GATE
