@@ -2,11 +2,11 @@
 
 ## Phase 1: Distribution Research
 
-- [ ] 從 live_parsed.csv 提取 esthl + esthl_costline 交易
-- [ ] 跑同期間的 EstHL 回測，提取交易明細
-- [ ] 逐筆比對：進場日期、方向、時間、價格、損益
-- [ ] 分類差異來源（滑價 / 信號延遲 / 漏接 / 多做 / 出場差異）
-- [ ] 彙整統計比較（勝率、均損益、PF）
+- [x] 從 live_parsed.csv 提取 esthl + esthl_costline 交易
+- [x] 跑同期間的 EstHL 回測，提取交易明細
+- [x] 逐筆比對：進場日期、方向、時間、價格、損益
+- [x] 分類差異來源（滑價 / 信號延遲 / 漏接 / 多做 / 出場差異）
+- [x] 彙整統計比較（勝率、均損益、PF）
 
 ---
 ### GATE
