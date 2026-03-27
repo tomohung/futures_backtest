@@ -10,7 +10,7 @@ H005-reversal, H006-reversal-v2（research/archive/confirmed/）
 均值回歸策略，利用 Bollinger Band 觸碰建立 latch，搭配成交量確認與力竭判定（EstRange × 0.5）確認單邊波動耗盡後進場。09:30 後 VWAP bypass 解決 CCD 結構性為負的問題。SatZone 兩段式出場（與 EstHL 共用模組）。v2 相比 v1 將實單關鍵價轉折捕捉率從 43% 提升至 73–86%。
 
 ## Entry Conditions
-1. **BB latch**：價格觸碰 BB(20, 2.0) 上軌或下軌，setup window 從 08:45 開始
+1. **BB latch**：價格觸碰 BB(20, 2.0) 上軌或下軌，setup window 從 09:05 開始（H048：BB(15) 暖機 + 跳空過濾）
 2. **力竭判定**：當日已走幅度 ≥ EstRange × exhaust_fraction(0.5)
 3. **成交量確認**：vol_ratio 達標
 4. **進場信號**：5MA crossing 確認反轉

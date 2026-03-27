@@ -45,7 +45,7 @@ Exit priority (highest to lowest):
      pivothigh(5,5) for short — trailing stop ratchets in the favorable direction
   4. Force exit at 13:40
 
-Setup window: session start (08:45) – 10:05 (setup can latch before entry window)
+Setup window: 09:05 – 10:05 (BB latch starts after BB(15) warm-up; H048)
 Entry window: 09:10 – 10:05 (trigger/entry must occur within this window)
 One entry per day maximum (after skipping signal_skip triggers).
 
@@ -69,6 +69,7 @@ from backtesting import Strategy
 
 from src.strategies.estimate_hl_exit import EstimateHLExitMixin
 
+_SETUP_START  = dtime(9, 5)    # BB latch begins (H048: skip pre-09:05 noise)
 _ENTRY_START  = dtime(9, 10)
 _ENTRY_END    = dtime(10, 5)
 _TRAIL_START  = dtime(9, 45)
@@ -244,15 +245,17 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
                 self._bear_exhausted = True
 
         # ── Step 1: Latch BB touch + vol (must co-occur on same bar) ──────
-        if self._allow_long and bullish and not self._bb_long_touched:
-            if close <= bb_lower and vol_ok:
-                self._bb_long_touched = True
-                self._bb_long_count += 1
+        # H048: skip BB latch before _SETUP_START (BB(15) not yet warmed up)
+        if cur_time >= _SETUP_START:
+            if self._allow_long and bullish and not self._bb_long_touched:
+                if close <= bb_lower and vol_ok:
+                    self._bb_long_touched = True
+                    self._bb_long_count += 1
 
-        if self._allow_short and not bullish and not self._bb_short_touched:
-            if close >= bb_upper and vol_ok:
-                self._bb_short_touched = True
-                self._bb_short_count += 1
+            if self._allow_short and not bullish and not self._bb_short_touched:
+                if close >= bb_upper and vol_ok:
+                    self._bb_short_touched = True
+                    self._bb_short_count += 1
 
         # ── Step 2: Trigger on MA5 cross (must be within entry window) ───
         # Setup = BB_touched AND (CCD_ok OR exhausted OR 2nd BB touch)

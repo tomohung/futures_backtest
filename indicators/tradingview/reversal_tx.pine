@@ -10,7 +10,7 @@
 //
 // 進場邏輯（兩步驟，Setup + Trigger）：
 //
-//   Step 1 — Setup（08:45–10:05，latch 機制）：
+//   Step 1 — Setup（09:05–10:05，latch 機制；H048：BB(15) 暖機 + 跳空過濾）：
 //     做多：close <= BB_Lower(15,2) AND volume > vol_ratio × VolMA20
 //     做空：close >= BB_Upper(15,2) AND volume > vol_ratio × VolMA20
 //     BB touch 被 MA5 cross reset 後可再次 latch（計數 +1）
@@ -53,7 +53,7 @@
 //   Orange   ── Intraday VWAP（09:30 後顯示）
 //
 // 底色說明：
-//   黃色  = Setup 窗口（08:45–10:05）
+//   黃色  = Setup 窗口（09:05–10:05）
 //   藍色  = Entry 窗口（09:10–10:05，且方向已確定）
 //   紫色  = Trailing 區段（09:45–13:40）
 //   灰色  = 當日無方向（VWAP 資料缺失）
@@ -97,6 +97,7 @@ show_diag       = input.bool (true, "診斷 Label",                           gr
 // Time Windows (Asia/Taipei = UTC+8)
 // ============================================================
 t_session_start = timestamp("Asia/Taipei", year, month, dayofmonth,  8, 45)
+t_setup_start   = timestamp("Asia/Taipei", year, month, dayofmonth,  9,  5)  // H048: BB latch after warm-up
 t_entry_start   = timestamp("Asia/Taipei", year, month, dayofmonth,  9, 10)
 t_entry_end     = timestamp("Asia/Taipei", year, month, dayofmonth, 10,  5)
 t_vwap_start    = timestamp("Asia/Taipei", year, month, dayofmonth,  9, 30)
@@ -105,7 +106,7 @@ t_force_exit    = timestamp("Asia/Taipei", year, month, dayofmonth, 13, 40)
 t_day_end       = timestamp("Asia/Taipei", year, month, dayofmonth, 13, 45)
 
 in_session    = time >= t_session_start and time <  t_day_end
-in_setup_win  = time >= t_session_start and time <= t_entry_end
+in_setup_win  = time >= t_setup_start   and time <= t_entry_end
 in_entry_win  = time >= t_entry_start   and time <= t_entry_end
 in_trail_zone = time >= t_trail_on      and time <  t_force_exit
 at_force_exit = time >= t_force_exit    and time <  t_day_end
