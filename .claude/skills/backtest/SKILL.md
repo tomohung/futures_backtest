@@ -92,3 +92,4 @@ YYYY-MM-DD
 - 績效用損益%（非絕對點數）做跨年度比較
 - 發現衍生想法時，記錄在 backtest.md 的 Derived Hypotheses
 - 回答用台灣繁體中文，技術術語保留英文
+- **Python 腳本必須保留**：回測用的 Python 腳本必須存放在假設目錄下（如 `research/active/HXXX-名稱/backtest.py`），不可只輸出 markdown 結果而不保存腳本。這些腳本是後續衍生假設、重跑驗證、Pine Script 實作對照的基礎。

@@ -69,4 +69,5 @@ Confirmed / Rejected / Inconclusive
 - 歸檔後必須刪除 `research/active/HXXX-名稱/` 目錄
 - archive 存 summary.md + 從 active 搬過來的完整文件
 - 如果假設 confirmed，提醒使用者考慮是否要建立 strategies/live/ 下的策略規格
+- **Confirmed → Live 時，必須將最新版的回測腳本（backtest.py）複製到 `strategies/live/SXXX-名稱/backtest.py`**，確保 live 策略隨時可重跑回測驗證
 - 回答用台灣繁體中文，技術術語保留英文

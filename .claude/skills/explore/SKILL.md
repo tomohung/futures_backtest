@@ -85,3 +85,4 @@ YYYY-MM-DD
 - 發現衍生想法時，記錄在 distribution.md 的 Derived Hypotheses，不主動修改其他文件
 - 如果數據不支持假設，誠實呈現，不要試圖美化結果
 - 回答用台灣繁體中文，技術術語保留英文
+- **Python 腳本必須保留**：探索分析用的 Python 腳本必須存放在假設目錄下（如 `research/active/HXXX-名稱/explore.py`），不可只輸出 markdown 結果而不保存腳本。這些腳本是後續衍生假設、重跑驗證、跨假設比對的基礎。

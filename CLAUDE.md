@@ -140,7 +140,7 @@ futures_backtest/
 │       ├── rejected/HXXX-名稱/
 │       └── inconclusive/HXXX-名稱/
 ├── strategies/
-│   ├── live/SXXX-名稱/      ← spec.md + performance.md
+│   ├── live/SXXX-名稱/      ← spec.md + performance.md + backtest.py
 │   └── retired/
 ├── .claude/skills/       ← 研究工作流程 skills
 ├── src/
@@ -266,6 +266,8 @@ Confirmed 的假設才進入 `strategies/live/`。
 - 衍生想法記錄在當前結果文件的 Derived Hypotheses，不主動修改其他文件
 - 所有數字結論必須附上樣本數
 - 參數優化後必須做 out-of-sample 驗證才能標記 Confirmed
+- **研究腳本必須保留**：Phase 1（explore）和 Phase 2（backtest）產出的 Python 腳本必須存放在假設目錄下（如 `research/active/HXXX-名稱/explore.py`、`backtest.py`），不可只輸出 markdown 結果而不保存腳本。這些腳本是後續比對、衍生假設、重跑驗證的基礎。
+- **Live 策略必須有可執行的回測腳本**：Confirmed 假設晉升到 `strategies/live/SXXX-名稱/` 時，必須包含最新版的回測腳本（`backtest.py`），確保任何時候都能重跑回測驗證。若策略邏輯有更新（參數調整、濾網修改），回測腳本也需同步更新。
 
 ---
 
