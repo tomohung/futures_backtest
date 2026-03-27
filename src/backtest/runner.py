@@ -612,20 +612,21 @@ def load_data_for_exhaustion(start=None, end=None):
             lambda s: s.bfill()
         )
 
-    # ── 30m SMA(20) direction (day-session only, session-aligned) ─────
-    # Resample with offset=15min so bins start at :45/:15 (match Pine Script)
-    s30 = df_day["Close"].resample("30min", offset="15min").last().dropna()
-    ma30_20 = s30.rolling(20, min_periods=20).mean()
-    # shift(1) and shift(2) = Pine's [1] and [2] on 30m timeframe
-    df_day["MA30_20"]      = ma30_20.shift(1).reindex(df_day.index, method="ffill")
-    df_day["MA30_20_Prev"] = ma30_20.shift(2).reindex(df_day.index, method="ffill")
+    # ── 5m 120MA direction (= 30m 20MA equivalent, updates every 5min) ──
+    # Day-session only so overnight data doesn't distort direction.
+    # shift(1) avoids lookahead (close not known until bar ends).
+    s5_day = df_day["Close"].resample("5min").last().dropna()
+    ma5m_120 = s5_day.rolling(120, min_periods=120).mean()
+    df_day["MA30_20"]      = ma5m_120.shift(1).reindex(df_day.index, method="ffill")
+    df_day["MA30_20_Prev"] = ma5m_120.shift(2).reindex(df_day.index, method="ffill")
 
     # ── 30m BB%B(20, open) — day-level boolean columns ────────────────
-    # Pine: bands from ta.sma(open, 20)[1] / ta.stdev(open, 20, false)[1]
-    # Test value = current bar's open (today's 08:45 open)
+    # BB(20, open): open is known at bar start, so no shift needed (no lookahead).
+    # Current bar's open is both part of the 20-bar BB calculation AND the test value.
+    # This matches H036's original computation (not Pine Script's [1] which shifts).
     s30_open = df_day["Open"].resample("30min", offset="15min").first().dropna()
-    bb_ma  = s30_open.rolling(20, min_periods=20).mean().shift(1)
-    bb_std = s30_open.rolling(20, min_periods=20).std(ddof=1).shift(1)
+    bb_ma  = s30_open.rolling(20, min_periods=20).mean()
+    bb_std = s30_open.rolling(20, min_periods=20).std(ddof=1)
     bb_upper = bb_ma + 2 * bb_std
     bb_lower = bb_ma - 2 * bb_std
     bb_pctb  = (s30_open - bb_lower) / (bb_upper - bb_lower)

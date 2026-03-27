@@ -83,15 +83,15 @@ class ExhaustionStrategy(EstimateHLExitMixin, Strategy):
             self._prev_date = cur_date
             self._day_open  = float(self.data.Open[-1])
 
-        # ── Build Opening Range (08:45–08:57) ─────────────────────────
-        if dtime(8, 45) <= cur_time <= dtime(8, 57):
+        # ── Build Opening Range (08:45–08:58) ─────────────────────────
+        if dtime(8, 45) <= cur_time <= dtime(8, 58):
             if self._or_high is None:
                 self._or_high = high
                 self._or_low  = low
             else:
                 self._or_high = max(self._or_high, high)
                 self._or_low  = min(self._or_low, low)
-        elif cur_time > dtime(8, 57) and not self._or_done:
+        elif cur_time > dtime(8, 58) and not self._or_done:
             self._or_done = True
 
         # ── SatZone exit mixin: record bar ────────────────────────────
