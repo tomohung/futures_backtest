@@ -1,0 +1,58 @@
+date,weekday,live_dir,live_entry_time,live_entry_price,live_exit_strategy,live_pnl,bbpct,ma_up,ma_down,night_new_high,night_new_low,orb_pct,skip_day,raw_signal,filtered_signal,miss_reasons,match
+2024-11-01,Fri,long,09:02,22385.0,滿足最大預估振幅,159.0,-0.743,True,False,False,True,0.777,False,,,MA not ↓,NO_SIGNAL
+2024-11-08,Fri,short,09:01,23704.0,移動停損,-26.0,1.236,True,False,True,False,0.303,False,short,short,,MATCH
+2024-11-12,Tue,long,08:59,23154.0,移動停損,-31.0,-0.538,False,True,False,True,0.739,False,long,long,,MATCH
+2024-11-13,Wed,long,08:59,22870.0,滿足最大預估振幅,102.0,-0.095,False,True,False,True,0.637,True,long,,skip_Wed,FILTERED_OUT
+2024-11-20,Wed,short,09:07,22888.0,移動停損,45.0,0.935,True,False,False,False,0.205,True,,,BB%B=0.93≤1; no night new H; skip_Wed; ORB%=0.20<0.25,NO_SIGNAL
+2024-11-25,Mon,short,08:59,23179.0,移動停損,-76.0,1.053,True,False,True,False,0.374,False,short,short,,MATCH
+2024-12-03,Tue,short,09:01,23076.0,1R停損,-75.0,1.168,True,False,True,False,0.449,False,short,short,,MATCH
+2024-12-04,Wed,short,09:02,23148.0,移動停損,13.0,0.872,True,False,False,False,0.259,True,,,BB%B=0.87≤1; no night new H; skip_Wed,NO_SIGNAL
+2024-12-06,Fri,short,09:00,23297.0,移動停損,24.0,0.868,True,False,True,False,0.292,False,,,BB%B=0.87≤1,NO_SIGNAL
+2024-12-11,Wed,long,08:59,22917.0,移動停損,67.0,-0.501,False,True,False,True,0.275,True,long,,skip_Wed,FILTERED_OUT
+2024-12-19,Thu,long,08:59,22758.0,移動停損,63.0,-0.456,False,True,False,False,0.259,True,,,no night new L; skip_Thu,NO_SIGNAL
+2024-12-24,Tue,short,08:59,23375.0,滿足最大預估振幅,70.0,1.026,True,False,True,False,0.333,False,short,short,,MATCH
+2024-12-27,Fri,long,09:07,23244.0,移動停損,15.0,N/A,,,,,N/A,,,,NO_DATA,NO_DATA
+2024-12-30,Mon,long,08:59,23252.0,滿足最大預估振幅,25.0,-0.632,True,False,False,False,0.340,False,,,MA not ↓; no night new L,NO_SIGNAL
+2025-01-07,Tue,short,09:03,23899.0,,,1.149,True,False,True,False,0.371,False,short,short,,MATCH
+2025-01-09,Thu,long,08:59,23345.0,移動停損,-22.0,-0.118,False,True,False,True,0.378,True,long,,skip_Thu,FILTERED_OUT
+2025-01-17,Fri,short,08:59,23222.0,滿足最大預估振幅,217.0,0.872,True,False,True,False,0.352,False,,,BB%B=0.87≤1,NO_SIGNAL
+2025-02-18,Tue,short,09:02,23517.0,移動停損,-4.0,0.879,True,False,True,False,0.246,False,,,BB%B=0.88≤1; ORB%=0.25<0.25,NO_SIGNAL
+2025-03-06,Thu,short,09:03,22869.0,移動停損,24.0,0.917,True,False,True,False,0.561,True,,,BB%B=0.92≤1; skip_Thu,NO_SIGNAL
+2025-03-13,Thu,,,,,,1.174,True,False,True,False,0.223,True,short,,skip_Thu; ORB%=0.22<0.25,FILTERED_OUT
+2025-03-18,Tue,short,09:11,22344.0,滿足最大預估振幅,114.0,1.088,True,False,True,False,0.308,False,short,short,,MATCH
+2025-03-26,Wed,short,09:00,22379.0,移動停損,89.0,1.035,True,False,False,False,0.192,True,,,no night new H; skip_Wed; ORB%=0.19<0.25,NO_SIGNAL
+2025-05-05,Mon,short,09:02,20745.0,,,0.862,True,False,True,False,0.279,False,,,BB%B=0.86≤1,NO_SIGNAL
+2025-05-06,Tue,long,09:00,20241.0,移動停損,99.0,-0.130,False,True,False,True,0.407,False,long,long,,MATCH
+2025-05-29,Thu,short,09:01,21521.0,,,1.254,False,True,False,False,0.474,True,,,MA not ↑; no night new H; skip_Thu,NO_SIGNAL
+2025-06-09,Mon,short,09:06,21719.0,滿足最大預估振幅,73.0,1.385,False,True,True,False,0.540,False,,,MA not ↑,NO_SIGNAL
+2025-06-13,Fri,long,09:43,22049.0,,,-1.526,True,False,False,True,0.647,False,,,MA not ↓,NO_SIGNAL
+2025-06-27,Fri,short,09:00,22169.0,滿足最大預估振幅,96.0,0.813,True,False,False,True,0.194,False,,,BB%B=0.81≤1; no night new H; ORB%=0.19<0.25,NO_SIGNAL
+2025-07-04,Fri,short,09:00,22710.0,滿足最大預估振幅,94.0,0.831,True,False,True,False,0.224,False,,,BB%B=0.83≤1; ORB%=0.22<0.25,NO_SIGNAL
+2025-07-18,Fri,short,09:03,23332.0,,,2.242,True,False,True,False,0.274,False,short,short,,MATCH
+2025-07-23,Wed,long,09:06,23128.0,滿足最大預估振幅,94.0,0.077,False,True,False,True,0.517,True,,,BB%B=0.08≥0; skip_Wed,NO_SIGNAL
+2025-07-24,Thu,short,09:05,23300.0,移動停損,35.0,1.075,False,True,False,False,0.444,True,,,MA not ↑; no night new H; skip_Thu,NO_SIGNAL
+2025-07-28,Mon,short,08:58,23375.0,1R停損,-5.0,1.290,False,True,False,True,0.402,False,,,MA not ↑; no night new H,NO_SIGNAL
+2025-08-01,Fri,long,09:00,23166.0,滿足最大預估振幅,233.0,-0.633,True,False,True,False,0.598,False,,,MA not ↓; no night new L,NO_SIGNAL
+2025-08-04,Mon,long,09:24,23127.0,滿足最大預估振幅,130.0,-0.146,False,True,False,True,0.316,False,long,long,,MATCH
+2025-09-05,Fri,short,09:06,24385.0,移動停損,-41.0,0.994,True,False,False,False,0.172,False,,,BB%B=0.99≤1; no night new H; ORB%=0.17<0.25,NO_SIGNAL
+2025-09-09,Tue,short,09:00,24746.0,移動停損,-16.0,1.052,True,False,True,False,0.150,False,short,,ORB%=0.15<0.25,FILTERED_OUT
+2025-09-18,Thu,short,09:01,25628.0,,,0.731,False,True,False,True,0.242,True,,,MA not ↑; BB%B=0.73≤1; no night new H; skip_Thu; ORB%=0.24<0.25,NO_SIGNAL
+2025-09-19,Fri,short,08:58,25828.0,滿足最大預估振幅,140.0,1.203,True,False,True,False,0.244,False,short,,ORB%=0.24<0.25,FILTERED_OUT
+2025-09-24,Wed,short,09:01,26355.0,移動停損,160.0,0.942,True,False,True,False,0.201,True,,,BB%B=0.94≤1; skip_Wed; ORB%=0.20<0.25,NO_SIGNAL
+2025-10-09,Thu,short,09:02,27436.0,移動停損,19.0,1.027,False,True,True,False,0.295,True,,,MA not ↑; skip_Thu,NO_SIGNAL
+2025-10-13,Mon,long,09:03,26744.0,,,-0.671,True,False,False,False,1.263,False,,,MA not ↓; no night new L,NO_SIGNAL
+2025-10-23,Thu,long,09:02,27436.0,滿足最大預估振幅,110.0,-0.252,False,True,False,True,0.409,True,long,,skip_Thu,FILTERED_OUT
+2025-10-27,Mon,short,09:01,28201.0,移動停損,37.0,2.157,False,True,True,False,0.262,False,,,MA not ↑,NO_SIGNAL
+2025-10-28,Tue,short,09:03,28104.0,移動停損,-25.0,0.747,True,False,True,False,0.446,False,,,BB%B=0.75≤1,NO_SIGNAL
+2025-11-11,Tue,short,09:09,28129.0,滿足最大預估振幅,84.0,1.223,True,False,True,False,0.188,False,short,,ORB%=0.19<0.25,FILTERED_OUT
+2025-11-25,Tue,short,09:04,27046.0,滿足最大預估振幅,127.0,2.111,False,True,True,False,0.148,False,,,MA not ↑; ORB%=0.15<0.25,NO_SIGNAL
+2025-12-11,Thu,short,09:01,28505.0,滿足最大預估振幅,38.0,1.604,True,False,True,False,0.301,True,short,,skip_Thu,FILTERED_OUT
+2025-12-16,Tue,long,09:04,27647.0,1R停損,-67.0,-0.105,False,True,False,True,0.355,False,long,long,,MATCH
+2025-12-24,Wed,short,09:03,28516.0,滿足最大預估振幅,17.0,1.267,True,False,True,False,0.182,True,short,,skip_Wed; ORB%=0.18<0.25,FILTERED_OUT
+2026-01-13,Tue,short,09:02,31007.0,滿足最大預估振幅,203.0,1.341,True,False,True,False,0.676,False,short,short,,MATCH
+2026-01-21,Wed,long,09:01,31572.0,滿足最大預估振幅,97.0,0.096,True,False,False,True,0.312,True,,,MA not ↓; BB%B=0.10≥0; skip_Wed,NO_SIGNAL
+2026-01-27,Tue,short,09:58,32293.0,移動停損,0.0,1.259,True,False,True,False,0.179,False,short,,ORB%=0.18<0.25,FILTERED_OUT
+2026-03-02,Mon,long,09:03,35027.0,滿足最大預估振幅,354.0,-1.570,True,False,True,True,0.768,False,,,MA not ↓,NO_SIGNAL
+2026-03-13,Fri,long,08:59,32870.0,滿足最大預估振幅,142.0,-0.520,False,True,False,True,0.628,False,long,long,,MATCH
+2026-03-23,Mon,long,09:01,32539.0,滿足最大預估振幅,174.0,-1.371,False,True,False,True,1.018,False,long,long,,MATCH
+2026-03-25,Wed,short,09:00,33704.0,移動停損,51.0,1.863,True,False,True,False,0.426,True,short,,skip_Wed,FILTERED_OUT

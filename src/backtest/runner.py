@@ -576,6 +576,124 @@ def load_data_for_reversal(start=None, end=None):
     return df_day
 
 
+def load_data_for_exhaustion(start=None, end=None):
+    """Load day-session data with exhaustion strategy indicators.
+
+    Columns added (on top of standard OHLCV):
+        EmaHL, EmaVol, SatZone*, EstHL*, EstHighLevel, EstLowLevel
+            — from compute_estimate_hl_zones()
+        MA30_20, MA30_20_Prev  — 30m SMA(20) direction (day-session, shift(1))
+        BB30_Above, BB30_Below — 30m BB%B(20, open) > 1 or < 0 (boolean, day-level)
+        NightNewHigh, NightNewLow — night session created new 2-day high/low (boolean)
+    """
+    import pandas as pd
+    from src.backtest.estimate_hl import compute_estimate_hl_zones
+
+    with duckdb.connect(DB_PATH, read_only=True) as conn:
+        df_day = conn.execute("""
+            SELECT timestamp, open, high, low, close, volume
+            FROM ohlcv_1m
+            WHERE symbol = 'TX'
+              AND CAST(timestamp AS TIME) BETWEEN TIME '08:45:00' AND TIME '13:45:00'
+            ORDER BY timestamp
+        """).df().set_index("timestamp")
+
+    df_day.columns = ["Open", "High", "Low", "Close", "Volume"]
+    adjust_settlement_volume(df_day)
+
+    # EstHL zones
+    df_day = compute_estimate_hl_zones(df_day)
+
+    # Back-fill EmaHL within each day (no lookahead)
+    _hl_cols = ["EmaHL", "EmaVol", "SatZoneUpper", "SatZoneLower",
+                "EstHL", "EstHighLevel", "EstLowLevel"]
+    for col in _hl_cols:
+        df_day[col] = df_day.groupby(df_day.index.normalize())[col].transform(
+            lambda s: s.bfill()
+        )
+
+    # ── 30m SMA(20) direction (day-session only, session-aligned) ─────
+    # Resample with offset=15min so bins start at :45/:15 (match Pine Script)
+    s30 = df_day["Close"].resample("30min", offset="15min").last().dropna()
+    ma30_20 = s30.rolling(20, min_periods=20).mean()
+    # shift(1) and shift(2) = Pine's [1] and [2] on 30m timeframe
+    df_day["MA30_20"]      = ma30_20.shift(1).reindex(df_day.index, method="ffill")
+    df_day["MA30_20_Prev"] = ma30_20.shift(2).reindex(df_day.index, method="ffill")
+
+    # ── 30m BB%B(20, open) — day-level boolean columns ────────────────
+    # Pine: bands from ta.sma(open, 20)[1] / ta.stdev(open, 20, false)[1]
+    # Test value = current bar's open (today's 08:45 open)
+    s30_open = df_day["Open"].resample("30min", offset="15min").first().dropna()
+    bb_ma  = s30_open.rolling(20, min_periods=20).mean().shift(1)
+    bb_std = s30_open.rolling(20, min_periods=20).std(ddof=1).shift(1)
+    bb_upper = bb_ma + 2 * bb_std
+    bb_lower = bb_ma - 2 * bb_std
+    bb_pctb  = (s30_open - bb_lower) / (bb_upper - bb_lower)
+
+    # Get first bar of each day → day-level BB%B
+    bb_pctb_df = bb_pctb.to_frame("bbpct")
+    bb_pctb_df["date"] = bb_pctb_df.index.normalize()
+    first_bb = bb_pctb_df.groupby("date")["bbpct"].first()
+    day_dates = pd.DatetimeIndex(df_day.index).normalize()
+    df_day["BB30_Above"] = first_bb.reindex(day_dates).values > 1.0
+    df_day["BB30_Below"] = first_bb.reindex(day_dates).values < 0.0
+
+    # ── Night session new high/low ────────────────────────────────────
+    # Extended daily H/L: day session + night session of the same calendar date
+    with duckdb.connect(DB_PATH, read_only=True) as conn:
+        df_ext = conn.execute("""
+            WITH bars AS (
+                SELECT
+                    CASE
+                        WHEN timestamp::TIME >= TIME '08:45:00'
+                             AND timestamp::TIME <= TIME '13:45:00'
+                            THEN timestamp::DATE
+                        WHEN timestamp::TIME >= TIME '15:00:00'
+                            THEN timestamp::DATE
+                        WHEN timestamp::TIME < TIME '05:01:00'
+                            THEN timestamp::DATE - INTERVAL '1 day'
+                        ELSE NULL
+                    END AS ext_date,
+                    high, low
+                FROM ohlcv_1m
+                WHERE symbol = 'TX'
+            )
+            SELECT ext_date::DATE AS date,
+                   MAX(high) AS ext_high,
+                   MIN(low) AS ext_low
+            FROM bars
+            WHERE ext_date IS NOT NULL
+            GROUP BY ext_date
+            ORDER BY ext_date
+        """).df()
+    df_ext["date"] = pd.to_datetime(df_ext["date"])
+    df_ext = df_ext.set_index("date")
+
+    # Daily session H/L for "recent 2 days"
+    daily_hl = df_day.groupby(df_day.index.normalize()).agg(
+        day_high=("High", "max"), day_low=("Low", "min")
+    )
+    recent2_high = daily_hl["day_high"].rolling(2).max().shift(1)
+    recent2_low  = daily_hl["day_low"].rolling(2).min().shift(1)
+
+    # Pine: ext_high_d1 > recent2_high (previous extended day's H/L)
+    ext_high_prev = df_ext["ext_high"].shift(1)
+    ext_low_prev  = df_ext["ext_low"].shift(1)
+
+    night_new_high = ext_high_prev > recent2_high
+    night_new_low  = ext_low_prev < recent2_low
+
+    df_day["NightNewHigh"] = night_new_high.reindex(day_dates).fillna(False).values
+    df_day["NightNewLow"]  = night_new_low.reindex(day_dates).fillna(False).values
+
+    if start:
+        df_day = df_day[df_day.index >= start]
+    if end:
+        df_day = df_day[df_day.index <= end]
+
+    return df_day
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run ORB backtest on TX futures",
