@@ -519,14 +519,33 @@ def plot_sr_chart(data, n_days=20):
     vp_below = [(lo, hi, v) for lo, hi, v, _ in vp_res
                 if hi > ref - RANGE and lo < ref + 25]
 
+    # ── MACD (12, 26, 9) ─────────────────────────────────
+    def _ema(arr, period):
+        out = np.full_like(arr, np.nan)
+        alpha = 2.0 / (period + 1)
+        out[0] = arr[0]
+        for i in range(1, len(arr)):
+            out[i] = arr[i] * alpha + out[i - 1] * (1 - alpha)
+        return out
+
+    ema12 = _ema(closes, 12)
+    ema26 = _ema(closes, 26)
+    macd_line = ema12 - ema26
+    signal_line = _ema(macd_line, 9)
+    macd_hist = macd_line - signal_line
+
     _setup_font()
-    fig, (ax, ax_vp) = plt.subplots(
-        1, 2, figsize=(16, 8),
-        gridspec_kw={"width_ratios": [5, 1]},
-        sharey=True,
-    )
+    fig = plt.figure(figsize=(16, 10), layout="constrained")
+    gs = fig.add_gridspec(2, 2, height_ratios=[3, 1], width_ratios=[5, 1],
+                          hspace=0.08)
+    ax     = fig.add_subplot(gs[0, 0])
+    ax_vp  = fig.add_subplot(gs[0, 1], sharey=ax)
+    ax_macd = fig.add_subplot(gs[1, 0], sharex=ax)
+    ax_empty = fig.add_subplot(gs[1, 1])
+    ax_empty.set_visible(False)
+
     fig.patch.set_facecolor("#1a1a2e")
-    for a in (ax, ax_vp):
+    for a in (ax, ax_vp, ax_macd):
         a.set_facecolor("#16213e")
         a.tick_params(colors="#cccccc")
         for spine in a.spines.values():
@@ -545,6 +564,18 @@ def plot_sr_chart(data, n_days=20):
         ))
         ax.plot([i, i], [lows[i], body_lo], color=color, linewidth=0.8, zorder=2)
         ax.plot([i, i], [body_hi, highs[i]], color=color, linewidth=0.8, zorder=2)
+
+    # ── 均線 5/21/65/130/233 ──────────────────────────────
+    ma_periods = [5, 21, 65, 130, 233]
+    ma_colors  = ["#ef5350", "#f9ca24", "#26a69a", "#2196f3", "#9c27b0"]
+    for period, mc in zip(ma_periods, ma_colors):
+        if n >= period:
+            ma = np.full(n, np.nan)
+            for i in range(period - 1, n):
+                ma[i] = closes[i - period + 1:i + 1].mean()
+            valid = ~np.isnan(ma)
+            ax.plot(x[valid], ma[valid], color=mc, linewidth=1.0, alpha=0.8,
+                    label=f"MA{period}", zorder=4)
 
     # ── 支撐壓力水平線 ────────────────────────────────────
     for p, cnt in swing_highs:
@@ -585,6 +616,8 @@ def plot_sr_chart(data, n_days=20):
         color="#eeeeee", fontsize=12, pad=8,
     )
     ax.grid(axis="y", color="#333355", linewidth=0.5, zorder=0)
+    ax.legend(loc="upper left", fontsize=7, facecolor="#1a1a2e",
+              labelcolor="#cccccc", edgecolor="#444466", ncol=5)
 
     # ── Volume Profile（右側）────────────────────────────
     bin_size = 50
@@ -614,7 +647,21 @@ def plot_sr_chart(data, n_days=20):
     price_range = highs.max() - lows.min()
     ax.set_ylim(lows.min() - price_range * 0.05, highs.max() + price_range * 0.1)
 
-    plt.tight_layout()
+    # ── MACD 子圖 ──────────────────────────────────────
+    hist_colors = ["#ef5350" if v >= 0 else "#26a69a" for v in macd_hist]
+    ax_macd.bar(x, macd_hist, color=hist_colors, width=0.6, alpha=0.7, zorder=2)
+    ax_macd.plot(x, macd_line, color="#2196f3", linewidth=1.2, label="MACD", zorder=3)
+    ax_macd.plot(x, signal_line, color="#ff9800", linewidth=1.2, label="Signal", zorder=3)
+    ax_macd.axhline(0, color="#666688", linewidth=0.5, zorder=1)
+    ax_macd.set_title("MACD (12, 26, 9)", color="#eeeeee", fontsize=10, pad=4)
+    ax_macd.legend(loc="upper left", fontsize=8, facecolor="#1a1a2e",
+                   labelcolor="#cccccc", edgecolor="#444466")
+    ax_macd.grid(axis="y", color="#333355", linewidth=0.5, zorder=0)
+    # 隱藏 K 線圖的 x 軸標籤（共用 x 軸，由 MACD 顯示）
+    ax.tick_params(labelbottom=False)
+    ax_macd.set_xticks(tick_pos)
+    ax_macd.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8, color="#cccccc")
+
     out_path = Path(__file__).parents[2] / "output" / "sr_chart.png"
     out_path.parent.mkdir(exist_ok=True)
     plt.savefig(out_path, dpi=150, facecolor=fig.get_facecolor())
