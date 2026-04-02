@@ -30,15 +30,20 @@ indicator(
 // ============================================================
 // Inputs
 // ============================================================
-ema_period     = input.int(20, "EMA Period", minval=5, maxval=100)
-min_warmup     = input.int(3,  "最少暖機天數", minval=1, maxval=50)
-show_start     = input.int(540, "開始顯示時間（分鐘）", minval=525, maxval=600,
-                           tooltip="525=08:45, 540=09:00, 555=09:15")
-frac_tue_wed   = input.float(0.75,  "Fraction (Tue/Wed)", step=0.01, minval=0.1, maxval=1.5)
-frac_other     = input.float(0.618, "Fraction (Mon/Thu/Fri)", step=0.01, minval=0.1, maxval=1.5)
-use_weekday_frac = input.bool(true, "依星期自動調整 Fraction")
-show_full      = input.bool(true,  "顯示 100% Est High/Low（實線）")
-show_frac      = input.bool(true,  "顯示 Fraction Est High/Low（虛線）")
+var string GRP_CALC = "計算參數"
+var string GRP_VIZ  = "顯示"
+
+ema_period       = input.int(20, "EMA Period", minval=5, maxval=100, group=GRP_CALC)
+min_warmup       = input.int(3,  "最少暖機天數", minval=1, maxval=50, group=GRP_CALC)
+show_start       = input.int(540, "開始顯示時間（分鐘）", minval=525, maxval=600,
+                             tooltip="525=08:45, 540=09:00, 555=09:15", group=GRP_CALC)
+frac_tue_wed     = input.float(0.75,  "Fraction (Tue/Wed)", step=0.01, minval=0.1, maxval=1.5, group=GRP_CALC)
+frac_other       = input.float(0.618, "Fraction (Mon/Thu/Fri)", step=0.01, minval=0.1, maxval=1.5, group=GRP_CALC)
+use_weekday_frac = input.bool(true, "依星期自動調整 Fraction", group=GRP_CALC)
+
+show_full        = input.bool(true,  "Est High/Low 100%（實線）", group=GRP_VIZ)
+show_frac        = input.bool(true,  "Frac Est High/Low（圓點）", group=GRP_VIZ)
+show_diag        = input.bool(true,  "診斷 Label", group=GRP_VIZ)
 
 // ============================================================
 // Time Windows (Asia/Taipei = UTC+8)
@@ -158,25 +163,29 @@ frac_est_high = show_ok ? sess_low  + cur_est_range * cur_fraction : na
 frac_est_low  = show_ok ? sess_high - cur_est_range * cur_fraction : na
 
 // ============================================================
-// Plots
+// Plots (by price order: Est High → Frac High → Frac Low → Est Low)
 // ============================================================
-// 100% Est High/Low (solid)
+// ── Est High 100% (solid)
 plot(show_full ? est_high : na, "Est High 100%",
-     color=color.new(color.green, 40), linewidth=1, style=plot.style_linebr)
-plot(show_full ? est_low : na, "Est Low 100%",
-     color=color.new(color.red, 40), linewidth=1, style=plot.style_linebr)
+     color=color.new(color.red, 30), linewidth=2, style=plot.style_linebr)
 
-// Fraction Est High/Low (dashed via cross style)
+// ── Frac High (circles)
 plot(show_frac ? frac_est_high : na, "Frac High",
-     color=color.new(color.green, 0), linewidth=2, style=plot.style_cross)
-plot(show_frac ? frac_est_low : na, "Frac Low",
-     color=color.new(color.red, 0), linewidth=2, style=plot.style_cross)
+     color=color.new(color.red, 0), linewidth=2, style=plot.style_circles)
 
-// Daily label
+// ── Frac Low (circles)
+plot(show_frac ? frac_est_low : na, "Frac Low",
+     color=color.new(color.green, 0), linewidth=2, style=plot.style_circles)
+
+// ── Est Low 100% (solid)
+plot(show_full ? est_low : na, "Est Low 100%",
+     color=color.new(color.green, 30), linewidth=2, style=plot.style_linebr)
+
+// ── Daily diagnostic label
 var bool day_label_done = false
 if entering_session
     day_label_done := false
-if show_ok and not day_label_done
+if show_diag and show_ok and not day_label_done
     _wd_str = is_tue_wed ? "TW" : "MTF"
     _frac_str = use_weekday_frac ? str.format(" ×{0,number,#.###}({1})", cur_fraction, _wd_str) : ""
     label.new(bar_index, est_high,
@@ -184,3 +193,13 @@ if show_ok and not day_label_done
         style=label.style_label_down, size=size.small,
         color=color.new(color.gray, 50), textcolor=color.white)
     day_label_done := true
+
+// ============================================================
+// Alerts
+// ============================================================
+alertcondition(show_ok and high >= est_high,
+    title="Touch Est High",
+    message="EstRange: 碰到 Est High ({{ticker}} {{close}})")
+alertcondition(show_ok and low <= est_low,
+    title="Touch Est Low",
+    message="EstRange: 碰到 Est Low ({{ticker}} {{close}})")
