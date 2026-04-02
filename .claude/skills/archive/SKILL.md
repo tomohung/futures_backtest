@@ -26,6 +26,15 @@ description: >
 - `research/archive/rejected/` — 假設不成立，無 edge
 - `research/archive/inconclusive/` — 結果不明確，可能未來重新探索
 
+### Step 2.5：更新結果文件
+
+**在搬移之前，必須先確認所有探索/回測結果已寫入對應的 markdown 文件。**
+
+檢查項目：
+- 對話中是否有額外跑過但尚未寫入 `results/distribution.md` 或 `results/backtest.md` 的分析結果（例如補充探索、追加測試、不同參數/timeframe 的結果）
+- 如果有，先將這些結果補充寫入對應的結果文件，再進行後續步驟
+- 確保結果文件完整反映所有已執行的分析，不只是第一輪的結果
+
 ### Step 3：生成 archive 摘要
 
 在目標目錄建立 `HXXX-名稱/` 子目錄，生成 `summary.md`：
