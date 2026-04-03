@@ -157,6 +157,40 @@ def get_key_prices():
         """, [SYMBOL]).fetchone()
 
     has_night = night and night[0] is not None
+
+    # 夜盤振幅 vs 日盤預期（H059 研究）
+    night_range = (night[0] - night[1]) if has_night else None
+    with duckdb.connect(str(DB_PATH), read_only=True) as conn:
+        day_ranges_20 = conn.execute("""
+            SELECT
+                timestamp::DATE AS trade_date,
+                MAX(high) - MIN(low) AS range_pt
+            FROM ohlcv_1m
+            WHERE symbol = ?
+              AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+            GROUP BY trade_date
+            ORDER BY trade_date DESC
+            LIMIT 20
+        """, [SYMBOL]).fetchall()
+
+    vol_alert = None
+    if night_range is not None and day_ranges_20:
+        import pandas as _pd
+        _ranges = _pd.Series([float(r[1]) for r in reversed(day_ranges_20)])
+        day_ema20 = _ranges.ewm(span=20, adjust=False).mean().iloc[-1]
+        # 今天是星期幾（next_day = 今天的交易日）
+        today_wd = next_day.weekday()
+        # 同星期的近期日盤振幅中位數
+        wd_ranges = [float(r[1]) for r in day_ranges_20
+                     if r[0].weekday() == today_wd]
+        wd_median = float(_pd.Series(wd_ranges).median()) if wd_ranges else day_ema20
+        vol_alert = {
+            "night_range": night_range,
+            "day_ema20": round(day_ema20),
+            "wd_median": round(wd_median),
+            "today_wd": today_wd,
+        }
+
     result = {
         "last_day": last_day,
         "prev_day": prev_day,
@@ -166,6 +200,7 @@ def get_key_prices():
         "ma30_20": ma_row[0] if ma_row else None,
         "ma30_20_up": ma_row[1] if ma_row else None,
         "bars_15m_pre10": bars_15m_pre10,
+        "vol_alert": vol_alert,
     }
     result["sr"] = _calc_sr(SYMBOL)
     return result
@@ -329,6 +364,32 @@ def print_report(data):
     print(f"| 二日高低突破              | {two_day} |")
     print(f"| 30分K 20MA 方向           | {ma_dir} |")
     print(f"| 均線轉向風險              | {reversal_risk} |")
+
+    # 夜盤振幅警示
+    vol_alert = d.get("vol_alert")
+    if vol_alert:
+        wd_names = {0: "一", 1: "二", 2: "三", 3: "四", 4: "五"}
+        wd_label = f"週{wd_names.get(vol_alert['today_wd'], '?')}"
+        nr = vol_alert["night_range"]
+        wd_med = vol_alert["wd_median"]
+        day_ema = vol_alert["day_ema20"]
+        ratio = nr / day_ema if day_ema > 0 else 0
+
+        if nr > day_ema and wd_med < day_ema * 0.95:
+            # 本來預期小波動日，但夜盤大 → 放大警示
+            alert = f"⚡ 放大｜{wd_label}通常偏小（{n(wd_med)}），但夜盤 {n(nr)}pt > EMA {n(day_ema)}（{ratio:.1f}x）"
+        elif nr < day_ema * 0.7 and wd_med > day_ema * 1.05:
+            # 本來預期大波動日，但夜盤小 → 縮小警示
+            alert = f"🔻 縮小｜{wd_label}通常偏大（{n(wd_med)}），但夜盤僅 {n(nr)}pt < EMA {n(day_ema)}（{ratio:.1f}x）"
+        elif nr > 1.5 * day_ema:
+            # 不論星期幾，夜盤極大
+            alert = f"⚡ 放大｜夜盤 {n(nr)}pt >> EMA {n(day_ema)}（{ratio:.1f}x）"
+        elif nr < day_ema * 0.5:
+            # 不論星期幾，夜盤極小
+            alert = f"🔻 縮小｜夜盤僅 {n(nr)}pt << EMA {n(day_ema)}（{ratio:.1f}x）"
+        else:
+            alert = f"— 正常｜夜盤 {n(nr)}pt, EMA {n(day_ema)}, {wd_label}常態 {n(wd_med)}（{ratio:.1f}x）"
+        print(f"| 夜盤振幅警示              | {alert} |")
 
     # 支撐壓力
     sr = d.get("sr", {})

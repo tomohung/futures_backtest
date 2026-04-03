@@ -39,6 +39,101 @@ def get_daily_range(n=20):
     return list(reversed(rows))
 
 
+def get_night_vol_alert():
+    """取得今日夜盤振幅警示資訊。回傳 dict 或 None。"""
+    from datetime import time as dt_time
+    with duckdb.connect(str(DB_PATH), read_only=True) as conn:
+        last_day = conn.execute("""
+            SELECT MAX(timestamp::DATE)
+            FROM ohlcv_1m
+            WHERE symbol = ?
+              AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+        """, [SYMBOL]).fetchone()[0]
+
+        next_day = last_day + timedelta(days=1)
+
+        # 夜盤振幅（主力合約）
+        night = conn.execute("""
+            WITH night_ticks AS (
+                SELECT contract, price
+                FROM ticks
+                WHERE symbol = ?
+                  AND (
+                    (trade_date = ? AND trade_time >= '15:00:00')
+                    OR
+                    (trade_date = ? AND trade_time <= '05:00:00')
+                  )
+            ),
+            dominant AS (
+                SELECT contract FROM night_ticks
+                GROUP BY contract ORDER BY COUNT(*) DESC LIMIT 1
+            )
+            SELECT MAX(price)::INT, MIN(price)::INT
+            FROM night_ticks
+            WHERE contract = (SELECT contract FROM dominant)
+        """, [SYMBOL, last_day, next_day]).fetchone()
+
+        if not night or night[0] is None:
+            return None
+
+        night_range = night[0] - night[1]
+
+        # 近 20 日日盤振幅（for EMA）
+        day_ranges = conn.execute("""
+            SELECT
+                timestamp::DATE AS trade_date,
+                MAX(high) - MIN(low) AS range_pt
+            FROM ohlcv_1m
+            WHERE symbol = ?
+              AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+            GROUP BY trade_date
+            ORDER BY trade_date DESC
+            LIMIT 20
+        """, [SYMBOL]).fetchall()
+
+    import pandas as pd
+    ranges_s = pd.Series([float(r[1]) for r in reversed(day_ranges)])
+    day_ema20 = float(ranges_s.ewm(span=20, adjust=False).mean().iloc[-1])
+
+    today_wd = next_day.weekday()
+    wd_ranges = [float(r[1]) for r in day_ranges if r[0].weekday() == today_wd]
+    wd_median = float(pd.Series(wd_ranges).median()) if wd_ranges else day_ema20
+
+    ratio = night_range / day_ema20 if day_ema20 > 0 else 1.0
+
+    wd_names = ["一", "二", "三", "四", "五"]
+    wd_label = f"週{wd_names[today_wd]}" if today_wd < 5 else "?"
+
+    # 判斷警示類型（圖表用純文字，避免 emoji glyph 問題）
+    if night_range > day_ema20 and wd_median < day_ema20 * 0.95:
+        alert_type = "up"
+        alert_text = f">> {wd_label}常偏小\n但夜盤放大 {ratio:.1f}x"
+    elif night_range < day_ema20 * 0.7 and wd_median > day_ema20 * 1.05:
+        alert_type = "down"
+        alert_text = f"<< {wd_label}常偏大\n但夜盤縮小 {ratio:.1f}x"
+    elif night_range > 1.5 * day_ema20:
+        alert_type = "up"
+        alert_text = f">> 夜盤放大 {ratio:.1f}x"
+    elif night_range < day_ema20 * 0.5:
+        alert_type = "down"
+        alert_text = f"<< 夜盤縮小 {ratio:.1f}x"
+    else:
+        alert_type = "normal"
+        alert_text = f"夜盤 {ratio:.1f}x EMA"
+
+    return {
+        "night_range": night_range,
+        "day_ema20": day_ema20,
+        "wd_median": wd_median,
+        "today_wd": today_wd,
+        "wd_label": wd_label,
+        "ratio": ratio,
+        "alert_type": alert_type,
+        "alert_text": alert_text,
+        "today": next_day,
+    }
+
+
 def get_potential_density(n=20):
     """計算最近 n 日的滾動潛力日密度。回傳 [(date, count, pct), ...]"""
     # 需要額外 DENSITY_WINDOW-1 天來計算第一天的滾動值
@@ -142,6 +237,7 @@ def main():
     dates_r = [r[0] for r in range_data]
     ranges = [float(r[1]) for r in range_data]
     avg20_range = np.mean(ranges)
+    night_alert = get_night_vol_alert()
 
     vix_data = get_vix_data(20)
     vix_dates = [r[0] for r in vix_data]
@@ -176,14 +272,39 @@ def main():
                  ha="center", va="bottom", fontsize=9, fontweight="bold")
     ax1.axhline(avg20_range, color="#f39c12", linewidth=2, linestyle="--", zorder=4,
                 label=f"20日均波動 {avg20_range:.0f}pt")
-    ax1.set_xticks(range(n_bars))
-    ax1.set_xticklabels(
-        [f"{d}\n（週{weekday_names[d.weekday()]}）" for d in dates_r],
-        rotation=45, ha="right", fontsize=7)
+
+    # 夜盤振幅警示：在最右邊加一根虛線 bar 代表今日夜盤
+    if night_alert:
+        nr = night_alert["night_range"]
+        alert_x = n_bars  # 放在歷史 bar 的右邊
+        alert_color = {"up": "#e74c3c", "down": "#27ae60", "normal": "#95a5a6"}
+        bar_color = alert_color.get(night_alert["alert_type"], "#95a5a6")
+        ax1.bar(alert_x, nr, color=bar_color, width=0.6, zorder=3,
+                alpha=0.4, edgecolor=bar_color, linewidth=2, linestyle="--")
+        # 警示文字框（放在 bar 頂端上方）
+        ax1.annotate(f"{int(nr)}pt\n{night_alert['alert_text']}",
+                     xy=(alert_x, nr), xytext=(0, 10),
+                     textcoords="offset points", ha="center", fontsize=9,
+                     fontweight="bold", color=bar_color,
+                     bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                               edgecolor=bar_color, linewidth=2, alpha=0.95))
+        # X 軸標籤
+        all_labels = [f"{d}\n（週{weekday_names[d.weekday()]}）" for d in dates_r]
+        all_labels.append(f"今日\n（{night_alert['wd_label']}）\n夜盤")
+        ax1.set_xticks(range(n_bars + 1))
+        ax1.set_xticklabels(all_labels, rotation=45, ha="right", fontsize=7)
+        y_max = max(max(ranges), nr) * 1.35
+    else:
+        ax1.set_xticks(range(n_bars))
+        ax1.set_xticklabels(
+            [f"{d}\n（週{weekday_names[d.weekday()]}）" for d in dates_r],
+            rotation=45, ha="right", fontsize=7)
+        y_max = max(ranges) * 1.2
+
     ax1.set_ylabel("波動點數（高 - 低）", fontsize=11)
     ax1.set_title("日盤波動（近20交易日）", fontsize=12)
     ax1.legend(fontsize=10)
-    ax1.set_ylim(0, max(ranges) * 1.2)
+    ax1.set_ylim(0, y_max)
     ax1.yaxis.grid(True, linestyle="--", alpha=0.4)
     ax1.set_axisbelow(True)
     stats_text = (
