@@ -54,3 +54,8 @@ Results: trades=232, win=58.6%, Sharpe=3.96, total=+5,649
 2. **逐月分析** — 每月損益分布
 3. **Weekday 分析** — 按星期幾分組的損益與勝率
 4. **結算日分析** — 台指期結算日（每月第三個週三，遇非交易日延後）單獨分析
+
+## Rejected vs Inconclusive 判定標準
+- 研究過但沒有交易價值 = **rejected**（無 edge）
+- **inconclusive** 僅用於結果真正不明確、未來可能重新探索的情況（如樣本不足、資料品質問題）
+- 統計顯著但效應不足以產生 actionable edge → rejected
