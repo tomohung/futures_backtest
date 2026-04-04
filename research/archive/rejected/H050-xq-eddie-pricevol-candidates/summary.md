@@ -30,4 +30,4 @@ Rejected
 - Proposal：proposal.md
 - Distribution：results/distribution.md
 - Explore Scripts：explore.py, explore_batch2.py, explore_batch4.py, explore_batch5_full_scan.py
-- 候選清單：../../xq-eddie-strategy-candidates.md
+- 候選清單：xq-eddie-strategy-candidates.md
