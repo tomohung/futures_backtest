@@ -1,0 +1,27 @@
+//@version=6
+indicator("Volume vs 1.5x MA", overlay=false)
+
+// Input parameters
+maLength5 = input.int(5, "Short MA Length", minval=1)
+maLength21 = input.int(21, "Long MA Length", minval=1)
+multiplier = input.float(1.5, "Volume Multiplier", minval=0.1, step=0.1)
+
+// Calculate volume MAs
+volumeMA5 = ta.sma(volume, maLength5)
+volumeMA21 = ta.sma(volume, maLength21)
+
+// Calculate threshold (based on long MA)
+threshold = volumeMA21 * multiplier
+
+// Determine color based on volume vs threshold
+volumeColor = volume > threshold ? color.red : color.gray
+
+// Plot volume bars
+plot(volume, "Volume", style=plot.style_columns, color=volumeColor)
+
+// Plot MA lines
+plot(volumeMA5, "Volume MA 5", color=color.yellow, linewidth=2)
+plot(volumeMA21, "Volume MA 21", color=color.blue, linewidth=2)
+
+// Plot the threshold line
+plot(threshold, "1.5x MA Threshold", color=color.orange, linewidth=1, style=plot.style_cross)
