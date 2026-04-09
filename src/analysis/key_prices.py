@@ -10,6 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.font_manager as fm
+from collections import defaultdict
 from datetime import timedelta
 from pathlib import Path
 from scipy.signal import find_peaks
@@ -191,6 +192,122 @@ def get_key_prices():
             "today_wd": today_wd,
         }
 
+    # Weekday 漲跌統計（近 ~40 個交易日 ≈ 2 個月）
+    with duckdb.connect(str(DB_PATH), read_only=True) as conn:
+        # 日盤 + 早盤：from ohlcv_1m
+        day_morning_rows = conn.execute("""
+            WITH trading_days AS (
+                SELECT DISTINCT timestamp::DATE AS td
+                FROM ohlcv_1m
+                WHERE symbol = ?
+                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+                ORDER BY td DESC
+                LIMIT 40
+            ),
+            day_session AS (
+                SELECT
+                    timestamp::DATE AS td,
+                    FIRST(open ORDER BY timestamp) AS day_open,
+                    LAST(close ORDER BY timestamp) AS day_close
+                FROM ohlcv_1m
+                WHERE symbol = ?
+                  AND timestamp::DATE IN (SELECT td FROM trading_days)
+                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+                GROUP BY td
+            ),
+            morning_session AS (
+                SELECT
+                    timestamp::DATE AS td,
+                    FIRST(open ORDER BY timestamp) AS morn_open,
+                    LAST(close ORDER BY timestamp) AS morn_close
+                FROM ohlcv_1m
+                WHERE symbol = ?
+                  AND timestamp::DATE IN (SELECT td FROM trading_days)
+                  AND timestamp::TIME BETWEEN '09:00:00' AND '10:30:00'
+                GROUP BY td
+            )
+            SELECT
+                d.td,
+                DAYOFWEEK(d.td) AS dow,
+                d.day_open, d.day_close,
+                m.morn_open, m.morn_close
+            FROM day_session d
+            LEFT JOIN morning_session m ON d.td = m.td
+            ORDER BY d.td
+        """, [SYMBOL, SYMBOL, SYMBOL]).fetchall()
+
+        # 夜盤：15:00~隔日 05:00，以當日日期為基準
+        night_rows = conn.execute("""
+            WITH trading_days AS (
+                SELECT DISTINCT timestamp::DATE AS td
+                FROM ohlcv_1m
+                WHERE symbol = ?
+                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+                ORDER BY td DESC
+                LIMIT 40
+            )
+            SELECT
+                td,
+                DAYOFWEEK(td) AS dow,
+                night_open,
+                night_close
+            FROM (
+                SELECT
+                    d.td,
+                    FIRST(m.open ORDER BY m.timestamp) AS night_open,
+                    LAST(m.close ORDER BY m.timestamp) AS night_close
+                FROM trading_days d
+                JOIN ohlcv_1m m ON m.symbol = ?
+                  AND (
+                    (m.timestamp::DATE = d.td AND m.timestamp::TIME >= '15:00:00')
+                    OR
+                    (m.timestamp::DATE = d.td + INTERVAL '1 day' AND m.timestamp::TIME <= '05:00:00')
+                  )
+                GROUP BY d.td
+            ) sub
+            WHERE night_open IS NOT NULL
+            ORDER BY td
+        """, [SYMBOL, SYMBOL]).fetchall()
+
+    # 彙整 by weekday（DuckDB DAYOFWEEK: 0=Sun, 1=Mon, ... 6=Sat）
+    # 轉成 Python weekday: 0=Mon, ... 4=Fri
+    wd_data = defaultdict(lambda: {
+        "day": [], "morning": [], "night": []
+    })
+    for row in day_morning_rows:
+        td, dow, day_open, day_close, morn_open, morn_close = row
+        py_wd = (dow - 1) % 7  # DuckDB 1=Mon → Python 0=Mon
+        if day_open is not None and day_close is not None:
+            wd_data[py_wd]["day"].append(float(day_close - day_open))
+        if morn_open is not None and morn_close is not None:
+            wd_data[py_wd]["morning"].append(float(morn_close - morn_open))
+
+    for row in night_rows:
+        td, dow, night_open, night_close = row
+        py_wd = (dow - 1) % 7
+        if night_open is not None and night_close is not None:
+            wd_data[py_wd]["night"].append(float(night_close - night_open))
+
+    def _agg(changes):
+        if not changes:
+            return {"up": 0, "down": 0, "avg_chg": 0.0}
+        up = sum(1 for c in changes if c > 0)
+        down = len(changes) - up
+        avg_chg = sum(changes) / len(changes)
+        return {"up": up, "down": down, "avg_chg": round(avg_chg)}
+
+    weekday_stats = {
+        "today_wd": next_day.weekday(),  # next_day = 今天的交易日
+        "stats": {
+            wd: {
+                "day": _agg(wd_data[wd]["day"]),
+                "morning": _agg(wd_data[wd]["morning"]),
+                "night": _agg(wd_data[wd]["night"]),
+            }
+            for wd in range(5)
+        }
+    }
+
     result = {
         "last_day": last_day,
         "prev_day": prev_day,
@@ -201,6 +318,7 @@ def get_key_prices():
         "ma30_20_up": ma_row[1] if ma_row else None,
         "bars_15m_pre10": bars_15m_pre10,
         "vol_alert": vol_alert,
+        "weekday_stats": weekday_stats,
     }
     result["sr"] = _calc_sr(SYMBOL)
     return result
