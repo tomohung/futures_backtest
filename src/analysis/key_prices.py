@@ -294,7 +294,7 @@ def get_key_prices():
         up = sum(1 for c in changes if c > 0)
         down = len(changes) - up
         avg_chg = sum(changes) / len(changes)
-        return {"up": up, "down": down, "avg_chg": round(avg_chg)}
+        return {"up": up, "down": down, "avg_chg": float(round(avg_chg))}
 
     weekday_stats = {
         "today_wd": next_day.weekday(),  # next_day = 今天的交易日
