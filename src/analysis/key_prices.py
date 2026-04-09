@@ -868,7 +868,6 @@ def plot_sr_chart(data, n_days=20):
     ax_macd.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8, color="#cccccc")
 
     # ── Weekday 統計表格（底部）──────────────────────────
-    ax_table.set_facecolor("#16213e")
     ax_table.set_xlim(0, 1)
     ax_table.set_ylim(0, 1)
     ax_table.axis("off")
@@ -895,9 +894,9 @@ def plot_sr_chart(data, n_days=20):
             s = wd_stats["stats"][wd]
             marker = " ◀" if wd == today_wd else ""
             row_label = f"週{wd_names[wd]}{marker}"
-            day_txt, day_clr = _fmt_cell(s["day"])
-            morn_txt, morn_clr = _fmt_cell(s["morning"])
-            night_txt, night_clr = _fmt_cell(s["night"])
+            day_txt, _ = _fmt_cell(s["day"])
+            morn_txt, _ = _fmt_cell(s["morning"])
+            night_txt, _ = _fmt_cell(s["night"])
             cell_text.append([row_label, day_txt, morn_txt, night_txt])
             if wd == today_wd:
                 cell_colors.append(["#2a3a5e"] * 4)
