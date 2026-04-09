@@ -739,17 +739,18 @@ def plot_sr_chart(data, n_days=20):
     macd_hist = macd_line - signal_line
 
     _setup_font()
-    fig = plt.figure(figsize=(16, 10), layout="constrained")
-    gs = fig.add_gridspec(2, 2, height_ratios=[3, 1], width_ratios=[5, 1],
+    fig = plt.figure(figsize=(16, 12), layout="constrained")
+    gs = fig.add_gridspec(3, 2, height_ratios=[3, 1, 0.6], width_ratios=[5, 1],
                           hspace=0.08)
     ax     = fig.add_subplot(gs[0, 0])
     ax_vp  = fig.add_subplot(gs[0, 1], sharey=ax)
     ax_macd = fig.add_subplot(gs[1, 0], sharex=ax)
     ax_empty = fig.add_subplot(gs[1, 1])
     ax_empty.set_visible(False)
+    ax_table = fig.add_subplot(gs[2, :])
 
     fig.patch.set_facecolor("#1a1a2e")
-    for a in (ax, ax_vp, ax_macd):
+    for a in (ax, ax_vp, ax_macd, ax_table):
         a.set_facecolor("#16213e")
         a.tick_params(colors="#cccccc")
         for spine in a.spines.values():
@@ -865,6 +866,80 @@ def plot_sr_chart(data, n_days=20):
     ax.tick_params(labelbottom=False)
     ax_macd.set_xticks(tick_pos)
     ax_macd.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8, color="#cccccc")
+
+    # ── Weekday 統計表格（底部）──────────────────────────
+    ax_table.set_facecolor("#16213e")
+    ax_table.set_xlim(0, 1)
+    ax_table.set_ylim(0, 1)
+    ax_table.axis("off")
+
+    wd_stats = data.get("weekday_stats")
+    if wd_stats:
+        wd_names = {0: "一", 1: "二", 2: "三", 3: "四", 4: "五"}
+        today_wd = wd_stats["today_wd"]
+
+        def _fmt_cell(s):
+            total = s["up"] + s["down"]
+            if total == 0:
+                return "—", "#cccccc"
+            pct = s["up"] / total * 100
+            sign = "+" if s["avg_chg"] >= 0 else ""
+            text = f"{s['up']}漲/{s['down']}跌 {pct:.0f}% 均{sign}{s['avg_chg']:.0f}pt"
+            color = "#ef5350" if pct > 50 else "#26a69a" if pct < 50 else "#cccccc"
+            return text, color
+
+        col_labels = ["", "日盤 08:45-13:45", "早盤 09:00-10:30", "夜盤 15:00-05:00"]
+        cell_text = []
+        cell_colors = []
+        for wd in range(5):
+            s = wd_stats["stats"][wd]
+            marker = " ◀" if wd == today_wd else ""
+            row_label = f"週{wd_names[wd]}{marker}"
+            day_txt, day_clr = _fmt_cell(s["day"])
+            morn_txt, morn_clr = _fmt_cell(s["morning"])
+            night_txt, night_clr = _fmt_cell(s["night"])
+            cell_text.append([row_label, day_txt, morn_txt, night_txt])
+            if wd == today_wd:
+                cell_colors.append(["#2a3a5e"] * 4)
+            else:
+                cell_colors.append(["#16213e"] * 4)
+
+        table = ax_table.table(
+            cellText=cell_text,
+            colLabels=col_labels,
+            cellLoc="center",
+            loc="center",
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+
+        for (row, col), cell in table.get_celld().items():
+            cell.set_edgecolor("#444466")
+            if row == 0:
+                # header
+                cell.set_facecolor("#1a1a2e")
+                cell.set_text_props(color="#f9ca24", fontweight="bold")
+            else:
+                cell.set_facecolor(cell_colors[row - 1][col])
+                if col == 0:
+                    cell.set_text_props(color="#cccccc", fontweight="bold")
+                else:
+                    # Color based on win rate
+                    s_key = ["day", "morning", "night"][col - 1]
+                    s = wd_stats["stats"][row - 1][s_key]
+                    total = s["up"] + s["down"]
+                    if total > 0:
+                        pct = s["up"] / total * 100
+                        clr = "#ef5350" if pct > 50 else "#26a69a" if pct < 50 else "#cccccc"
+                    else:
+                        clr = "#cccccc"
+                    cell.set_text_props(color=clr)
+
+        table.scale(1, 1.5)
+        ax_table.set_title(
+            "Weekday 漲跌統計（近 2 個月）",
+            color="#eeeeee", fontsize=10, pad=4,
+        )
 
     out_path = Path(__file__).parents[2] / "output" / "sr_chart.png"
     out_path.parent.mkdir(exist_ok=True)
