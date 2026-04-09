@@ -509,6 +509,31 @@ def print_report(data):
             alert = f"— 正常｜夜盤 {n(nr)}pt, EMA {n(day_ema)}, {wd_label}常態 {n(wd_med)}（{ratio:.1f}x）"
         print(f"| 夜盤振幅警示              | {alert} |")
 
+    # Weekday 漲跌統計
+    wd_stats = d.get("weekday_stats")
+    if wd_stats:
+        wd_names = {0: "一", 1: "二", 2: "三", 3: "四", 4: "五"}
+        today_wd = wd_stats["today_wd"]
+
+        def _fmt(s):
+            total = s["up"] + s["down"]
+            if total == 0:
+                return "—"
+            pct = s["up"] / total * 100
+            sign = "+" if s["avg_chg"] >= 0 else ""
+            return f"{s['up']}漲/{s['down']}跌 {pct:.0f}% 均{sign}{s['avg_chg']:.0f}pt"
+
+        print()
+        print("### Weekday 漲跌統計（近 2 個月）")
+        print()
+        print("|      | 日盤 08:45-13:45 | 早盤 09:00-10:30 | 夜盤 15:00-05:00 |")
+        print("|------|------------------|------------------|------------------|")
+        for wd in range(5):
+            s = wd_stats["stats"][wd]
+            marker = " ◀" if wd == today_wd else ""
+            label = f"週{wd_names[wd]}{marker}"
+            print(f"| {label:4s} | {_fmt(s['day']):16s} | {_fmt(s['morning']):16s} | {_fmt(s['night']):16s} |")
+
     # 支撐壓力
     sr = d.get("sr", {})
     ref_price = ref if ref is not None else d["day"]["close"]
