@@ -884,7 +884,13 @@ def plot_sr_chart(data, n_days=20):
             pct = s["up"] / total * 100
             sign = "+" if s["avg_chg"] >= 0 else ""
             text = f"{s['up']}漲/{s['down']}跌 {pct:.0f}% 均{sign}{s['avg_chg']:.0f}pt"
-            color = "#ef5350" if pct > 50 else "#26a69a" if pct < 50 else "#cccccc"
+            # 同向才上色：勝率>50%且均正→紅，勝率<50%且均負→綠，不一致→白
+            if pct > 50 and s["avg_chg"] > 0:
+                color = "#ef5350"
+            elif pct < 50 and s["avg_chg"] < 0:
+                color = "#26a69a"
+            else:
+                color = "#cccccc"
             return text, color
 
         col_labels = ["", "日盤 08:45-13:45", "早盤 09:00-10:30", "夜盤 15:00-05:00"]
@@ -929,7 +935,12 @@ def plot_sr_chart(data, n_days=20):
                     total = s["up"] + s["down"]
                     if total > 0:
                         pct = s["up"] / total * 100
-                        clr = "#ef5350" if pct > 50 else "#26a69a" if pct < 50 else "#cccccc"
+                        if pct > 50 and s["avg_chg"] > 0:
+                            clr = "#ef5350"
+                        elif pct < 50 and s["avg_chg"] < 0:
+                            clr = "#26a69a"
+                        else:
+                            clr = "#cccccc"
                     else:
                         clr = "#cccccc"
                     cell.set_text_props(color=clr)
