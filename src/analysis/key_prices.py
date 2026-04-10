@@ -740,7 +740,7 @@ def plot_sr_chart(data, n_days=20):
 
     _setup_font()
     fig = plt.figure(figsize=(16, 12), layout="constrained")
-    gs = fig.add_gridspec(3, 2, height_ratios=[3, 1, 0.6], width_ratios=[5, 1],
+    gs = fig.add_gridspec(3, 2, height_ratios=[3, 1, 0.9], width_ratios=[5, 1],
                           hspace=0.08)
     ax     = fig.add_subplot(gs[0, 0])
     ax_vp  = fig.add_subplot(gs[0, 1], sharey=ax)
@@ -916,7 +916,7 @@ def plot_sr_chart(data, n_days=20):
             loc="center",
         )
         table.auto_set_font_size(False)
-        table.set_fontsize(9)
+        table.set_fontsize(11)
 
         for (row, col), cell in table.get_celld().items():
             cell.set_edgecolor("#444466")
@@ -945,10 +945,10 @@ def plot_sr_chart(data, n_days=20):
                         clr = "#cccccc"
                     cell.set_text_props(color=clr)
 
-        table.scale(1, 1.5)
+        table.scale(1, 1.8)
         ax_table.set_title(
             "Weekday 漲跌統計（近 2 個月）",
-            color="#eeeeee", fontsize=10, pad=4,
+            color="#eeeeee", fontsize=10, pad=20,
         )
 
     out_path = Path(__file__).parents[2] / "output" / "sr_chart.png"
