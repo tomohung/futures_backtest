@@ -261,7 +261,7 @@ Confirmed 的假設才進入 `strategies/live/`。
 跨年度比較用 `損益% = 損益點數 / 進場價 × 100`，Sharpe 也基於損益%。
 
 ### Behavior Rules
-- 每次對話開始前，主動讀取相關的 specs/ 文件
+- 每次對話開始前，主動讀取 `memory/MEMORY.md` 和相關的 specs/ 文件
 - 不在未通過 GATE 的情況下執行回測
 - 衍生想法記錄在當前結果文件的 Derived Hypotheses，不主動修改其他文件
 - 所有數字結論必須附上樣本數
