@@ -14,6 +14,14 @@ import numpy as np
 from datetime import date, timedelta
 from pathlib import Path
 
+from src.analysis.chart_style import (
+    apply_style, style_axes,
+    BG_FIG, BG_AXES, COLOR_UP, COLOR_DOWN,
+    COLOR_ACCENT_ORANGE, COLOR_ACCENT_BLUE, COLOR_ACCENT_PURPLE,
+    COLOR_ACCENT_GOLD, COLOR_TEXT, COLOR_TEXT_LIGHT, COLOR_TEXT_MUTED,
+    COLOR_GRID, BG_TABLE_HIGHLIGHT,
+)
+
 DB_PATH = Path(__file__).parents[2] / "data" / "futures.duckdb"
 SYMBOL = "TX"
 VIX_BASE = "https://www.taifex.com.tw/file/taifex/Dailydownload/vix/log2data/{ym}new.txt"
@@ -218,20 +226,6 @@ def get_vix_data(n=20):
     return sorted_rows[-n:]
 
 
-def setup_font():
-    font_candidates = [
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/System/Library/Fonts/Supplemental/Arial Unicode MS.ttf",
-        "/Library/Fonts/Arial Unicode MS.ttf",
-    ]
-    for f in font_candidates:
-        if Path(f).exists():
-            fp = fm.FontProperties(fname=f)
-            plt.rcParams["font.family"] = fp.get_name()
-            return
-    plt.rcParams["axes.unicode_minus"] = False
-
-
 def main():
     range_data = get_daily_range(20)
     dates_r = [r[0] for r in range_data]
@@ -249,7 +243,7 @@ def main():
     trend_coef = np.polyfit(x_idx, vix_vals, 1)
     trend_line = np.polyval(trend_coef, x_idx)
     trend_dir = "↑ 上升" if trend_coef[0] > 0 else "↓ 下降"
-    trend_color = "#e74c3c" if trend_coef[0] > 0 else "#27ae60"
+    trend_color = COLOR_UP if trend_coef[0] > 0 else COLOR_DOWN
 
     density_n = 60  # 近 3 個月看密度趨勢
     density_data = get_potential_density(density_n)
@@ -257,38 +251,42 @@ def main():
     density_counts = [r[1] for r in density_data]
     density_pcts = [r[2] for r in density_data]
 
-    setup_font()
+    apply_style()
     weekday_names = ["一", "二", "三", "四", "五", "六", "日"]
 
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 11))
-    fig.suptitle("TX 日盤波動 & VIX & 潛力日密度", fontsize=15, fontweight="bold", y=0.98)
+    fig.suptitle("TX 日盤波動 & VIX & 潛力日密度", fontsize=15, fontweight="bold",
+                 y=0.98, color=COLOR_TEXT)
+
+    for ax in (ax1, ax2, ax3):
+        style_axes(ax)
 
     # ── 上圖：日盤波動 ──
     n_bars = len(ranges)
-    colors = ["#e74c3c" if r > avg20_range else "#3498db" for r in ranges]
-    bars = ax1.bar(range(n_bars), ranges, color=colors, width=0.6, zorder=3)
+    colors = [COLOR_UP if r > avg20_range else COLOR_ACCENT_BLUE for r in ranges]
+    bars = ax1.bar(range(n_bars), ranges, color=colors, width=0.6, zorder=3,
+                   edgecolor=BG_AXES, linewidth=0.3)
     for bar, v in zip(bars, ranges):
         ax1.text(bar.get_x() + bar.get_width() / 2, v + 2, f"{int(v)}",
-                 ha="center", va="bottom", fontsize=9, fontweight="bold")
-    ax1.axhline(avg20_range, color="#f39c12", linewidth=2, linestyle="--", zorder=4,
-                label=f"20日均波動 {avg20_range:.0f}pt")
+                 ha="center", va="bottom", fontsize=9, fontweight="bold",
+                 color=COLOR_TEXT)
+    ax1.axhline(avg20_range, color=COLOR_ACCENT_ORANGE, linewidth=2, linestyle="--",
+                zorder=4, label=f"20日均波動 {avg20_range:.0f}pt")
 
-    # 夜盤振幅警示：在最右邊加一根虛線 bar 代表今日夜盤
+    # 夜盤振幅警示
     if night_alert:
         nr = night_alert["night_range"]
-        alert_x = n_bars  # 放在歷史 bar 的右邊
-        alert_color = {"up": "#e74c3c", "down": "#27ae60", "normal": "#95a5a6"}
-        bar_color = alert_color.get(night_alert["alert_type"], "#95a5a6")
+        alert_x = n_bars
+        alert_color = {"up": COLOR_UP, "down": COLOR_DOWN, "normal": COLOR_TEXT_LIGHT}
+        bar_color = alert_color.get(night_alert["alert_type"], COLOR_TEXT_LIGHT)
         ax1.bar(alert_x, nr, color=bar_color, width=0.6, zorder=3,
                 alpha=0.4, edgecolor=bar_color, linewidth=2, linestyle="--")
-        # 警示文字框（放在 bar 頂端上方）
         ax1.annotate(f"{int(nr)}pt\n{night_alert['alert_text']}",
                      xy=(alert_x, nr), xytext=(0, 10),
                      textcoords="offset points", ha="center", fontsize=9,
                      fontweight="bold", color=bar_color,
-                     bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                     bbox=dict(boxstyle="round,pad=0.4", facecolor=BG_FIG,
                                edgecolor=bar_color, linewidth=2, alpha=0.95))
-        # X 軸標籤
         all_labels = [f"{d}\n（週{weekday_names[d.weekday()]}）" for d in dates_r]
         all_labels.append(f"今日\n（{night_alert['wd_label']}）\n夜盤")
         ax1.set_xticks(range(n_bars + 1))
@@ -303,34 +301,32 @@ def main():
 
     ax1.set_ylabel("波動點數（高 - 低）", fontsize=11)
     ax1.set_title("日盤波動（近20交易日）", fontsize=12)
-    ax1.legend(fontsize=10)
+    ax1.legend(fontsize=10, facecolor=BG_FIG, edgecolor=COLOR_GRID)
     ax1.set_ylim(0, y_max)
-    ax1.yaxis.grid(True, linestyle="--", alpha=0.4)
-    ax1.set_axisbelow(True)
     stats_text = (
         f"近20日均: {avg20_range:.0f}pt  "
         f"最大: {max(ranges):.0f}pt  "
         f"最小: {min(ranges):.0f}pt"
     )
     ax1.text(0.5, 0.97, stats_text, transform=ax1.transAxes, fontsize=9,
-             ha="center", va="top",
-             bbox=dict(boxstyle="round", facecolor="lightyellow", alpha=0.8))
+             ha="center", va="top", color=COLOR_TEXT,
+             bbox=dict(boxstyle="round,pad=0.4", facecolor=BG_TABLE_HIGHLIGHT,
+                       edgecolor=COLOR_ACCENT_GOLD, alpha=0.9, linewidth=0.8))
 
-    # ── 下圖：VIX ──
-    ax2.plot(range(len(vix_vals)), vix_vals, color="#8e44ad", linewidth=2,
+    # ── 中圖：VIX ──
+    ax2.plot(range(len(vix_vals)), vix_vals, color=COLOR_ACCENT_PURPLE, linewidth=2,
              marker="o", markersize=5, zorder=3, label="VIX")
     ax2.plot(range(len(vix_vals)), trend_line, color=trend_color, linewidth=2,
              linestyle="--", zorder=4, label=f"趨勢 {trend_dir}（{trend_coef[0]:+.2f}/日）")
-    ax2.axhline(avg20_vix, color="#f39c12", linewidth=1.5, linestyle=":",
+    ax2.axhline(avg20_vix, color=COLOR_ACCENT_ORANGE, linewidth=1.5, linestyle=":",
                 label=f"20日均 {avg20_vix:.2f}")
 
-    # 數值標籤（最後一點 + 最高最低）
     max_i = int(np.argmax(vix_vals))
     min_i = int(np.argmin(vix_vals))
     for i in set([max_i, min_i, len(vix_vals) - 1]):
         ax2.annotate(f"{vix_vals[i]:.2f}", xy=(i, vix_vals[i]),
                      xytext=(0, 8), textcoords="offset points",
-                     ha="center", fontsize=9, fontweight="bold")
+                     ha="center", fontsize=9, fontweight="bold", color=COLOR_TEXT)
 
     ax2.set_xticks(range(len(vix_dates)))
     ax2.set_xticklabels(
@@ -338,31 +334,26 @@ def main():
         rotation=0, ha="center", fontsize=8)
     ax2.set_ylabel("VIX", fontsize=11)
     ax2.set_title("台指 VIX 指數（近20交易日）", fontsize=12)
-    ax2.legend(fontsize=10)
-    ax2.yaxis.grid(True, linestyle="--", alpha=0.4)
-    ax2.set_axisbelow(True)
+    ax2.legend(fontsize=10, facecolor=BG_FIG, edgecolor=COLOR_GRID)
 
-    # ── 下圖：潛力日密度（折線圖，近 3 個月） ──
+    # ── 下圖：潛力日密度 ──
     n_density = len(density_pcts)
     pcts_arr = np.array(density_pcts)
 
-    ax3.plot(range(n_density), pcts_arr, color="#2196F3", linewidth=1.5, zorder=3)
-    # 填充高低區域
+    ax3.plot(range(n_density), pcts_arr, color=COLOR_ACCENT_BLUE, linewidth=1.8, zorder=3)
     ax3.fill_between(range(n_density), pcts_arr, 60,
-                     where=pcts_arr >= 60, color="#e74c3c", alpha=0.2, zorder=2)
+                     where=pcts_arr >= 60, color=COLOR_UP, alpha=0.15, zorder=2)
     ax3.fill_between(range(n_density), pcts_arr, 30,
-                     where=pcts_arr <= 30, color="#27ae60", alpha=0.2, zorder=2)
-    ax3.axhline(50, color="#999", linewidth=1, linestyle=":", zorder=2, label="50%")
-    ax3.axhspan(60, 100, color="#e74c3c", alpha=0.05, zorder=1)
-    ax3.axhspan(0, 30, color="#27ae60", alpha=0.05, zorder=1)
+                     where=pcts_arr <= 30, color=COLOR_DOWN, alpha=0.15, zorder=2)
+    ax3.axhline(50, color=COLOR_TEXT_MUTED, linewidth=1, linestyle=":", zorder=2, label="50%")
+    ax3.axhspan(60, 100, color=COLOR_UP, alpha=0.04, zorder=1)
+    ax3.axhspan(0, 30, color=COLOR_DOWN, alpha=0.04, zorder=1)
 
-    # 標註最新值
     ax3.annotate(f"{density_pcts[-1]:.0f}%\n({int(density_counts[-1])}/{DENSITY_WINDOW})",
                  xy=(n_density - 1, density_pcts[-1]),
                  xytext=(0, 10), textcoords="offset points",
-                 ha="center", fontsize=10, fontweight="bold", color="#2196F3")
+                 ha="center", fontsize=10, fontweight="bold", color=COLOR_ACCENT_BLUE)
 
-    # X 軸：每 10 天標一次
     tick_step = max(1, n_density // 6)
     tick_pos = list(range(0, n_density, tick_step))
     if n_density - 1 not in tick_pos:
@@ -374,14 +365,12 @@ def main():
     ax3.set_title(f"滾動 {DENSITY_WINDOW} 日潛力日密度（近 {density_n} 交易日）"
                   "  紅區≥60% 綠區≤30%", fontsize=12)
     ax3.set_ylim(0, 105)
-    ax3.legend(fontsize=10, loc="lower left")
-    ax3.yaxis.grid(True, linestyle="--", alpha=0.4)
-    ax3.set_axisbelow(True)
+    ax3.legend(fontsize=10, loc="lower left", facecolor=BG_FIG, edgecolor=COLOR_GRID)
 
     plt.tight_layout()
     out_path = Path(__file__).parents[2] / "output" / "daily_range.png"
     out_path.parent.mkdir(exist_ok=True)
-    plt.savefig(out_path, dpi=150)
+    plt.savefig(out_path, dpi=150, facecolor=fig.get_facecolor())
     print(f"圖表已儲存：{out_path}")
 
     # 自動複製到剪貼簿（macOS）

@@ -15,6 +15,16 @@ from datetime import timedelta
 from pathlib import Path
 from scipy.signal import find_peaks
 
+from src.analysis.chart_style import (
+    apply_style, style_axes, style_table,
+    BG_FIG, BG_AXES, BG_TABLE_HIGHLIGHT,
+    COLOR_UP, COLOR_DOWN,
+    COLOR_ACCENT_ORANGE, COLOR_ACCENT_BLUE, COLOR_ACCENT_PURPLE,
+    COLOR_ACCENT_GOLD, COLOR_ACCENT_TEAL, COLOR_ACCENT_CORAL,
+    COLOR_TEXT, COLOR_TEXT_LIGHT, COLOR_TEXT_MUTED, COLOR_TEXT_WHITE,
+    COLOR_GRID, COLOR_BORDER,
+)
+
 DB_PATH = Path(__file__).parents[2] / "data" / "futures.duckdb"
 SYMBOL = "TX"
 
@@ -680,14 +690,7 @@ def get_1h_bars(n_days=20):
 
 
 def _setup_font():
-    for f in [
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/System/Library/Fonts/Supplemental/Arial Unicode MS.ttf",
-    ]:
-        if Path(f).exists():
-            fp = fm.FontProperties(fname=f)
-            plt.rcParams["font.family"] = fp.get_name()
-            return
+    apply_style()
 
 
 def plot_sr_chart(data, n_days=20):
@@ -749,18 +752,15 @@ def plot_sr_chart(data, n_days=20):
     ax_empty.set_visible(False)
     ax_table = fig.add_subplot(gs[2, :])
 
-    fig.patch.set_facecolor("#1a1a2e")
+    fig.patch.set_facecolor(BG_FIG)
     for a in (ax, ax_vp, ax_macd, ax_table):
-        a.set_facecolor("#16213e")
-        a.tick_params(colors="#cccccc")
-        for spine in a.spines.values():
-            spine.set_edgecolor("#444466")
+        style_axes(a)
 
     # ── K 線 ──────────────────────────────────────────────
     W = 0.4
     for i in range(n):
         bull = closes[i] >= opens[i]
-        color = "#ef5350" if bull else "#26a69a"
+        color = COLOR_UP if bull else COLOR_DOWN
         body_lo = min(opens[i], closes[i])
         body_hi = max(opens[i], closes[i])
         ax.add_patch(mpatches.Rectangle(
@@ -772,7 +772,7 @@ def plot_sr_chart(data, n_days=20):
 
     # ── 均線 5/21/65/130/233 ──────────────────────────────
     ma_periods = [5, 21, 65, 130, 233]
-    ma_colors  = ["#ef5350", "#f9ca24", "#26a69a", "#2196f3", "#9c27b0"]
+    ma_colors  = [COLOR_UP, COLOR_ACCENT_GOLD, COLOR_DOWN, COLOR_ACCENT_BLUE, COLOR_ACCENT_PURPLE]
     for period, mc in zip(ma_periods, ma_colors):
         if n >= period:
             ma = np.full(n, np.nan)
@@ -785,23 +785,23 @@ def plot_sr_chart(data, n_days=20):
     # ── 支撐壓力水平線 ────────────────────────────────────
     for p, cnt in swing_highs:
         lw = 1 + cnt * 0.4
-        ax.axhline(p, color="#ff6b6b", linewidth=lw, linestyle="--", alpha=0.8, zorder=4)
+        ax.axhline(p, color=COLOR_ACCENT_CORAL, linewidth=lw, linestyle="--", alpha=0.8, zorder=4)
         ax.text(n - 0.5, p, f" R {p:,} {'★'*cnt}",
-                color="#ff6b6b", fontsize=7, va="bottom", zorder=5)
+                color=COLOR_ACCENT_CORAL, fontsize=7, va="bottom", zorder=5)
     for p, cnt in swing_lows:
         lw = 1 + cnt * 0.4
-        ax.axhline(p, color="#4ecdc4", linewidth=lw, linestyle="--", alpha=0.8, zorder=4)
+        ax.axhline(p, color=COLOR_ACCENT_TEAL, linewidth=lw, linestyle="--", alpha=0.8, zorder=4)
         ax.text(n - 0.5, p, f" S {p:,} {'★'*cnt}",
-                color="#4ecdc4", fontsize=7, va="top", zorder=5)
+                color=COLOR_ACCENT_TEAL, fontsize=7, va="top", zorder=5)
     for lo, hi, v, *_ in vp_res:
         mid = (lo + hi) / 2
         if ref - RANGE <= mid <= ref + RANGE:
-            alpha = 0.15 + 0.25 * (v / vp_max)
-            ax.axhspan(lo, hi, color="#f9ca24", alpha=alpha, zorder=1)
+            alpha = 0.08 + 0.20 * (v / vp_max)
+            ax.axhspan(lo, hi, color=COLOR_ACCENT_GOLD, alpha=alpha, zorder=1)
 
     # 現價基準線
-    ax.axhline(ref, color="#ffffff", linewidth=1, linestyle=":", alpha=0.6, zorder=4)
-    ax.text(0, ref, f" 基準 {ref:,}", color="#ffffff", fontsize=8, va="bottom", zorder=5)
+    ax.axhline(ref, color=COLOR_TEXT, linewidth=1, linestyle=":", alpha=0.5, zorder=4)
+    ax.text(0, ref, f" 基準 {ref:,}", color=COLOR_TEXT, fontsize=8, va="bottom", zorder=5)
 
     # ── X 軸標籤（每日第一根 08:xx bar 標日期）────────────
     tick_pos, tick_lbl = [], []
@@ -813,16 +813,14 @@ def plot_sr_chart(data, n_days=20):
             tick_lbl.append(d.strftime("%m/%d"))
             prev_date = d
     ax.set_xticks(tick_pos)
-    ax.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8, color="#cccccc")
+    ax.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8)
     ax.set_xlim(-1, n)
-    ax.yaxis.set_tick_params(labelcolor="#cccccc")
     ax.set_title(
         f"TX 1H K線 + 支撐壓力（近 {n_days} 日，基準 {ref:,}）",
-        color="#eeeeee", fontsize=12, pad=8,
+        color=COLOR_TEXT, fontsize=12, pad=8,
     )
-    ax.grid(axis="y", color="#333355", linewidth=0.5, zorder=0)
-    ax.legend(loc="upper left", fontsize=7, facecolor="#1a1a2e",
-              labelcolor="#cccccc", edgecolor="#444466", ncol=5)
+    ax.legend(loc="upper left", fontsize=7, facecolor=BG_FIG,
+              labelcolor=COLOR_TEXT, edgecolor=COLOR_GRID, ncol=5)
 
     # ── Volume Profile（右側）────────────────────────────
     bin_size = 50
@@ -841,31 +839,29 @@ def plot_sr_chart(data, n_days=20):
     ax_vp.barh(
         bins + bin_size / 2, vp_hist,
         height=bin_size * 0.9,
-        color="#f9ca24", alpha=0.6,
+        color=COLOR_ACCENT_GOLD, alpha=0.5,
     )
-    ax_vp.axhline(ref, color="#ffffff", linewidth=1, linestyle=":", alpha=0.6)
-    ax_vp.set_xlabel("Volume", color="#cccccc", fontsize=8)
-    ax_vp.set_title("VP", color="#eeeeee", fontsize=10)
-    ax_vp.xaxis.set_tick_params(labelcolor="#cccccc", labelsize=7)
+    ax_vp.axhline(ref, color=COLOR_TEXT, linewidth=1, linestyle=":", alpha=0.5)
+    ax_vp.set_xlabel("Volume", fontsize=8)
+    ax_vp.set_title("VP", fontsize=10)
+    ax_vp.xaxis.set_tick_params(labelsize=7)
 
     # 在所有繪圖完成後才設定 ylim，避免被 barh 自動縮放覆蓋（sharey=True）
     price_range = highs.max() - lows.min()
     ax.set_ylim(lows.min() - price_range * 0.05, highs.max() + price_range * 0.1)
 
     # ── MACD 子圖 ──────────────────────────────────────
-    hist_colors = ["#ef5350" if v >= 0 else "#26a69a" for v in macd_hist]
+    hist_colors = [COLOR_UP if v >= 0 else COLOR_DOWN for v in macd_hist]
     ax_macd.bar(x, macd_hist, color=hist_colors, width=0.6, alpha=0.7, zorder=2)
-    ax_macd.plot(x, macd_line, color="#2196f3", linewidth=1.2, label="MACD", zorder=3)
-    ax_macd.plot(x, signal_line, color="#ff9800", linewidth=1.2, label="Signal", zorder=3)
-    ax_macd.axhline(0, color="#666688", linewidth=0.5, zorder=1)
-    ax_macd.set_title("MACD (12, 26, 9)", color="#eeeeee", fontsize=10, pad=4)
-    ax_macd.legend(loc="upper left", fontsize=8, facecolor="#1a1a2e",
-                   labelcolor="#cccccc", edgecolor="#444466")
-    ax_macd.grid(axis="y", color="#333355", linewidth=0.5, zorder=0)
-    # 隱藏 K 線圖的 x 軸標籤（共用 x 軸，由 MACD 顯示）
+    ax_macd.plot(x, macd_line, color=COLOR_ACCENT_BLUE, linewidth=1.2, label="MACD", zorder=3)
+    ax_macd.plot(x, signal_line, color=COLOR_ACCENT_ORANGE, linewidth=1.2, label="Signal", zorder=3)
+    ax_macd.axhline(0, color=COLOR_TEXT_MUTED, linewidth=0.5, zorder=1)
+    ax_macd.set_title("MACD (12, 26, 9)", fontsize=10, pad=4)
+    ax_macd.legend(loc="upper left", fontsize=8, facecolor=BG_FIG,
+                   labelcolor=COLOR_TEXT, edgecolor=COLOR_GRID)
     ax.tick_params(labelbottom=False)
     ax_macd.set_xticks(tick_pos)
-    ax_macd.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8, color="#cccccc")
+    ax_macd.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8)
 
     # ── Weekday 統計表格（底部）──────────────────────────
     ax_table.set_xlim(0, 1)
@@ -880,22 +876,20 @@ def plot_sr_chart(data, n_days=20):
         def _fmt_cell(s):
             total = s["up"] + s["down"]
             if total == 0:
-                return "—", "#cccccc"
+                return "—", COLOR_TEXT_MUTED
             pct = s["up"] / total * 100
             sign = "+" if s["avg_chg"] >= 0 else ""
             text = f"{s['up']}漲/{s['down']}跌 {pct:.0f}% 均{sign}{s['avg_chg']:.0f}pt"
-            # 同向才上色：勝率>50%且均正→紅，勝率<50%且均負→綠，不一致→白
             if pct > 50 and s["avg_chg"] > 0:
-                color = "#ef5350"
+                color = COLOR_UP
             elif pct < 50 and s["avg_chg"] < 0:
-                color = "#26a69a"
+                color = COLOR_DOWN
             else:
-                color = "#cccccc"
+                color = COLOR_TEXT_LIGHT
             return text, color
 
         col_labels = ["", "日盤 08:45-13:45", "早盤 09:00-10:30", "夜盤 15:00-05:00"]
         cell_text = []
-        cell_colors = []
         for wd in range(5):
             s = wd_stats["stats"][wd]
             marker = " ◀" if wd == today_wd else ""
@@ -904,10 +898,6 @@ def plot_sr_chart(data, n_days=20):
             morn_txt, _ = _fmt_cell(s["morning"])
             night_txt, _ = _fmt_cell(s["night"])
             cell_text.append([row_label, day_txt, morn_txt, night_txt])
-            if wd == today_wd:
-                cell_colors.append(["#2a3a5e"] * 4)
-            else:
-                cell_colors.append(["#16213e"] * 4)
 
         table = ax_table.table(
             cellText=cell_text,
@@ -918,42 +908,41 @@ def plot_sr_chart(data, n_days=20):
         table.auto_set_font_size(False)
         table.set_fontsize(11)
 
+        # 找出今日高亮列（1-based，header=0）
+        highlight_row = today_wd + 1
+        style_table(table, 5, highlight_row=highlight_row)
+
+        # 覆寫文字色（根據漲跌方向上色）
         for (row, col), cell in table.get_celld().items():
-            cell.set_edgecolor("#444466")
             if row == 0:
-                # header
-                cell.set_facecolor("#1a1a2e")
-                cell.set_text_props(color="#f9ca24", fontweight="bold")
+                continue
+            if col == 0:
+                cell.set_text_props(color=COLOR_TEXT, fontweight="bold")
             else:
-                cell.set_facecolor(cell_colors[row - 1][col])
-                if col == 0:
-                    cell.set_text_props(color="#cccccc", fontweight="bold")
-                else:
-                    # Color based on win rate
-                    s_key = ["day", "morning", "night"][col - 1]
-                    s = wd_stats["stats"][row - 1][s_key]
-                    total = s["up"] + s["down"]
-                    if total > 0:
-                        pct = s["up"] / total * 100
-                        if pct > 50 and s["avg_chg"] > 0:
-                            clr = "#ef5350"
-                        elif pct < 50 and s["avg_chg"] < 0:
-                            clr = "#26a69a"
-                        else:
-                            clr = "#cccccc"
+                s_key = ["day", "morning", "night"][col - 1]
+                s = wd_stats["stats"][row - 1][s_key]
+                total = s["up"] + s["down"]
+                if total > 0:
+                    pct = s["up"] / total * 100
+                    if pct > 50 and s["avg_chg"] > 0:
+                        clr = COLOR_UP
+                    elif pct < 50 and s["avg_chg"] < 0:
+                        clr = COLOR_DOWN
                     else:
-                        clr = "#cccccc"
-                    cell.set_text_props(color=clr)
+                        clr = COLOR_TEXT_LIGHT
+                else:
+                    clr = COLOR_TEXT_MUTED
+                cell.set_text_props(color=clr, fontweight="bold")
 
         table.scale(1, 1.8)
         ax_table.set_title(
             "Weekday 漲跌統計（近 2 個月）",
-            color="#eeeeee", fontsize=10, pad=20,
+            color=COLOR_TEXT, fontsize=10, pad=20,
         )
 
     out_path = Path(__file__).parents[2] / "output" / "sr_chart.png"
     out_path.parent.mkdir(exist_ok=True)
-    plt.savefig(out_path, dpi=150, facecolor=fig.get_facecolor())
+    plt.savefig(out_path, dpi=150, facecolor=BG_FIG)
     print(f"圖表已儲存：{out_path}")
 
     try:
@@ -1018,18 +1007,15 @@ def plot_30m_chart(data, n_days=20):
 
     _setup_font()
     fig, ax = plt.subplots(figsize=(16, 7))
-    fig.patch.set_facecolor("#1a1a2e")
-    ax.set_facecolor("#16213e")
-    ax.tick_params(colors="#cccccc")
-    for spine in ax.spines.values():
-        spine.set_edgecolor("#444466")
+    fig.patch.set_facecolor(BG_FIG)
+    style_axes(ax)
 
     # K 線
     W = 0.4
     nd = len(display_idx)
     for i in range(nd):
         bull = closes_d[i] >= opens_d[i]
-        color = "#ef5350" if bull else "#26a69a"
+        color = COLOR_UP if bull else COLOR_DOWN
         body_lo = min(opens_d[i], closes_d[i])
         body_hi = max(opens_d[i], closes_d[i])
         ax.add_patch(mpatches.Rectangle(
@@ -1042,26 +1028,26 @@ def plot_30m_chart(data, n_days=20):
     # 20MA
     valid = ~np.isnan(ma20_d)
     if valid.any():
-        ax.plot(x_disp[valid], ma20_d[valid], color="#f9ca24", linewidth=1.5,
+        ax.plot(x_disp[valid], ma20_d[valid], color=COLOR_ACCENT_GOLD, linewidth=1.5,
                 label="20MA", zorder=4)
 
     # VWAP 水平線
     if vwap_last is not None:
-        ax.axhline(vwap_last, color="#ff9f43", linewidth=1.5, linestyle="-.", alpha=0.9, zorder=5)
+        ax.axhline(vwap_last, color=COLOR_ACCENT_ORANGE, linewidth=1.5, linestyle="-.", alpha=0.9, zorder=5)
         ax.text(nd - 0.5, vwap_last, f" 昨VWAP {vwap_last:,} ({last_day.strftime('%m/%d')})",
-                color="#ff9f43", fontsize=8, va="bottom", zorder=6)
+                color=COLOR_ACCENT_ORANGE, fontsize=8, va="bottom", zorder=6)
     if vwap_prev is not None:
-        ax.axhline(vwap_prev, color="#a29bfe", linewidth=1.5, linestyle="-.", alpha=0.9, zorder=5)
+        ax.axhline(vwap_prev, color=COLOR_ACCENT_PURPLE, linewidth=1.5, linestyle="-.", alpha=0.9, zorder=5)
         ax.text(nd - 0.5, vwap_prev, f" 前天VWAP {vwap_prev:,} ({prev_day.strftime('%m/%d')})",
-                color="#a29bfe", fontsize=8, va="bottom", zorder=6)
+                color=COLOR_ACCENT_PURPLE, fontsize=8, va="bottom", zorder=6)
 
     # 夜盤收盤線
     night = data.get("night")
     night_close = night.get("close") if night else None
     if night_close is not None:
-        ax.axhline(night_close, color="#00cec9", linewidth=1.5, linestyle="--", alpha=0.9, zorder=5)
+        ax.axhline(night_close, color=COLOR_ACCENT_TEAL, linewidth=1.5, linestyle="--", alpha=0.9, zorder=5)
         ax.text(nd - 0.5, night_close, f" 夜收 {night_close:,}",
-                color="#00cec9", fontsize=8, va="bottom", zorder=6)
+                color=COLOR_ACCENT_TEAL, fontsize=8, va="bottom", zorder=6)
 
     # X 軸：每日第一根標日期
     tick_pos, tick_lbl = [], []
@@ -1073,23 +1059,21 @@ def plot_30m_chart(data, n_days=20):
             tick_lbl.append(d.strftime("%m/%d"))
             prev_date = d
     ax.set_xticks(tick_pos)
-    ax.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8, color="#cccccc")
+    ax.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8)
     ax.set_xlim(-1, nd)
     price_range = highs_d.max() - lows_d.min()
     ax.set_ylim(lows_d.min() - price_range * 0.05, highs_d.max() + price_range * 0.1)
-    ax.yaxis.set_tick_params(labelcolor="#cccccc")
     ax.set_title(
         f"TX 日盤 30 分K + 20MA（近 {n_days} 日）",
-        color="#eeeeee", fontsize=12, pad=8,
+        color=COLOR_TEXT, fontsize=12, pad=8,
     )
-    ax.grid(axis="y", color="#333355", linewidth=0.5, zorder=0)
-    ax.legend(loc="upper left", fontsize=9, facecolor="#1a1a2e",
-              labelcolor="#cccccc", edgecolor="#444466")
+    ax.legend(loc="upper left", fontsize=9, facecolor=BG_FIG,
+              labelcolor=COLOR_TEXT, edgecolor=COLOR_GRID)
 
     plt.tight_layout()
     out_path = Path(__file__).parents[2] / "output" / "30m_chart.png"
     out_path.parent.mkdir(exist_ok=True)
-    plt.savefig(out_path, dpi=150, facecolor=fig.get_facecolor())
+    plt.savefig(out_path, dpi=150, facecolor=BG_FIG)
     print(f"30 分 K 圖表已儲存：{out_path}")
 
     try:
