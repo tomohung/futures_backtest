@@ -73,15 +73,6 @@ futures_backtest/
 │       ├── explore_regime.py    ← 市場機制指標探索（ADX/ATR%）
 │       ├── analyze.py           ← 交易紀錄分析
 │       └── summary_all.py       ← 所有策略跨年度比較總表
-├── specs/
-│   ├── daily_update.md          ← 每日更新系統規格
-│   └── strategies/              ← 策略規格文件（新策略必須先建規格）
-│       ├── orb.md
-│       ├── orb_phase2.md
-│       ├── orb_phase4.md        ← 現行最佳策略
-│       ├── orb_longonly.md
-│       ├── orb_filters.md
-│       └── orb_phase6.md
 ├── output/                      ← 回測結果 CSV、分析報告（勿納入版控）
 ├── notebooks/                   ← Jupyter 探索分析
 └── tests/

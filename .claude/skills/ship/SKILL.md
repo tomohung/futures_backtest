@@ -26,7 +26,7 @@ description: "Commit all changes and push to main. Use this whenever the user sa
 - `src/etl/` → `feat:` 或 `fix:`
 - `src/backtest/explore_*.py` → `research: ...`（探索腳本屬於研究）
 - `indicators/tradingview/` → `feat:` 或 `fix:`（Pine Script）
-- `specs/` / `docs/` → `docs: ...`
+- `docs/` → `docs: ...`
 - `.claude/skills/` → `chore: ...`
 - bug fixes → `fix: ...`
 - 重構但不改行為 → `refactor: ...`

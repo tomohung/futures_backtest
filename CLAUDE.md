@@ -98,7 +98,6 @@ futures_backtest/
 │   ├── raw/              ← 期貨原始 zip 檔（依年份子目錄，不納入版控）
 │   ├── raw_options/      ← 選擇權原始 zip 檔（依年份子目錄，不納入版控）
 │   └── futures.duckdb    ← DuckDB 資料庫（不納入版控）
-├── specs/                ← 交易理念與背景（未填寫模板，暫不使用）
 ├── docs/                 ← 系統技術文件
 │   └── daily_update.md
 ├── research/             ← 假設驅動的研究記錄
