@@ -20,11 +20,6 @@ description: >
 - `research/active/HXXX-名稱/proposal.md` — 了解假設與無效條件
 - `research/active/HXXX-名稱/tasks.md` — 了解待辦任務
 
-也讀取背景檔案：
-- `specs/trading-principles.md`
-- `specs/market-context.md`
-- `specs/data-sources.md`
-
 ### Step 2：執行 Phase 1 任務
 
 根據 tasks.md 中 Phase 1 的任務清單逐項執行：

@@ -6,49 +6,20 @@
 ## 技術棧
 - Python 3.14+（透過 asdf 管理）
 - DuckDB 1.x（資料儲存）
-- Backtesting.py（回測框架，待整合）
+- Backtesting.py（回測框架）
 - pandas / numpy
 
 ## 資料來源
 
-期交所每日 zip 檔，存放於 `data/raw/<年份>/Daily_YYYY_MM_DD.zip`。
-
-### 目錄結構（raw data）
-```
-data/raw/
-├── 2021/
-│   └── Daily_2021_01_04.zip   ← 交易日
-│   └── Daily_2021_01_01.zip   ← 非交易日（內容為 HTML，自動跳過）
-├── 2022/ ...
-└── 2026/
-```
-
-### zip 內容
-每個 zip 包含一個同名 `.rpt` 檔（CSV 格式）：
-
-```
-成交日期,商品代號,到期月份(週別),成交時間,成交價格,成交數量(B+S),近月價格,遠月價格,開盤集合競價
-20251231,TX     ,202601     ,084530,23150,2,-,-,
-20251231,TX     ,202601     ,084531,23152,4,-,-,
-```
-
-### 欄位說明
-- 成交日期：YYYYMMDD
-- 商品代號：有空白需 trim，TX=台指期，MTX=小台
-- 到期月份(週別)：YYYYMM，合約到期月份；**含 `/` 者為價差合約（如 `202409/202410`），需過濾**
-- 成交時間：HHMMSS（6位數）
-- 成交價格：成交價（價差合約的價格為價差值，可為負數）
-- 成交數量(B+S)：買+賣合計口數
-- 近月價格/遠月價格：多數為 `-`，忽略
-- 開盤集合競價：非空且非 `-` 表示集合競價
+期交所每日 zip 檔，詳見 README.md。關鍵注意事項：
+- 商品代號有空白需 trim
+- 含 `/` 者為價差合約，需過濾
+- 非交易日 zip 內容為 HTML，自動跳過
 
 ### 台指期交易時段
 - 日盤：08:45 ~ 13:45
 - 夜盤：15:00 ~ 隔日 05:00
 - 當沖策略目前只關注日盤
-
-### 資料保存限制
-**期交所網站僅保留最近 30 個交易日**的下載檔案。若超過一個月未更新，缺失資料無法從官網補回。建議設定每日自動排程。
 
 ## 資料庫 Schema
 
@@ -127,10 +98,7 @@ futures_backtest/
 │   ├── raw/              ← 期貨原始 zip 檔（依年份子目錄，不納入版控）
 │   ├── raw_options/      ← 選擇權原始 zip 檔（依年份子目錄，不納入版控）
 │   └── futures.duckdb    ← DuckDB 資料庫（不納入版控）
-├── specs/                ← 交易理念與背景（模板）
-│   ├── trading-principles.md
-│   ├── market-context.md
-│   └── data-sources.md
+├── specs/                ← 交易理念與背景（未填寫模板，暫不使用）
 ├── docs/                 ← 系統技術文件
 │   └── daily_update.md
 ├── research/             ← 假設驅動的研究記錄
@@ -153,7 +121,11 @@ futures_backtest/
 │   │   ├── parse_options_rpt.py ← options zip → ticks_options 表 ✅
 │   │   └── validate.py         ← 資料驗證 ✅
 │   ├── strategies/
-│   │   └── orb.py              ← ORBStrategy、ORBPhase4HybridStrategy ✅
+│   │   ├── orb.py              ← ORBStrategy（開盤區間突破）✅
+│   │   ├── reversal.py         ← ReversalStrategy（BB 反轉）✅
+│   │   ├── exhaustion.py       ← ExhaustionStrategy（趨勢耗竭反轉）✅
+│   │   ├── estimate_hl_exit.py ← EstHL 出場策略 ✅
+│   │   └── reversal_follow.py  ← Reversal 跟隨策略 ✅
 │   ├── analysis/
 │   │   ├── morning_briefing.py  ← 早盤簡報（ETL + key_prices + daily_range）✅
 │   │   ├── key_prices.py        ← 關鍵價格 + 支撐壓力 ✅
@@ -238,8 +210,6 @@ DuckDB 同時只允許一個寫入連線；多個 process 同時開啟同一 .du
 所有研究遵循假設驅動的迭代循環：理念 → 假設 → 分佈探索 → 回測驗證 → 歸檔
 Confirmed 的假設才進入 `strategies/live/`。
 
-核心理念與市場背景：`specs/trading-principles.md`、`market-context.md`、`data-sources.md`
-
 ### 命名慣例
 - 假設：HXXX-簡短名稱（如 H032-gap-reversal），編號從最大號 +1
 - 策略：SXXX-簡短名稱（如 S001-esthl）
@@ -261,7 +231,7 @@ Confirmed 的假設才進入 `strategies/live/`。
 跨年度比較用 `損益% = 損益點數 / 進場價 × 100`，Sharpe 也基於損益%。
 
 ### Behavior Rules
-- 每次對話開始前，主動讀取 `memory/MEMORY.md` 和相關的 specs/ 文件
+- 每次對話開始前，主動讀取 `memory/MEMORY.md`
 - 不在未通過 GATE 的情況下執行回測
 - 衍生想法記錄在當前結果文件的 Derived Hypotheses，不主動修改其他文件
 - 所有數字結論必須附上樣本數
@@ -271,12 +241,16 @@ Confirmed 的假設才進入 `strategies/live/`。
 
 ---
 
+## 常用分析指令
+```bash
+uv run python src/analysis/morning_briefing.py    # 早盤簡報（含 ETL 更新）
+uv run python src/backtest/strategy_health.py     # 策略健康監測
+uv run python src/backtest/summary_all.py         # 跨年度策略比較
+```
+
 ## 注意事項
 - 所有時間為台灣時區 (Asia/Taipei)，raw data 本身即為台灣時間，不需轉換
 - 每個 ETL step 都可以獨立重跑（冪等性）
 - `build_continuous.py` 重跑時會清除 rollover_log 並重算所有 adjustment
-- rpt 檔編碼：優先嘗試 UTF-8，失敗則 Big5 → CP950
-- 價差合約（合約代號含 `/`）在 parse_rpt.py 階段過濾，不寫入 ticks
-- 期交所僅保留最近 30 個交易日資料，需定期排程避免缺口
 - 回答用台灣繁體中文優先，但可視需求保留英文的專有名詞
 - K線圖配色遵循台灣慣例：**漲紅跌綠**（上漲=紅色、下跌=綠色）

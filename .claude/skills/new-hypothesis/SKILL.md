@@ -12,14 +12,7 @@ description: >
 
 ## 流程
 
-### Step 1：載入背景
-
-讀取以下檔案作為交易背景，幫助引導使用者：
-- `specs/trading-principles.md`
-- `specs/market-context.md`
-- `specs/data-sources.md`
-
-### Step 2：引導使用者
+### Step 1：引導使用者
 
 透過對話釐清以下資訊（不需要一次問完，自然對話即可）：
 
@@ -29,13 +22,13 @@ description: >
 4. **無效條件**：什麼結果代表假設不成立？（必須在開始前就定義）
 5. **來源**：這是原創想法，還是從某個已有的假設衍生？
 
-### Step 3：決定編號
+### Step 2：決定編號
 
 掃描 `research/active/` 和 `research/archive/` 下所有 `HXXX-*` 目錄，找到最大編號 +1。
 
 格式：`HXXX-簡短英文名稱`（例如 H032-gap-reversal）
 
-### Step 4：建立目錄與文件
+### Step 3：建立目錄與文件
 
 建立 `research/active/HXXX-名稱/` 目錄，生成以下兩個文件：
 
@@ -100,7 +93,7 @@ HXXX（來源假設）的 [distribution / backtest] 階段
 - [ ] 參數敏感度分析
 ```
 
-### Step 5：確認
+### Step 4：確認
 
 向使用者確認：
 - Derived From 欄位是否正確
