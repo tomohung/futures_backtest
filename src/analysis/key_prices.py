@@ -27,6 +27,42 @@ DB_PATH = Path(__file__).parents[2] / "data" / "futures.duckdb"
 SYMBOL = "TX"
 
 
+def _get_put_s1(trade_date, ref_price):
+    """取某日近月 Put 成交量最大的履約價（需低於 ref_price）作為支撐。"""
+    try:
+        with duckdb.connect(str(DB_PATH), read_only=True) as conn:
+            top = conn.execute("""
+                SELECT contract FROM ticks_options
+                WHERE trade_date = ? AND LENGTH(contract) = 6
+                GROUP BY contract ORDER BY SUM(volume) DESC LIMIT 1
+            """, [trade_date]).fetchone()
+            if not top:
+                return None
+
+            rows = conn.execute("""
+                SELECT strike, SUM(volume) AS vol
+                FROM ticks_options
+                WHERE trade_date = ? AND contract = ? AND put_call = 'P'
+                  AND strike BETWEEN ? - 3000 AND ?
+                GROUP BY strike ORDER BY vol DESC
+            """, [trade_date, top[0], ref_price, ref_price]).fetchall()
+
+            if not rows:
+                return None
+
+            s1_strike = float(rows[0][0])
+            s1_vol = rows[0][1]
+            s2_strike = float(rows[1][0]) if len(rows) > 1 else None
+            s2_vol = rows[1][1] if len(rows) > 1 else None
+            return {
+                "s1": s1_strike, "s1_vol": s1_vol,
+                "s2": s2_strike, "s2_vol": s2_vol,
+                "contract": top[0],
+            }
+    except Exception:
+        return None
+
+
 def get_key_prices():
     with duckdb.connect(str(DB_PATH), read_only=True) as conn:
         # 最新有日盤資料的交易日（= 昨天）
@@ -316,6 +352,10 @@ def get_key_prices():
         }
     }
 
+    # 選擇權 Put S1 支撐（H064 研究：前日近月 Put 成交量最大的履約價）
+    ref_price = night[2] if has_night else day[2]  # 夜收 or 日收
+    put_s1 = _get_put_s1(last_day, float(ref_price))
+
     result = {
         "last_day": last_day,
         "prev_day": prev_day,
@@ -327,6 +367,7 @@ def get_key_prices():
         "bars_15m_pre10": bars_15m_pre10,
         "vol_alert": vol_alert,
         "weekday_stats": weekday_stats,
+        "put_s1": put_s1,
     }
     return result
 
@@ -464,6 +505,20 @@ def print_report(data):
             label = f"週{wd_names[wd]}{marker}"
             print(f"| {label:4s} | {_fmt(s['day']):16s} | {_fmt(s['morning']):16s} | {_fmt(s['night']):16s} |")
 
+    # 選擇權 Put 支撐（H064）
+    put_s1 = d.get("put_s1")
+    if put_s1:
+        print()
+        print(f"### 選擇權支撐（前日 Put 成交量 Top，{put_s1['contract']}）")
+        print(f"| 層級 | 履約價 | 成交量 | 距基準 |")
+        print(f"|------|-------:|-------:|-------:|")
+        s1_dist = ref - put_s1["s1"] if ref else None
+        s1_pct = f"{s1_dist / ref * 100:.1f}%" if ref and s1_dist else "—"
+        print(f"| S1   | {n(int(put_s1['s1']))} | {put_s1['s1_vol']:,} | -{s1_pct} |")
+        if put_s1.get("s2"):
+            s2_dist = ref - put_s1["s2"] if ref else None
+            s2_pct = f"{s2_dist / ref * 100:.1f}%" if ref and s2_dist else "—"
+            print(f"| S2   | {n(int(put_s1['s2']))} | {put_s1['s2_vol']:,} | -{s2_pct} |")
 
 
 def get_30m_bars(n_days=20):
