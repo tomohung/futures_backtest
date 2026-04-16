@@ -1,9 +1,13 @@
 """Tests for key_prices.py — the module that broke."""
 import pytest
+from pathlib import Path
+
+DB_PATH = Path("data/futures.duckdb")
 
 from src.analysis.key_prices import get_key_prices, print_report, _get_put_s1
 
 
+@pytest.mark.skipif(not DB_PATH.exists(), reason="no database file")
 class TestGetKeyPrices:
     @pytest.fixture(scope="class")
     def data(self):
@@ -48,6 +52,7 @@ class TestGetKeyPrices:
         assert "評估" in output
 
 
+@pytest.mark.skipif(not DB_PATH.exists(), reason="no database file")
 class TestGetPutS1:
     def test_returns_none_for_nonexistent_date(self):
         result = _get_put_s1("1999-01-01", 20000.0)
