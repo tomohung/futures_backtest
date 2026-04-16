@@ -1,17 +1,24 @@
-"""Tests for key_prices.py — the module that broke."""
+"""Tests for key_prices.py — uses fixture database."""
 import pytest
-from pathlib import Path
 
-DB_PATH = Path("data/futures.duckdb")
-
-from src.analysis.key_prices import get_key_prices, print_report, _get_put_s1
+import src.analysis.key_prices as kp
 
 
-@pytest.mark.skipif(not DB_PATH.exists(), reason="no database file")
+@pytest.fixture(autouse=True)
+def _patch_db(test_db_path, monkeypatch):
+    monkeypatch.setattr(kp, "DB_PATH", test_db_path)
+
+
 class TestGetKeyPrices:
     @pytest.fixture(scope="class")
-    def data(self):
-        return get_key_prices()
+    def data(self, test_db_path):
+        import src.analysis.key_prices as _kp
+        orig = _kp.DB_PATH
+        _kp.DB_PATH = test_db_path
+        try:
+            return _kp.get_key_prices()
+        finally:
+            _kp.DB_PATH = orig
 
     def test_returns_dict(self, data):
         assert isinstance(data, dict)
@@ -45,41 +52,32 @@ class TestGetKeyPrices:
             assert s1["s1_vol"] > 0
 
     def test_print_report_runs(self, data, capsys):
-        print_report(data)
+        kp.print_report(data)
         output = capsys.readouterr().out
         assert "關鍵價格參考" in output
         assert "昨日行情" in output
         assert "評估" in output
 
 
-@pytest.mark.skipif(not DB_PATH.exists(), reason="no database file")
 class TestGetPutS1:
     def test_returns_none_for_nonexistent_date(self):
-        result = _get_put_s1("1999-01-01", 20000.0)
+        result = kp._get_put_s1("1999-01-01", 20000.0)
         assert result is None
 
-    def test_returns_dict_for_valid_date(self):
-        import duckdb
-        from pathlib import Path
-        db = Path("data/futures.duckdb")
-        if not db.exists():
-            pytest.skip("no database")
-        with duckdb.connect(str(db), read_only=True) as conn:
-            latest = conn.execute(
-                "SELECT MAX(trade_date) FROM ticks_options"
-            ).fetchone()[0]
-            if latest is None:
-                pytest.skip("no options data")
-            # Use a realistic ref_price from actual futures data
-            fut = conn.execute("""
-                SELECT close FROM ohlcv_1m
-                WHERE symbol = 'TX'
-                  AND timestamp::DATE = (SELECT MAX(timestamp::DATE) FROM ohlcv_1m WHERE symbol = 'TX')
-                ORDER BY timestamp DESC LIMIT 1
-            """).fetchone()
-        if fut is None:
-            pytest.skip("no futures data")
-        ref = float(fut[0])
-        result = _get_put_s1(latest, ref)
+    def test_returns_s1_below_ref(self):
+        result = kp._get_put_s1("2025-06-16", 21000.0)
         assert result is not None
-        assert result["s1"] <= ref
+        assert result["s1"] < 21000.0
+        assert result["s1"] == 20800.0  # highest Put volume below ref
+        assert result["s1_vol"] == 500
+
+    def test_s2_is_second_highest(self):
+        result = kp._get_put_s1("2025-06-16", 21000.0)
+        assert result is not None
+        assert result["s2"] == 20700.0  # second highest Put volume
+        assert result["s2_vol"] == 300
+
+    def test_different_day_different_s1(self):
+        result = kp._get_put_s1("2025-06-17", 21100.0)
+        assert result is not None
+        assert result["s1"] == 20900.0  # day 2 peak

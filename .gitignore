@@ -224,3 +224,6 @@ data/raw/
 data/raw_options/
 
 tags.lock
+
+# Test fixture DB（pytest 自動產生）
+tests/fixtures/
