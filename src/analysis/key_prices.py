@@ -6,6 +6,7 @@
     uv run python src/analysis/key_prices.py
 """
 import duckdb
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.font_manager as fm
