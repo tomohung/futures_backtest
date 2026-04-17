@@ -153,6 +153,10 @@ def download_one(target_date: date, delay: float = 1.0, force: bool = False) -> 
     tmp.write_bytes(content)
     tmp.rename(dest)
 
+    marker = _marker_path(target_date)
+    if marker.exists():
+        marker.unlink()
+
     return "updated" if was_existing else "saved"
 
 

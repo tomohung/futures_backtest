@@ -101,9 +101,13 @@ def _aggregate_ticks(ticks: pd.DataFrame, full_idx: pd.DatetimeIndex) -> pd.Data
 
     ohlcv = agg.reindex(full_idx)
 
-    ohlcv["close"] = ohlcv["close"].ffill()
-    if ohlcv["close"].isna().all():
+    real_bars = ohlcv["close"].notna().sum()
+    if real_bars == 0:
         return pd.DataFrame()
+    if real_bars / len(full_idx) < 0.1:
+        return pd.DataFrame()
+
+    ohlcv["close"] = ohlcv["close"].ffill()
     ohlcv["close"] = ohlcv["close"].bfill()
 
     mask_empty = ohlcv["open"].isna()
@@ -249,12 +253,19 @@ def main() -> None:
         processed_night = get_processed_night_sessions(conn)
         now = datetime.now()
 
+        # 也包含有夜盤 ticks 但沒有日盤的日期（假日夜盤）
+        night_tick_dates = {r[0] for r in conn.execute("""
+            SELECT DISTINCT trade_date FROM ticks
+            WHERE symbol = 'TX' AND trade_time >= '15:00:00'
+        """).fetchall()}
+        all_night_candidates = sorted(set(day_dates) | night_tick_dates)
+
         def night_session_ended(d: date) -> bool:
             night_end = datetime(d.year, d.month, d.day) + timedelta(days=1, hours=5)
             return now >= night_end
 
         pending_night = [
-            d for d in day_dates
+            d for d in all_night_candidates
             if d not in processed_night and night_session_ended(d)
         ]
         print(f"夜盤待處理 {len(pending_night)} 個 session")
@@ -263,7 +274,17 @@ def main() -> None:
         for prev_date in pending_night:
             contract = get_day_contract(conn, prev_date)
             if contract is None:
-                continue
+                # 假日無日盤時，從 ticks 找當日夜盤主力合約
+                r = conn.execute("""
+                    SELECT contract, SUM(volume) AS vol
+                    FROM ticks
+                    WHERE symbol = 'TX' AND trade_date = ?
+                      AND trade_time >= '15:00:00'
+                    GROUP BY contract ORDER BY vol DESC LIMIT 1
+                """, [prev_date]).fetchone()
+                if r is None:
+                    continue
+                contract = r[0].strip()
             df = build_1m_night_for_session(conn, prev_date, contract)
             if df.empty:
                 continue
