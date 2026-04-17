@@ -64,6 +64,74 @@ def _get_put_s1(trade_date, ref_price):
         return None
 
 
+def _compute_night_vol_filter(last_day, tonight_range):
+    """Compute night_range / SMA20(night_range) for H066 filter."""
+    import bisect
+    import pandas as _pd
+
+    with duckdb.connect(str(DB_PATH), read_only=True) as conn:
+        day_dates_df = conn.execute("""
+            SELECT DISTINCT timestamp::DATE AS td
+            FROM ohlcv_1m WHERE symbol = ?
+              AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+            ORDER BY td
+        """, [SYMBOL]).df()
+        day_dates_list = sorted(_pd.to_datetime(day_dates_df["td"]).tolist())
+
+        night_raw = conn.execute("""
+            SELECT timestamp, high, low
+            FROM ohlcv_1m
+            WHERE symbol = ?
+              AND (timestamp::TIME >= '15:00:00' OR timestamp::TIME < '05:00:00')
+              AND timestamp::DATE >= ?::DATE - INTERVAL '60 day'
+              AND timestamp::DATE <= ?::DATE + INTERVAL '1 day'
+            ORDER BY timestamp
+        """, [SYMBOL, last_day, last_day]).df()
+
+    if night_raw.empty:
+        return None
+
+    night_raw["timestamp"] = _pd.to_datetime(night_raw["timestamp"])
+
+    def find_next_trade_date(ts):
+        cal_time = ts.time()
+        if cal_time >= _pd.Timestamp("15:00").time():
+            search_date = (ts + _pd.Timedelta(days=1)).normalize()
+        else:
+            search_date = ts.normalize()
+        idx = bisect.bisect_left(day_dates_list, search_date)
+        return day_dates_list[idx] if idx < len(day_dates_list) else None
+
+    night_raw["trade_date"] = night_raw["timestamp"].apply(find_next_trade_date)
+    night_raw = night_raw.dropna(subset=["trade_date"])
+
+    night = night_raw.groupby("trade_date").agg(
+        night_high=("high", "max"), night_low=("low", "min"),
+        n_bars=("high", "count"),
+    )
+    night["night_range"] = night["night_high"] - night["night_low"]
+    night = night[night["n_bars"] >= 100]
+    night = night[night.index <= _pd.Timestamp(last_day)]
+    night = night.sort_index()
+
+    if len(night) < 20:
+        return None
+
+    past_ranges = night["night_range"].values[-20:]
+    sma20 = float(past_ranges.mean())
+    night_norm = tonight_range / sma20 if sma20 > 0 else None
+
+    if night_norm is None:
+        return None
+
+    return {
+        "night_range": tonight_range,
+        "sma20": round(sma20),
+        "night_norm": round(night_norm, 3),
+        "pass": night_norm >= 0.85,
+    }
+
+
 def get_key_prices():
     with duckdb.connect(str(DB_PATH), read_only=True) as conn:
         # 最新有日盤資料的交易日（= 昨天）
@@ -204,38 +272,13 @@ def get_key_prices():
 
     has_night = night and night[0] is not None
 
-    # 夜盤振幅 vs 日盤預期（H059 研究）
     night_range = (night[0] - night[1]) if has_night else None
-    with duckdb.connect(str(DB_PATH), read_only=True) as conn:
-        day_ranges_20 = conn.execute("""
-            SELECT
-                timestamp::DATE AS trade_date,
-                MAX(high) - MIN(low) AS range_pt
-            FROM ohlcv_1m
-            WHERE symbol = ?
-              AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
-            GROUP BY trade_date
-            ORDER BY trade_date DESC
-            LIMIT 20
-        """, [SYMBOL]).fetchall()
 
-    vol_alert = None
-    if night_range is not None and day_ranges_20:
-        import pandas as _pd
-        _ranges = _pd.Series([float(r[1]) for r in reversed(day_ranges_20)])
-        day_ema20 = _ranges.ewm(span=20, adjust=False).mean().iloc[-1]
-        # 今天是星期幾（next_day = 今天的交易日）
-        today_wd = next_day.weekday()
-        # 同星期的近期日盤振幅中位數
-        wd_ranges = [float(r[1]) for r in day_ranges_20
-                     if r[0].weekday() == today_wd]
-        wd_median = float(_pd.Series(wd_ranges).median()) if wd_ranges else day_ema20
-        vol_alert = {
-            "night_range": night_range,
-            "day_ema20": round(day_ema20),
-            "wd_median": round(wd_median),
-            "today_wd": today_wd,
-        }
+    # 夜盤波動濾網（H066/H067：night_range / SMA20(night_range) >= 0.85）
+    # 適用 EstHL + Reversal
+    night_vol_filter = None
+    if night_range is not None:
+        night_vol_filter = _compute_night_vol_filter(last_day, night_range)
 
     # Weekday 漲跌統計（近 ~40 個交易日 ≈ 2 個月）
     with duckdb.connect(str(DB_PATH), read_only=True) as conn:
@@ -366,7 +409,7 @@ def get_key_prices():
         "ma30_20": ma_row[0] if ma_row else None,
         "ma30_20_up": ma_row[1] if ma_row else None,
         "bars_15m_pre10": bars_15m_pre10,
-        "vol_alert": vol_alert,
+        "night_vol_filter": night_vol_filter,
         "weekday_stats": weekday_stats,
         "put_s1": put_s1,
     }
@@ -455,31 +498,17 @@ def print_report(data):
     print(f"| 30分K 20MA 方向           | {ma_dir} |")
     print(f"| 均線轉向風險              | {reversal_risk} |")
 
-    # 夜盤振幅警示
-    vol_alert = d.get("vol_alert")
-    if vol_alert:
-        wd_names = {0: "一", 1: "二", 2: "三", 3: "四", 4: "五"}
-        wd_label = f"週{wd_names.get(vol_alert['today_wd'], '?')}"
-        nr = vol_alert["night_range"]
-        wd_med = vol_alert["wd_median"]
-        day_ema = vol_alert["day_ema20"]
-        ratio = nr / day_ema if day_ema > 0 else 0
-
-        if nr > day_ema and wd_med < day_ema * 0.95:
-            # 本來預期小波動日，但夜盤大 → 放大警示
-            alert = f"⚡ 放大｜{wd_label}通常偏小（{n(wd_med)}），但夜盤 {n(nr)}pt > EMA {n(day_ema)}（{ratio:.1f}x）"
-        elif nr < day_ema * 0.7 and wd_med > day_ema * 1.05:
-            # 本來預期大波動日，但夜盤小 → 縮小警示
-            alert = f"🔻 縮小｜{wd_label}通常偏大（{n(wd_med)}），但夜盤僅 {n(nr)}pt < EMA {n(day_ema)}（{ratio:.1f}x）"
-        elif nr > 1.5 * day_ema:
-            # 不論星期幾，夜盤極大
-            alert = f"⚡ 放大｜夜盤 {n(nr)}pt >> EMA {n(day_ema)}（{ratio:.1f}x）"
-        elif nr < day_ema * 0.5:
-            # 不論星期幾，夜盤極小
-            alert = f"🔻 縮小｜夜盤僅 {n(nr)}pt << EMA {n(day_ema)}（{ratio:.1f}x）"
+    # 夜盤波動濾網（H066/H067：EstHL + Reversal 共用）
+    nvf = d.get("night_vol_filter")
+    if nvf and nvf.get("night_norm") is not None:
+        norm = nvf["night_norm"]
+        sma = nvf["sma20"]
+        nr = nvf["night_range"]
+        if nvf["pass"]:
+            label = f"✅ GO｜夜盤 {nr}pt / SMA20 {sma}pt = {norm:.2f} ≥ 0.85"
         else:
-            alert = f"— 正常｜夜盤 {n(nr)}pt, EMA {n(day_ema)}, {wd_label}常態 {n(wd_med)}（{ratio:.1f}x）"
-        print(f"| 夜盤振幅警示              | {alert} |")
+            label = f"🚫 STOP｜夜盤 {nr}pt / SMA20 {sma}pt = {norm:.2f} < 0.85"
+        print(f"| 夜盤波動（EstHL+Rev）     | {label} |")
 
     # Weekday 漲跌統計
     wd_stats = d.get("weekday_stats")
@@ -703,10 +732,27 @@ def plot_sr_chart(data, n_days=20):
     ax.set_xticks(tick_pos)
     ax.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8)
     ax.set_xlim(-1, n)
+    # 夜盤波動濾網狀態（醒目顯示）
+    nvf = data.get("night_vol_filter")
+    if nvf and nvf.get("night_norm") is not None:
+        if nvf["pass"]:
+            nvf_label = f"  ✅ 夜盤波動 GO ({nvf['night_norm']:.2f})"
+            nvf_color = "#4caf50"
+        else:
+            nvf_label = f"  🚫 夜盤波動 STOP ({nvf['night_norm']:.2f})"
+            nvf_color = "#f44336"
+    else:
+        nvf_label = ""
+        nvf_color = COLOR_TEXT
+
     ax.set_title(
         f"TX 1H K線（近 {n_days} 日，基準 {ref:,}）",
-        color=COLOR_TEXT, fontsize=12, pad=8,
+        color=COLOR_TEXT, fontsize=12, pad=8, loc="left",
     )
+    if nvf_label:
+        ax.text(0.99, 1.02, nvf_label, transform=ax.transAxes,
+                fontsize=13, fontweight="bold", color=nvf_color,
+                ha="right", va="bottom")
     ax.legend(loc="upper left", fontsize=7, facecolor=BG_FIG,
               labelcolor=COLOR_TEXT, edgecolor=COLOR_GRID, ncol=5)
 

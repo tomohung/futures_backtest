@@ -26,7 +26,8 @@ class TestGetKeyPrices:
     def test_has_required_keys(self, data):
         required = [
             "last_day", "prev_day", "day", "night", "vwap",
-            "ma30_20", "bars_15m_pre10", "weekday_stats", "put_s1",
+            "ma30_20", "bars_15m_pre10", "night_vol_filter",
+            "weekday_stats", "put_s1",
         ]
         for key in required:
             assert key in data, f"missing key: {key}"
@@ -50,6 +51,16 @@ class TestGetKeyPrices:
             assert "contract" in s1
             assert s1["s1"] > 0
             assert s1["s1_vol"] > 0
+
+    def test_night_vol_filter_structure(self, data):
+        nvf = data["night_vol_filter"]
+        if nvf is not None:
+            assert "night_range" in nvf
+            assert "sma20" in nvf
+            assert "night_norm" in nvf
+            assert "pass" in nvf
+            assert isinstance(nvf["pass"], bool)
+            assert nvf["night_norm"] > 0
 
     def test_print_report_runs(self, data, capsys):
         kp.print_report(data)

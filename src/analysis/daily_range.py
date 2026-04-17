@@ -48,8 +48,9 @@ def get_daily_range(n=20):
 
 
 def get_night_vol_alert():
-    """取得今日夜盤振幅警示資訊。回傳 dict 或 None。"""
-    from datetime import time as dt_time
+    """取得今日夜盤振幅警示（H066/H067：SMA20 正規化）。回傳 dict 或 None。"""
+    from src.analysis.key_prices import _compute_night_vol_filter, DB_PATH as KP_DB_PATH
+
     with duckdb.connect(str(DB_PATH), read_only=True) as conn:
         last_day = conn.execute("""
             SELECT MAX(timestamp::DATE)
@@ -60,7 +61,6 @@ def get_night_vol_alert():
 
         next_day = last_day + timedelta(days=1)
 
-        # 夜盤振幅（主力合約）
         night = conn.execute("""
             WITH night_ticks AS (
                 SELECT contract, price
@@ -86,59 +86,34 @@ def get_night_vol_alert():
 
         night_range = night[0] - night[1]
 
-        # 近 20 日日盤振幅（for EMA）
-        day_ranges = conn.execute("""
-            SELECT
-                timestamp::DATE AS trade_date,
-                MAX(high) - MIN(low) AS range_pt
-            FROM ohlcv_1m
-            WHERE symbol = ?
-              AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
-            GROUP BY trade_date
-            ORDER BY trade_date DESC
-            LIMIT 20
-        """, [SYMBOL]).fetchall()
-
-    import pandas as pd
-    ranges_s = pd.Series([float(r[1]) for r in reversed(day_ranges)])
-    day_ema20 = float(ranges_s.ewm(span=20, adjust=False).mean().iloc[-1])
+    nvf = _compute_night_vol_filter(last_day, night_range)
 
     today_wd = next_day.weekday()
-    wd_ranges = [float(r[1]) for r in day_ranges if r[0].weekday() == today_wd]
-    wd_median = float(pd.Series(wd_ranges).median()) if wd_ranges else day_ema20
-
-    ratio = night_range / day_ema20 if day_ema20 > 0 else 1.0
-
     wd_names = ["一", "二", "三", "四", "五"]
     wd_label = f"週{wd_names[today_wd]}" if today_wd < 5 else "?"
 
-    # 判斷警示類型（圖表用純文字，避免 emoji glyph 問題）
-    if night_range > day_ema20 and wd_median < day_ema20 * 0.95:
-        alert_type = "up"
-        alert_text = f">> {wd_label}常偏小\n但夜盤放大 {ratio:.1f}x"
-    elif night_range < day_ema20 * 0.7 and wd_median > day_ema20 * 1.05:
-        alert_type = "down"
-        alert_text = f"<< {wd_label}常偏大\n但夜盤縮小 {ratio:.1f}x"
-    elif night_range > 1.5 * day_ema20:
-        alert_type = "up"
-        alert_text = f">> 夜盤放大 {ratio:.1f}x"
-    elif night_range < day_ema20 * 0.5:
-        alert_type = "down"
-        alert_text = f"<< 夜盤縮小 {ratio:.1f}x"
+    if nvf and nvf.get("night_norm") is not None:
+        norm = nvf["night_norm"]
+        sma20 = nvf["sma20"]
+        if nvf["pass"]:
+            alert_type = "go"
+            alert_text = f"GO {norm:.2f}\n(SMA20 {sma20}pt)"
+        else:
+            alert_type = "stop"
+            alert_text = f"STOP {norm:.2f}\n(SMA20 {sma20}pt)"
     else:
         alert_type = "normal"
-        alert_text = f"夜盤 {ratio:.1f}x EMA"
+        alert_text = f"夜盤 {night_range}pt"
 
     return {
         "night_range": night_range,
-        "day_ema20": day_ema20,
-        "wd_median": wd_median,
         "today_wd": today_wd,
         "wd_label": wd_label,
-        "ratio": ratio,
         "alert_type": alert_type,
         "alert_text": alert_text,
         "today": next_day,
+        "night_norm": nvf["night_norm"] if nvf else None,
+        "pass": nvf["pass"] if nvf else None,
     }
 
 
@@ -273,11 +248,11 @@ def main():
     ax1.axhline(avg20_range, color=COLOR_ACCENT_ORANGE, linewidth=2, linestyle="--",
                 zorder=4, label=f"20日均波動 {avg20_range:.0f}pt")
 
-    # 夜盤振幅警示
+    # 夜盤振幅警示（H066/H067）
     if night_alert:
         nr = night_alert["night_range"]
         alert_x = n_bars
-        alert_color = {"up": COLOR_UP, "down": COLOR_DOWN, "normal": COLOR_TEXT_LIGHT}
+        alert_color = {"go": COLOR_UP, "stop": COLOR_DOWN, "normal": COLOR_TEXT_LIGHT}
         bar_color = alert_color.get(night_alert["alert_type"], COLOR_TEXT_LIGHT)
         ax1.bar(alert_x, nr, color=bar_color, width=0.6, zorder=3,
                 alpha=0.4, edgecolor=bar_color, linewidth=2, linestyle="--")
