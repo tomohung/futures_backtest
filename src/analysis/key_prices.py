@@ -533,8 +533,12 @@ def print_report(data):
         else:
             print("| S001 EstHL | ⚠️ 未知 | 無夜盤資料 |")
 
-        # Reversal: night vol filter only
-        if nvf_pass is False:
+        # Reversal: skip Mon(0) + Fri(4), plus night vol filter
+        if today_wd == 0:
+            print("| S002 Reversal | 🚫 不做 | 週一固定跳過 |")
+        elif today_wd == 4:
+            print("| S002 Reversal | 🚫 不做 | 週五固定跳過 |")
+        elif nvf_pass is False:
             print(f"| S002 Reversal | 🚫 不做 | 夜盤波動 STOP ({nvf['night_norm']:.2f} < 0.85) |")
         elif nvf_pass is True:
             print(f"| S002 Reversal | ✅ 可做 | 夜盤波動 GO ({nvf['night_norm']:.2f}) |")
@@ -777,8 +781,11 @@ def plot_sr_chart(data, n_days=20):
         strategy_lines.append((f"EstHL: STOP ({nvf['night_norm']:.2f})", "#f44336"))
     elif nvf_pass is True:
         strategy_lines.append((f"EstHL: GO ({nvf['night_norm']:.2f})", "#4caf50"))
-    # Reversal
-    if nvf_pass is False:
+    # Reversal: skip Mon(0) + Fri(4)
+    if today_wd in (0, 4):
+        wd_label = "Mon" if today_wd == 0 else "Fri"
+        strategy_lines.append((f"Reversal: SKIP ({wd_label})", "#f44336"))
+    elif nvf_pass is False:
         strategy_lines.append((f"Reversal: STOP ({nvf['night_norm']:.2f})", "#f44336"))
     elif nvf_pass is True:
         strategy_lines.append((f"Reversal: GO ({nvf['night_norm']:.2f})", "#4caf50"))

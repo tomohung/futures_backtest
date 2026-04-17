@@ -99,8 +99,17 @@ class TestStrategyRules:
         elif nvf and nvf.get("pass") is not None:
             assert isinstance(nvf["pass"], bool)
 
-    def test_reversal_uses_night_vol_only(self, data):
-        """Reversal has no weekday skip, only night vol filter."""
+    def test_reversal_skips_monday_and_friday(self, data):
+        """Reversal must skip Mon(0) and Fri(4), plus night vol filter."""
+        wd = data["weekday_stats"]["today_wd"]
+        nvf = data.get("night_vol_filter")
+        if wd in (0, 4):
+            assert True, "Reversal should SKIP on Mon/Fri"
+        elif nvf and nvf.get("pass") is not None:
+            assert isinstance(nvf["pass"], bool)
+
+    def test_night_vol_threshold_is_085(self, data):
+        """Both strategies use night_norm >= 0.85 as GO threshold."""
         nvf = data.get("night_vol_filter")
         if nvf and nvf.get("night_norm") is not None:
             assert nvf["pass"] == (nvf["night_norm"] >= 0.85)

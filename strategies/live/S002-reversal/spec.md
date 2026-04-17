@@ -33,10 +33,10 @@ H005-reversal, H006-reversal-v2（research/archive/confirmed/）
 
 ## Universe
 - 交易標的：台指期（TX）日盤
-- 排除條件：無特定週間排除
+- 排除條件：週一、五不進場（H068）；夜盤波動 STOP 不進場（H067）
 
 ## Execution
-- 頻率：日盤每日
+- 頻率：日盤 Tue, Wed, Thu
 - 下單時機：BB latch + 力竭 + 5MA crossing 同時滿足時進場
 - 倉位大小：½ 口（與 EstHL 各半，參考 H004 配置）
 
