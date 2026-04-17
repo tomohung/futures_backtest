@@ -510,8 +510,38 @@ def print_report(data):
             label = f"🚫 STOP｜夜盤 {nr}pt / SMA20 {sma}pt = {norm:.2f} < 0.85"
         print(f"| 夜盤波動（EstHL+Rev）     | {label} |")
 
-    # Weekday 漲跌統計
+    # 策略進場建議
     wd_stats = d.get("weekday_stats")
+    if wd_stats:
+        today_wd = wd_stats["today_wd"]
+        nvf_pass = nvf["pass"] if nvf and nvf.get("night_norm") is not None else None
+
+        print()
+        print("### 今日策略進場建議")
+        print("| 策略 | 判定 | 原因 |")
+        print("|------|------|------|")
+
+        # EstHL: skip Thu(3) + Fri(4), plus night vol filter
+        if today_wd == 3:
+            print("| S001 EstHL | 🚫 不做 | 週四固定跳過 |")
+        elif today_wd == 4:
+            print("| S001 EstHL | 🚫 不做 | 週五固定跳過 |")
+        elif nvf_pass is False:
+            print(f"| S001 EstHL | 🚫 不做 | 夜盤波動 STOP ({nvf['night_norm']:.2f} < 0.85) |")
+        elif nvf_pass is True:
+            print(f"| S001 EstHL | ✅ 可做 | 夜盤波動 GO ({nvf['night_norm']:.2f}) |")
+        else:
+            print("| S001 EstHL | ⚠️ 未知 | 無夜盤資料 |")
+
+        # Reversal: night vol filter only
+        if nvf_pass is False:
+            print(f"| S002 Reversal | 🚫 不做 | 夜盤波動 STOP ({nvf['night_norm']:.2f} < 0.85) |")
+        elif nvf_pass is True:
+            print(f"| S002 Reversal | ✅ 可做 | 夜盤波動 GO ({nvf['night_norm']:.2f}) |")
+        else:
+            print("| S002 Reversal | ⚠️ 未知 | 無夜盤資料 |")
+
+    # Weekday 漲跌統計
     if wd_stats:
         wd_names = {0: "一", 1: "二", 2: "三", 3: "四", 4: "五"}
         today_wd = wd_stats["today_wd"]
@@ -732,26 +762,34 @@ def plot_sr_chart(data, n_days=20):
     ax.set_xticks(tick_pos)
     ax.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8)
     ax.set_xlim(-1, n)
-    # 夜盤波動濾網狀態（醒目顯示）
+    # 策略進場建議（醒目顯示在圖表右上角）
     nvf = data.get("night_vol_filter")
-    if nvf and nvf.get("night_norm") is not None:
-        if nvf["pass"]:
-            nvf_label = f"  ✅ 夜盤波動 GO ({nvf['night_norm']:.2f})"
-            nvf_color = "#4caf50"
-        else:
-            nvf_label = f"  🚫 夜盤波動 STOP ({nvf['night_norm']:.2f})"
-            nvf_color = "#f44336"
-    else:
-        nvf_label = ""
-        nvf_color = COLOR_TEXT
+    nvf_pass = nvf["pass"] if nvf and nvf.get("night_norm") is not None else None
+    wd_stats = data.get("weekday_stats")
+    today_wd = wd_stats["today_wd"] if wd_stats else None
+
+    strategy_lines = []
+    # EstHL
+    if today_wd in (3, 4):
+        wd_label = "Thu" if today_wd == 3 else "Fri"
+        strategy_lines.append((f"EstHL: SKIP ({wd_label})", "#f44336"))
+    elif nvf_pass is False:
+        strategy_lines.append((f"EstHL: STOP ({nvf['night_norm']:.2f})", "#f44336"))
+    elif nvf_pass is True:
+        strategy_lines.append((f"EstHL: GO ({nvf['night_norm']:.2f})", "#4caf50"))
+    # Reversal
+    if nvf_pass is False:
+        strategy_lines.append((f"Reversal: STOP ({nvf['night_norm']:.2f})", "#f44336"))
+    elif nvf_pass is True:
+        strategy_lines.append((f"Reversal: GO ({nvf['night_norm']:.2f})", "#4caf50"))
 
     ax.set_title(
         f"TX 1H K線（近 {n_days} 日，基準 {ref:,}）",
         color=COLOR_TEXT, fontsize=12, pad=8, loc="left",
     )
-    if nvf_label:
-        ax.text(0.99, 1.02, nvf_label, transform=ax.transAxes,
-                fontsize=13, fontweight="bold", color=nvf_color,
+    for i, (label, color) in enumerate(strategy_lines):
+        ax.text(0.99, 1.02 - i * 0.05, label, transform=ax.transAxes,
+                fontsize=12, fontweight="bold", color=color,
                 ha="right", va="bottom")
     ax.legend(loc="upper left", fontsize=7, facecolor=BG_FIG,
               labelcolor=COLOR_TEXT, edgecolor=COLOR_GRID, ncol=5)

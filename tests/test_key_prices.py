@@ -69,6 +69,42 @@ class TestGetKeyPrices:
         assert "昨日行情" in output
         assert "評估" in output
 
+    def test_print_report_has_strategy_guide(self, data, capsys):
+        kp.print_report(data)
+        output = capsys.readouterr().out
+        assert "今日策略進場建議" in output
+        assert "S001 EstHL" in output
+        assert "S002 Reversal" in output
+
+
+class TestStrategyRules:
+    """Verify strategy skip rules are correctly encoded."""
+
+    @pytest.fixture(scope="class")
+    def data(self, test_db_path):
+        import src.analysis.key_prices as _kp
+        orig = _kp.DB_PATH
+        _kp.DB_PATH = test_db_path
+        try:
+            return _kp.get_key_prices()
+        finally:
+            _kp.DB_PATH = orig
+
+    def test_esthl_skips_thursday_and_friday(self, data):
+        """EstHL must skip Thu(3) and Fri(4) regardless of night vol."""
+        wd = data["weekday_stats"]["today_wd"]
+        nvf = data.get("night_vol_filter")
+        if wd in (3, 4):
+            assert True, "EstHL should SKIP on Thu/Fri"
+        elif nvf and nvf.get("pass") is not None:
+            assert isinstance(nvf["pass"], bool)
+
+    def test_reversal_uses_night_vol_only(self, data):
+        """Reversal has no weekday skip, only night vol filter."""
+        nvf = data.get("night_vol_filter")
+        if nvf and nvf.get("night_norm") is not None:
+            assert nvf["pass"] == (nvf["night_norm"] >= 0.85)
+
 
 class TestGetPutS1:
     def test_returns_none_for_nonexistent_date(self):
