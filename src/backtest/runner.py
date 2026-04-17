@@ -681,8 +681,10 @@ def load_data_for_exhaustion(start=None, end=None):
     ext_high_prev = df_ext["ext_high"].shift(1)
     ext_low_prev  = df_ext["ext_low"].shift(1)
 
-    night_new_high = ext_high_prev > recent2_high
-    night_new_low  = ext_low_prev < recent2_low
+    # Align indices before comparison (ext_date may include non-trading days)
+    common_idx = ext_high_prev.index.intersection(recent2_high.index)
+    night_new_high = ext_high_prev.reindex(common_idx) > recent2_high.reindex(common_idx)
+    night_new_low  = ext_low_prev.reindex(common_idx) < recent2_low.reindex(common_idx)
 
     df_day["NightNewHigh"] = night_new_high.reindex(day_dates).fillna(False).values
     df_day["NightNewLow"]  = night_new_low.reindex(day_dates).fillna(False).values
