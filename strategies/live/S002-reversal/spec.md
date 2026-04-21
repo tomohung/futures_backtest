@@ -28,12 +28,14 @@ H005-reversal, H006-reversal-v2（research/archive/confirmed/）
 | exhaust_fraction | 0.5 | Medium |
 | sat_pullback_fraction | 0.5 | Medium |
 | VWAP bypass start | 09:30 | Low |
+| NVF method | EMA20 + expanding median (H075) | Low |
+| NVF threshold | dynamic (~0.93) | Low |
 | EstRange EMA | 20 | Low |
 | Settlement vol mult | 1.9 | Low |
 
 ## Universe
 - 交易標的：台指期（TX）日盤
-- 排除條件：週一、五不進場（H068）；夜盤波動 STOP 不進場（H067）
+- 排除條件：週一、五不進場（H068）；夜盤波動 STOP 不進場（H067 + H075 升級為 EMA + expanding median）
 
 ## Execution
 - 頻率：日盤 Tue, Wed, Thu

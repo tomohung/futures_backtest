@@ -1,7 +1,7 @@
 # Archive: Night Session Volatility as EstHL Filter
 
 ## Status
-Confirmed
+Confirmed（**已被 H075 方法升級**：實作從 SMA + 0.85 fixed → EMA + expanding median，2026-04-21）
 
 ## Summary
 前一晚夜盤振幅（SMA20 正規化）可有效區分 EstHL 績效：高波動夜盤後的日盤交易品質顯著優於低波動夜盤。作為現有星期濾網（skip Thu+Fri）的補充層，在不改動星期邏輯的前提下過濾低波動日，Config D（skip TF + night_norm ≥ 0.85）OOS PF 從 2.67 提升至 3.46。
@@ -19,6 +19,18 @@ Confirmed
 4. 實作簡單——盤前即可計算，不影響現有策略邏輯
 
 注意：Walk-forward 中 Night HIGH only 贏基線僅 2/5 年，單獨無法取代星期濾網。定位為「補充層」而非「取代」。
+
+## H075 後續更新（2026-04-21）
+
+H073 揭露本研究 explore.py 用 EMA + median split，但 summary 寫「採用 SMA 以求直覺，r=0.985 結果一致」——實作端 (`src/analysis/key_prices.py`) 因此用 SMA + 0.85 fixed，與評估方法不同。實際 PF diff 落差 58pp（EMA+median 73.6% vs SMA+0.85 19.5%），「結果一致」說法錯誤。
+
+H075 已將 production 升級為 EMA + expanding median（causal 版的 H066 評估方法），主要改善：
+- EstHL HIGH PF 2.07 → 2.68（+30%）
+- Walk-forward 6/6 完美一致（之前 SMA+0.85 是 5/6）
+- max_streak 9 → 7（−2 筆）
+- worst streak P&L 改善 28.6%
+
+詳見 `research/archive/confirmed/H075-nvf-method-upgrade/`。
 
 ## Derived Hypotheses
 - H067：週四改用夜盤波動門檻取代全面跳過（Config C，已驗證可行但未採用）

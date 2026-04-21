@@ -64,8 +64,17 @@ def _get_put_s1(trade_date, ref_price):
         return None
 
 
+_NVF_FALLBACK_THRESHOLD = 0.93   # warmup fallback (近 4 年 EMA expanding median ~0.935)
+_NVF_MIN_HISTORY_NIGHTS = 60     # warmup 期最少夜盤數
+
+
 def _compute_night_vol_filter(last_day, tonight_range):
-    """Compute night_range / SMA20(night_range) for H066 filter."""
+    """Night vol filter (H075 升級版).
+
+    方法：night_range / EMA20(night_range)，threshold = expanding median of historic norms。
+    H066 原評估方法為 EMA + median split，本實作為其 causal 版本。
+    Warmup 期（< 60 夜盤值）fallback 到 fixed 0.93。
+    """
     import bisect
     import pandas as _pd
 
@@ -78,15 +87,15 @@ def _compute_night_vol_filter(last_day, tonight_range):
         """, [SYMBOL]).df()
         day_dates_list = sorted(_pd.to_datetime(day_dates_df["td"]).tolist())
 
+        # Load all historical night data (needed for expanding median)
         night_raw = conn.execute("""
             SELECT timestamp, high, low
             FROM ohlcv_1m
             WHERE symbol = ?
               AND (timestamp::TIME >= '15:00:00' OR timestamp::TIME < '05:00:00')
-              AND timestamp::DATE >= ?::DATE - INTERVAL '60 day'
               AND timestamp::DATE <= ?::DATE + INTERVAL '1 day'
             ORDER BY timestamp
-        """, [SYMBOL, last_day, last_day]).df()
+        """, [SYMBOL, last_day]).df()
 
     if night_raw.empty:
         return None
@@ -117,18 +126,33 @@ def _compute_night_vol_filter(last_day, tonight_range):
     if len(night) < 20:
         return None
 
-    past_ranges = night["night_range"].values[-20:]
-    sma20 = float(past_ranges.mean())
-    night_norm = tonight_range / sma20 if sma20 > 0 else None
-
-    if night_norm is None:
+    # EMA20 of historical night_range (with adjust=False to match H066/H067 explore.py)
+    night["ema20"] = night["night_range"].ewm(span=20, adjust=False).mean()
+    ema20_today = float(night["ema20"].iloc[-1])
+    if ema20_today <= 0:
         return None
+    night["norm_ema"] = night["night_range"] / night["ema20"]
+
+    # tonight_norm uses today's EMA20 (the most recent value)
+    night_norm = tonight_range / ema20_today
+
+    # Expanding median of historic norms (causal: exclude today implicitly since
+    # tonight_range hasn't been added to the EMA series — historic nights only)
+    historic_norms = night["norm_ema"].dropna()
+    if len(historic_norms) >= _NVF_MIN_HISTORY_NIGHTS:
+        threshold = float(historic_norms.median())
+        method = "EMA + expanding median"
+    else:
+        threshold = _NVF_FALLBACK_THRESHOLD
+        method = f"EMA + fallback {_NVF_FALLBACK_THRESHOLD} (warmup, only {len(historic_norms)} nights)"
 
     return {
         "night_range": tonight_range,
-        "sma20": round(sma20),
+        "ema20": round(ema20_today),
         "night_norm": round(night_norm, 3),
-        "pass": night_norm >= 0.85,
+        "threshold": round(threshold, 3),
+        "pass": night_norm >= threshold,
+        "method": method,
     }
 
 
@@ -498,16 +522,17 @@ def print_report(data):
     print(f"| 30分K 20MA 方向           | {ma_dir} |")
     print(f"| 均線轉向風險              | {reversal_risk} |")
 
-    # 夜盤波動濾網（H066/H067：EstHL + Reversal 共用）
+    # 夜盤波動濾網（H066/H067 + H075 升級：EMA20 + expanding median）
     nvf = d.get("night_vol_filter")
     if nvf and nvf.get("night_norm") is not None:
         norm = nvf["night_norm"]
-        sma = nvf["sma20"]
+        ema = nvf["ema20"]
         nr = nvf["night_range"]
+        thr = nvf["threshold"]
         if nvf["pass"]:
-            label = f"✅ GO｜夜盤 {nr}pt / SMA20 {sma}pt = {norm:.2f} ≥ 0.85"
+            label = f"✅ GO｜夜盤 {nr}pt / EMA20 {ema}pt = {norm:.2f} ≥ {thr:.2f}"
         else:
-            label = f"🚫 STOP｜夜盤 {nr}pt / SMA20 {sma}pt = {norm:.2f} < 0.85"
+            label = f"🚫 STOP｜夜盤 {nr}pt / EMA20 {ema}pt = {norm:.2f} < {thr:.2f}"
         print(f"| 夜盤波動（EstHL+Rev）     | {label} |")
 
     # 策略進場建議
@@ -521,15 +546,17 @@ def print_report(data):
         print("| 策略 | 判定 | 原因 |")
         print("|------|------|------|")
 
+        nvf_thr = nvf["threshold"] if nvf and nvf.get("threshold") is not None else 0.93
+
         # EstHL: skip Thu(3) + Fri(4), plus night vol filter
         if today_wd == 3:
             print("| S001 EstHL | 🚫 不做 | 週四固定跳過 |")
         elif today_wd == 4:
             print("| S001 EstHL | 🚫 不做 | 週五固定跳過 |")
         elif nvf_pass is False:
-            print(f"| S001 EstHL | 🚫 不做 | 夜盤波動 STOP ({nvf['night_norm']:.2f} < 0.85) |")
+            print(f"| S001 EstHL | 🚫 不做 | 夜盤波動 STOP ({nvf['night_norm']:.2f} < {nvf_thr:.2f}) |")
         elif nvf_pass is True:
-            print(f"| S001 EstHL | ✅ 可做 | 夜盤波動 GO ({nvf['night_norm']:.2f}) |")
+            print(f"| S001 EstHL | ✅ 可做 | 夜盤波動 GO ({nvf['night_norm']:.2f} ≥ {nvf_thr:.2f}) |")
         else:
             print("| S001 EstHL | ⚠️ 未知 | 無夜盤資料 |")
 
@@ -539,9 +566,9 @@ def print_report(data):
         elif today_wd == 4:
             print("| S002 Reversal | 🚫 不做 | 週五固定跳過 |")
         elif nvf_pass is False:
-            print(f"| S002 Reversal | 🚫 不做 | 夜盤波動 STOP ({nvf['night_norm']:.2f} < 0.85) |")
+            print(f"| S002 Reversal | 🚫 不做 | 夜盤波動 STOP ({nvf['night_norm']:.2f} < {nvf_thr:.2f}) |")
         elif nvf_pass is True:
-            print(f"| S002 Reversal | ✅ 可做 | 夜盤波動 GO ({nvf['night_norm']:.2f}) |")
+            print(f"| S002 Reversal | ✅ 可做 | 夜盤波動 GO ({nvf['night_norm']:.2f} ≥ {nvf_thr:.2f}) |")
         else:
             print("| S002 Reversal | ⚠️ 未知 | 無夜盤資料 |")
 

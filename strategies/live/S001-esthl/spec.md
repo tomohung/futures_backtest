@@ -18,6 +18,7 @@ H001-estimate-high-low-exit-strategy, H002-orb-with-est-high-low-exit（research
    - VWAP：近 2 日 VWAP 方向一致
    - 30 分 K 20MA 方向向上
    - OR% 介於 0.3%–1.0%（OR 寬度 / 開盤價 × 100）
+   - **夜盤波動 NVF（H066 + H075）**：tonight_range / EMA20(night_range) ≥ expanding_median（當前約 0.93）才進場
 6. 排除：週四、週五不交易
 
 ## Exit Conditions
@@ -34,6 +35,8 @@ H001-estimate-high-low-exit-strategy, H002-orb-with-est-high-low-exit（research
 | SL multiplier | 0.25 | Medium |
 | VWAP lookback | 2 days | Low |
 | Skip weekdays | Thu, Fri | Low |
+| NVF method | EMA20 + expanding median (H075) | Low |
+| NVF threshold | dynamic (~0.93) | Low |
 | EstRange EMA | 20 | Low |
 | Settlement vol mult | 1.9 | Low |
 | OR% range | 0.3–1.0% | Medium |
