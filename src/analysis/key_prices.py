@@ -548,11 +548,16 @@ def print_report(data):
 
         nvf_thr = nvf["threshold"] if nvf and nvf.get("threshold") is not None else 0.93
 
-        # EstHL: skip Thu(3) + Fri(4), plus night vol filter
+        # EstHL: skip Thu(3) + Fri(4); Tue(1) bypasses NVF (H078); Mon/Wed use NVF
         if today_wd == 3:
             print("| S001 EstHL | 🚫 不做 | 週四固定跳過 |")
         elif today_wd == 4:
             print("| S001 EstHL | 🚫 不做 | 週五固定跳過 |")
+        elif today_wd == 1:
+            # H078: Tue 結構性 NVF 失效，bypass NVF（連敗加深 28% 已知 caveat）
+            nvf_note = (f"NVF={nvf['night_norm']:.2f}" if nvf and nvf.get("night_norm") is not None
+                        else "無夜盤資料")
+            print(f"| S001 EstHL | ✅ 可做 | 週二 NVF bypass (H078)；參考 {nvf_note} |")
         elif nvf_pass is False:
             print(f"| S001 EstHL | 🚫 不做 | 夜盤波動 STOP ({nvf['night_norm']:.2f} < {nvf_thr:.2f}) |")
         elif nvf_pass is True:

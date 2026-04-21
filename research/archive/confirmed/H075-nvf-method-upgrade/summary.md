@@ -56,7 +56,7 @@ EMA expanding median 過去 4 年都在 0.92–0.94，月度變動 ±0.005。即
 - ✅ S002 spec 更新 NVF 方法描述 + 參數
 
 ## Derived Hypotheses
-- **H072 後續行動**：EstHL × Tue × NVF 結構性失效（新方法救不回），H072 已驗證的 EstHL Tue 移除 NVF patch 仍需執行（將在 H072 archive 後追蹤）。
+- **H078（confirmed, 2026-04-21）**：EstHL Tue NVF bypass patch — 5/6 年勝、total +24%、max_streak 僅 +1（容許範圍內）；但 worst streak 加深 28% 為已知 caveat。已實裝 production。詳見 `research/archive/confirmed/H078-esthl-tue-nvf-bypass/`。
 - **H076 候選（低優先 audit）**：H066 summary.md 「EMA/SMA r=0.985 結果一致」說法被本研究進一步反駁——HIGH PF 差距 2.07 vs 2.68（+30%）。需做更廣的 H066 文檔/程式一致性 audit。
 - **H077 候選（低優先 / 已 mooted）**：「為何 SMA + 0.85 把 max_streak 9 → baseline 6 推到 9」——升級後此問題消失，無需獨立研究。
 

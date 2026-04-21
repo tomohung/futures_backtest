@@ -19,6 +19,7 @@ H001-estimate-high-low-exit-strategy, H002-orb-with-est-high-low-exit（research
    - 30 分 K 20MA 方向向上
    - OR% 介於 0.3%–1.0%（OR 寬度 / 開盤價 × 100）
    - **夜盤波動 NVF（H066 + H075）**：tonight_range / EMA20(night_range) ≥ expanding_median（當前約 0.93）才進場
+   - **週二 NVF bypass（H078）**：週二進場不論 NVF 結果（OOS 期間 NVF 結構性失效，5/6 年 baseline 勝；caveat：worst streak 加深 28%）
 6. 排除：週四、週五不交易
 
 ## Exit Conditions
@@ -37,6 +38,7 @@ H001-estimate-high-low-exit-strategy, H002-orb-with-est-high-low-exit（research
 | Skip weekdays | Thu, Fri | Low |
 | NVF method | EMA20 + expanding median (H075) | Low |
 | NVF threshold | dynamic (~0.93) | Low |
+| Tue NVF bypass | True (H078) | Medium |
 | EstRange EMA | 20 | Low |
 | Settlement vol mult | 1.9 | Low |
 | OR% range | 0.3–1.0% | Medium |
