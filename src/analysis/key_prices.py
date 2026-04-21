@@ -402,11 +402,14 @@ def get_key_prices():
 
     def _agg(changes):
         if not changes:
-            return {"up": 0, "down": 0, "avg_chg": 0.0}
+            return {"up": 0, "down": 0, "avg_chg": 0.0, "avg_abs": 0.0}
         up = sum(1 for c in changes if c > 0)
         down = len(changes) - up
         avg_chg = sum(changes) / len(changes)
-        return {"up": up, "down": down, "avg_chg": float(round(avg_chg))}
+        avg_abs = sum(abs(c) for c in changes) / len(changes)
+        return {"up": up, "down": down,
+                "avg_chg": float(round(avg_chg)),
+                "avg_abs": float(round(avg_abs))}
 
     weekday_stats = {
         "today_wd": next_day.weekday(),  # next_day = 今天的交易日
@@ -588,7 +591,8 @@ def print_report(data):
                 return "—"
             pct = s["up"] / total * 100
             sign = "+" if s["avg_chg"] >= 0 else ""
-            return f"{s['up']}漲/{s['down']}跌 {pct:.0f}% 均{sign}{s['avg_chg']:.0f}pt"
+            return (f"{s['up']}漲/{s['down']}跌 {pct:.0f}% "
+                    f"均{sign}{s['avg_chg']:.0f}pt (±{s['avg_abs']:.0f})")
 
         print()
         print("### Weekday 漲跌統計（近 2 個月）")
@@ -893,7 +897,8 @@ def plot_sr_chart(data, n_days=20):
                 return "—", COLOR_TEXT_MUTED
             pct = s["up"] / total * 100
             sign = "+" if s["avg_chg"] >= 0 else ""
-            text = f"{s['up']}漲/{s['down']}跌 {pct:.0f}% 均{sign}{s['avg_chg']:.0f}pt"
+            text = (f"{s['up']}漲/{s['down']}跌 {pct:.0f}% "
+                    f"均{sign}{s['avg_chg']:.0f}pt (±{s['avg_abs']:.0f})")
             if pct > 50 and s["avg_chg"] > 0:
                 color = COLOR_UP
             elif pct < 50 and s["avg_chg"] < 0:
