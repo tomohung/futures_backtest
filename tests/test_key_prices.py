@@ -56,11 +56,14 @@ class TestGetKeyPrices:
         nvf = data["night_vol_filter"]
         if nvf is not None:
             assert "night_range" in nvf
-            assert "sma20" in nvf
+            assert "ema20" in nvf  # H075: SMA20 → EMA20
             assert "night_norm" in nvf
+            assert "threshold" in nvf  # H075: dynamic expanding median
+            assert "method" in nvf
             assert "pass" in nvf
             assert isinstance(nvf["pass"], bool)
             assert nvf["night_norm"] > 0
+            assert nvf["threshold"] > 0
 
     def test_print_report_runs(self, data, capsys):
         kp.print_report(data)
@@ -108,11 +111,11 @@ class TestStrategyRules:
         elif nvf and nvf.get("pass") is not None:
             assert isinstance(nvf["pass"], bool)
 
-    def test_night_vol_threshold_is_085(self, data):
-        """Both strategies use night_norm >= 0.85 as GO threshold."""
+    def test_night_vol_threshold_dynamic(self, data):
+        """H075: threshold is dynamic (expanding median), not fixed 0.85."""
         nvf = data.get("night_vol_filter")
         if nvf and nvf.get("night_norm") is not None:
-            assert nvf["pass"] == (nvf["night_norm"] >= 0.85)
+            assert nvf["pass"] == (nvf["night_norm"] >= nvf["threshold"])
 
 
 class TestGetPutS1:

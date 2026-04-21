@@ -94,13 +94,13 @@ def get_night_vol_alert():
 
     if nvf and nvf.get("night_norm") is not None:
         norm = nvf["night_norm"]
-        sma20 = nvf["sma20"]
+        ema20 = nvf["ema20"]
         if nvf["pass"]:
             alert_type = "go"
-            alert_text = f"GO {norm:.2f}\n(SMA20 {sma20}pt)"
+            alert_text = f"GO {norm:.2f}\n(EMA20 {ema20}pt)"
         else:
             alert_type = "stop"
-            alert_text = f"STOP {norm:.2f}\n(SMA20 {sma20}pt)"
+            alert_text = f"STOP {norm:.2f}\n(EMA20 {ema20}pt)"
     else:
         alert_type = "normal"
         alert_text = f"夜盤 {night_range}pt"

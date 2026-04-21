@@ -805,10 +805,13 @@ def plot_sr_chart(data, n_days=20):
     today_wd = wd_stats["today_wd"] if wd_stats else None
 
     strategy_lines = []
-    # EstHL
+    # EstHL: skip Thu/Fri; Tue bypasses NVF (H078); Mon/Wed gated by NVF
     if today_wd in (3, 4):
         wd_label = "Thu" if today_wd == 3 else "Fri"
         strategy_lines.append((f"EstHL: SKIP ({wd_label})", "#f44336"))
+    elif today_wd == 1:
+        nvf_str = f"{nvf['night_norm']:.2f}" if nvf and nvf.get("night_norm") is not None else "n/a"
+        strategy_lines.append((f"EstHL: GO (Tue bypass, NVF={nvf_str})", "#4caf50"))
     elif nvf_pass is False:
         strategy_lines.append((f"EstHL: STOP ({nvf['night_norm']:.2f})", "#f44336"))
     elif nvf_pass is True:
