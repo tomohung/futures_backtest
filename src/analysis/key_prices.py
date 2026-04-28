@@ -320,7 +320,9 @@ def get_key_prices():
                 SELECT
                     timestamp::DATE AS td,
                     FIRST(open ORDER BY timestamp) AS day_open,
-                    LAST(close ORDER BY timestamp) AS day_close
+                    LAST(close ORDER BY timestamp) AS day_close,
+                    MAX(high) AS day_high,
+                    MIN(low) AS day_low
                 FROM ohlcv_1m
                 WHERE symbol = ?
                   AND timestamp::DATE IN (SELECT td FROM trading_days)
@@ -331,7 +333,9 @@ def get_key_prices():
                 SELECT
                     timestamp::DATE AS td,
                     FIRST(open ORDER BY timestamp) AS morn_open,
-                    LAST(close ORDER BY timestamp) AS morn_close
+                    LAST(close ORDER BY timestamp) AS morn_close,
+                    MAX(high) AS morn_high,
+                    MIN(low) AS morn_low
                 FROM ohlcv_1m
                 WHERE symbol = ?
                   AND timestamp::DATE IN (SELECT td FROM trading_days)
@@ -341,8 +345,8 @@ def get_key_prices():
             SELECT
                 d.td,
                 DAYOFWEEK(d.td) AS dow,
-                d.day_open, d.day_close,
-                m.morn_open, m.morn_close
+                d.day_open, d.day_close, d.day_high, d.day_low,
+                m.morn_open, m.morn_close, m.morn_high, m.morn_low
             FROM day_session d
             LEFT JOIN morning_session m ON d.td = m.td
             ORDER BY d.td
@@ -362,12 +366,16 @@ def get_key_prices():
                 td,
                 DAYOFWEEK(td) AS dow,
                 night_open,
-                night_close
+                night_close,
+                night_high,
+                night_low
             FROM (
                 SELECT
                     d.td,
                     FIRST(m.open ORDER BY m.timestamp) AS night_open,
-                    LAST(m.close ORDER BY m.timestamp) AS night_close
+                    LAST(m.close ORDER BY m.timestamp) AS night_close,
+                    MAX(m.high) AS night_high,
+                    MIN(m.low) AS night_low
                 FROM trading_days d
                 JOIN ohlcv_1m m ON m.symbol = ?
                   AND (
@@ -383,33 +391,42 @@ def get_key_prices():
 
     # 彙整 by weekday（DuckDB DAYOFWEEK: 0=Sun, 1=Mon, ... 6=Sat）
     # 轉成 Python weekday: 0=Mon, ... 4=Fri
+    # 每筆紀錄：(close-open, high-low)
     wd_data = defaultdict(lambda: {
         "day": [], "morning": [], "night": []
     })
     for row in day_morning_rows:
-        td, dow, day_open, day_close, morn_open, morn_close = row
+        td, dow, day_open, day_close, day_high, day_low, morn_open, morn_close, morn_high, morn_low = row
         py_wd = (dow - 1) % 7  # DuckDB 1=Mon → Python 0=Mon
         if day_open is not None and day_close is not None:
-            wd_data[py_wd]["day"].append(float(day_close - day_open))
+            wd_data[py_wd]["day"].append(
+                (float(day_close - day_open), float(day_high - day_low))
+            )
         if morn_open is not None and morn_close is not None:
-            wd_data[py_wd]["morning"].append(float(morn_close - morn_open))
+            wd_data[py_wd]["morning"].append(
+                (float(morn_close - morn_open), float(morn_high - morn_low))
+            )
 
     for row in night_rows:
-        td, dow, night_open, night_close = row
+        td, dow, night_open, night_close, night_high, night_low = row
         py_wd = (dow - 1) % 7
         if night_open is not None and night_close is not None:
-            wd_data[py_wd]["night"].append(float(night_close - night_open))
+            wd_data[py_wd]["night"].append(
+                (float(night_close - night_open), float(night_high - night_low))
+            )
 
-    def _agg(changes):
-        if not changes:
-            return {"up": 0, "down": 0, "avg_chg": 0.0, "avg_abs": 0.0}
+    def _agg(items):
+        if not items:
+            return {"up": 0, "down": 0, "avg_chg": 0.0, "avg_range": 0.0}
+        changes = [c for c, _ in items]
+        ranges = [r for _, r in items]
         up = sum(1 for c in changes if c > 0)
         down = len(changes) - up
         avg_chg = sum(changes) / len(changes)
-        avg_abs = sum(abs(c) for c in changes) / len(changes)
+        avg_range = sum(ranges) / len(ranges)
         return {"up": up, "down": down,
                 "avg_chg": float(round(avg_chg)),
-                "avg_abs": float(round(avg_abs))}
+                "avg_range": float(round(avg_range))}
 
     weekday_stats = {
         "today_wd": next_day.weekday(),  # next_day = 今天的交易日
@@ -592,7 +609,7 @@ def print_report(data):
             pct = s["up"] / total * 100
             sign = "+" if s["avg_chg"] >= 0 else ""
             return (f"{s['up']}漲/{s['down']}跌 {pct:.0f}% "
-                    f"均{sign}{s['avg_chg']:.0f}pt (±{s['avg_abs']:.0f})")
+                    f"均{sign}{s['avg_chg']:.0f}pt (振幅{s['avg_range']:.0f})")
 
         print()
         print("### Weekday 漲跌統計（近 2 個月）")
@@ -898,7 +915,7 @@ def plot_sr_chart(data, n_days=20):
             pct = s["up"] / total * 100
             sign = "+" if s["avg_chg"] >= 0 else ""
             text = (f"{s['up']}漲/{s['down']}跌 {pct:.0f}% "
-                    f"均{sign}{s['avg_chg']:.0f}pt (±{s['avg_abs']:.0f})")
+                    f"均{sign}{s['avg_chg']:.0f}pt (振幅{s['avg_range']:.0f})")
             if pct > 50 and s["avg_chg"] > 0:
                 color = COLOR_UP
             elif pct < 50 and s["avg_chg"] < 0:
