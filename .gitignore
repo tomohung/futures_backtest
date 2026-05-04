@@ -222,8 +222,10 @@ data/*.duckdb.wal
 # 原始 rpt 資料（通常太大）
 data/raw/
 data/raw_options/
+data/raw_market/
 
 tags.lock
+.claude/scheduled_tasks.lock
 
 # Test fixture DB（pytest 自動產生）
 tests/fixtures/
