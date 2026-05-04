@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-早盤簡報：更新資料 + key_prices + daily_range
+早盤簡報：更新資料 + key_prices + daily_range + breadth_thermometer
 
 使用方式：
     uv run python src/analysis/morning_briefing.py
@@ -21,3 +21,4 @@ if __name__ == "__main__":
     run(ETL_DIR / "daily_update.py")
     run(ANALYSIS_DIR / "key_prices.py")
     run(ANALYSIS_DIR / "daily_range.py")
+    run(ANALYSIS_DIR / "breadth_thermometer.py")

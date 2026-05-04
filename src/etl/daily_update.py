@@ -4,8 +4,10 @@
 執行順序：
   Step 0a: download.py          — 下載期貨最新 zip 檔（可跳過）
   Step 0b: download_options.py  — 下載選擇權最新 zip 檔（可跳過）
+  Step 0c: download_stock_market.py — 下載 TWSE/TPEX 廣度資料（可跳過）
   Step 1a: parse_rpt.py         — 期貨 zip → ticks 表
   Step 1b: parse_options_rpt.py — 選擇權 zip → ticks_options 表
+  Step 1c: parse_stock_market.py — TWSE/TPEX JSON → market_breadth + stock_day
   Step 2:  build_1m.py          — ticks → ohlcv_1m 表
   Step 3:  build_continuous.py  — 換倉 + Panama adj_close
   Step 4:  validate.py          — 資料驗證（可跳過）
@@ -150,6 +152,17 @@ def main() -> None:
         ok = run_step(ETL_DIR / "download_options.py", options_download_args)
         if not ok:
             print("\n[WARN] 選擇權下載失敗，繼續 pipeline。")
+
+        # Step 0c: Download TWSE/TPEX stock market breadth
+        stock_market_args = [
+            "--end", args.end,
+            "--delay", str(max(args.delay, 3.0)),  # TWSE/TPEX rate limit 較嚴
+        ]
+        if args.start:
+            stock_market_args += ["--start", args.start]
+        ok = run_step(ETL_DIR / "download_stock_market.py", stock_market_args)
+        if not ok:
+            print("\n[WARN] 股市廣度下載失敗，繼續 pipeline。")
     else:
         print("\n[跳過] Step 0: 下載")
 
@@ -163,6 +176,12 @@ def main() -> None:
     ok = run_step(ETL_DIR / "parse_options_rpt.py", ["--reimport-recent", str(args.reimport_recent)])
     if not ok:
         print("\n[WARN] parse_options_rpt.py 失敗，選擇權資料未更新。")
+
+    # Step 1c: parse_stock_market（只處理最近 N 天，避免全量重跑）
+    parse_start = (taiwan_today() - timedelta(days=args.backfill_days)).isoformat()
+    ok = run_step(ETL_DIR / "parse_stock_market.py", ["--start", parse_start])
+    if not ok:
+        print("\n[WARN] parse_stock_market.py 失敗，股市廣度資料未更新。")
 
     # Step 2: build_1m
     ok = run_step(ETL_DIR / "build_1m.py")

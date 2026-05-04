@@ -118,6 +118,8 @@ futures_backtest/
 │   │   ├── build_1m.py         ← ticks → ohlcv_1m ✅
 │   │   ├── build_continuous.py ← 換倉 + Panama adj_close ✅
 │   │   ├── parse_options_rpt.py ← options zip → ticks_options 表 ✅
+│   │   ├── download_stock_market.py ← TWSE/TPEX 廣度資料下載（H079 用）✅
+│   │   ├── parse_stock_market.py ← TWSE/TPEX → market_breadth + stock_day ✅
 │   │   └── validate.py         ← 資料驗證 ✅
 │   ├── strategies/
 │   │   ├── orb.py              ← ORBStrategy（開盤區間突破）✅
@@ -126,10 +128,11 @@ futures_backtest/
 │   │   ├── estimate_hl_exit.py ← EstHL 出場策略 ✅
 │   │   └── reversal_follow.py  ← Reversal 跟隨策略 ✅
 │   ├── analysis/
-│   │   ├── morning_briefing.py  ← 早盤簡報（ETL + key_prices + daily_range）✅
+│   │   ├── morning_briefing.py  ← 早盤簡報（ETL + key_prices + daily_range + breadth_thermometer）✅
 │   │   ├── key_prices.py        ← 關鍵價格 + 支撐壓力 ✅
 │   │   ├── regime_health.py     ← Regime 健康快報（已驗證無交易濾網效果，已從 morning_briefing 移除）
-│   │   └── daily_range.py       ← 日盤波動 + VIX 圖表 ✅
+│   │   ├── daily_range.py       ← 日盤波動 + VIX 圖表 ✅
+│   │   └── breadth_thermometer.py ← H079 漲停萎縮溫度計（觀察用 alert，預設 RATIO ma7 pct=0.15）✅
 │   └── backtest/
 │       ├── runner.py            ← 資料載入、TrendMA/ADX 計算 ✅
 │       ├── strategy_health.py   ← 策略健康監測（完整版，含回測交叉分析）✅
