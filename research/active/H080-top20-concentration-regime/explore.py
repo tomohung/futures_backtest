@@ -228,9 +228,134 @@ def analyze_crash(df: pd.DataFrame, n: int = 20) -> None:
     print(f"\nGATE-3 (大跌規避): max lift = {max_lift:.2f} → 通過={gate3}")
 
     by_bucket.to_csv(RESULT_DIR / "C_crash_by_bucket.csv")
-def analyze_list_changes(df): print("[1E] TODO")
-def analyze_correlation_h079(df, s, e): print("[1F] TODO")
-def analyze_weekday(df, n=20): print(f"[1G] TODO (N={n})")
+def analyze_list_changes(df: pd.DataFrame) -> None:
+    print("=" * 78)
+    print("1E) 結構性事件：清單進出榜")
+    print("=" * 78)
+
+    with duckdb.connect(str(DB_PATH), read_only=True) as conn:
+        symbols_by_month = conn.execute(
+            "SELECT list_month, symbol, name, rank FROM top_lists WHERE rank <= 20 ORDER BY list_month, rank"
+        ).fetchdf()
+
+    months = sorted(symbols_by_month["list_month"].unique())
+    rows = []
+    prev_set: set[str] = set()
+    prev_name_map: dict[str, str] = {}
+    for m in months:
+        sub = symbols_by_month[symbols_by_month["list_month"] == m]
+        cur_set = set(sub["symbol"])
+        cur_name_map = dict(zip(sub["symbol"], sub["name"]))
+        if prev_set:
+            new_in = cur_set - prev_set
+            went_out = prev_set - cur_set
+            for s in new_in:
+                rows.append({"list_month": m, "event": "進榜", "symbol": s, "name": cur_name_map.get(s, "")})
+            for s in went_out:
+                rows.append({"list_month": m, "event": "退榜", "symbol": s, "name": prev_name_map.get(s, "")})
+        prev_set = cur_set
+        prev_name_map = cur_name_map
+
+    diffs = pd.DataFrame(rows)
+    diffs.to_csv(RESULT_DIR / "D_list_changes.csv", index=False)
+    print(f"進退榜事件總數: {len(diffs)}")
+    print(f"涉及月份數: {diffs['list_month'].nunique()} / {len(months)}")
+    print(f"\n按事件類型統計:")
+    print(diffs["event"].value_counts().to_string())
+    print(f"\n進榜次數最多的個股 top 10:")
+    print(diffs[diffs["event"]=="進榜"].groupby(["symbol","name"]).size().sort_values(ascending=False).head(10).to_string())
+
+    # 對主訊號 (N=20) 做「移除進退榜當月」robustness 檢查
+    change_months = set(diffs["list_month"].tolist())
+    df_clean = df[~df["list_month"].isin(change_months)]
+    print(f"\n移除有進出榜的月份後樣本: {len(df_clean)} (原 {len(df)})")
+    if len(df_clean) > 100:
+        df["q20"] = pd.qcut(df["top20_dev_pct"], 5, labels=[1,2,3,4,5], duplicates="drop")
+        df_clean = df_clean.copy()
+        df_clean["q20"] = pd.qcut(df_clean["top20_dev_pct"], 5, labels=[1,2,3,4,5], duplicates="drop")
+        print(f"\nN=20 振幅 mean by quintile:")
+        for label, d in [("原始", df), ("移除進出榜月", df_clean)]:
+            arr = d.groupby("q20", observed=True)["tx_range"].mean() * 100
+            print(f"  {label:<14}: {[f'{v:.2f}' for v in arr.values]}")
+
+
+def analyze_correlation_h079(df: pd.DataFrame, start: date, end: date) -> None:
+    print("=" * 78)
+    print("1F) 與 H079 訊號相關性")
+    print("=" * 78)
+    H079_SQL = """
+    WITH b AS (
+        SELECT trade_date,
+               SUM(up_count)*1.0/(SUM(up_count)+SUM(down_count)+SUM(unchanged_count)) AS up_ratio,
+               SUM(total_value) AS mb_total
+        FROM market_breadth
+        WHERE trade_date BETWEEN ? AND ?
+        GROUP BY trade_date
+    ),
+    lv AS (
+        SELECT trade_date,
+               SUM(CASE WHEN is_limit_up THEN value ELSE 0 END) AS lu_value
+        FROM stock_day WHERE trade_date BETWEEN ? AND ?
+        GROUP BY trade_date
+    )
+    SELECT b.trade_date, b.up_ratio, lv.lu_value*1.0/NULLIF(b.mb_total,0) AS lu_ratio
+    FROM b LEFT JOIN lv USING (trade_date)
+    """
+    with duckdb.connect(str(DB_PATH), read_only=True) as conn:
+        h079 = conn.execute(H079_SQL, [start, end, start, end]).fetchdf()
+    h079["trade_date"] = pd.to_datetime(h079["trade_date"]).dt.date
+    df_local = df.copy()
+    df_local["trade_date"] = pd.to_datetime(df_local["trade_date"]).dt.date
+    merged = df_local.merge(h079, on="trade_date", how="inner")
+    rows = []
+    for n in N_VALUES:
+        for h in ["up_ratio", "lu_ratio"]:
+            r = merged[[f"top{n}_dev_pct", h]].corr().iloc[0, 1]
+            rows.append({"N": n, "h079_signal": h, "corr": r})
+    res = pd.DataFrame(rows)
+    res.to_csv(RESULT_DIR / "E_correlation_with_h079.csv", index=False)
+    print(res.to_string(index=False))
+    high = res[res["corr"].abs() > 0.7]
+    if len(high) > 0:
+        print(f"\n⚠️  與 H079 高度相關 (|corr|>0.7): {high.to_dict('records')}")
+    else:
+        print(f"\n與 H079 訊號獨立性高 (max |corr| = {res['corr'].abs().max():.3f})")
+
+
+def analyze_weekday(df: pd.DataFrame, n: int = 20) -> None:
+    print("=" * 78)
+    print(f"1G) Weekday 子分析 (N={n})")
+    print("=" * 78)
+    work = df.dropna(subset=[f"top{n}_dev_pct"]).copy()
+    work["q"] = pd.qcut(work[f"top{n}_dev_pct"], 5, labels=[1, 2, 3, 4, 5], duplicates="drop")
+    wd_map = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri"}
+    work["wd"] = work["weekday"].map(wd_map)
+    rows = []
+    for wd in ["Mon", "Tue", "Wed", "Thu", "Fri"]:
+        for q in [1, 2, 3, 4, 5]:
+            sub = work[(work["wd"] == wd) & (work["q"] == q)]
+            if len(sub) < 10:
+                continue
+            rows.append({
+                "weekday": wd, "quintile": q, "n": len(sub),
+                "p_up": (sub["tx_dir"] > 0).mean(),
+                "range_mean": sub["tx_range"].mean(),
+                "dir_mean": sub["tx_dir"].mean(),
+            })
+    res = pd.DataFrame(rows)
+    res.to_csv(RESULT_DIR / "F_weekday_breakdown.csv", index=False)
+
+    print("\nrange_mean (%) by weekday × quintile:")
+    pivot_r = res.pivot(index="weekday", columns="quintile", values="range_mean") * 100
+    if 1 in pivot_r.columns and 5 in pivot_r.columns:
+        pivot_r["Q5/Q1"] = pivot_r[5] / pivot_r[1]
+    print(pivot_r.round(2).to_string())
+
+    print("\np_up (%) by weekday × quintile:")
+    pivot_p = res.pivot(index="weekday", columns="quintile", values="p_up") * 100
+    if 1 in pivot_p.columns and 5 in pivot_p.columns:
+        pivot_p["Q5-Q1 (pp)"] = pivot_p[5] - pivot_p[1]
+    print(pivot_p.round(2).to_string())
 
 
 def main() -> None:
