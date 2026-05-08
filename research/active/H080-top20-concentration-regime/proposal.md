@@ -71,47 +71,70 @@ H080 整體 GATE 條件如下，**任一通過**即進 Phase 2：
 - **2018-01-02 ~ 2026-05-07**（與 stock_day 表對齊，約 8 年、~2000 個交易日）
 - ma20 暖機後實際樣本 ~1980 個交易日
 
-### 訊號定義
+### 訊號定義（多 N 版本）
+
+對每個 `N ∈ {1, 5, 10, 20}`：
 ```
-top20_value_t  = sum(stock_day.value where symbol ∈ top20_list[month(t-1)])
+top_N_value_t  = sum(stock_day.value where symbol ∈ top_N_list[month(t-1)])
 total_value_t  = market_breadth.total_value[t]
-share_t        = top20_value_t / total_value_t
-ma20_t         = rolling_mean(share, 20)[t]
-std20_t        = rolling_std(share, 20)[t]
-deviation_pct  = (share_t - ma20_t) / ma20_t * 100      # 主訊號（所有子假設與 GATE 條件都基於此）
-zscore         = (share_t - ma20_t) / std20_t           # 補充指標（穩健性檢查；不入 GATE）
+share_N_t      = top_N_value_t / total_value_t
+ma20_N_t       = rolling_mean(share_N, 20)[t]
+std20_N_t      = rolling_std(share_N, 20)[t]
+deviation_pct_N  = (share_N_t - ma20_N_t) / ma20_N_t * 100
+zscore_N         = (share_N_t - ma20_N_t) / std20_N_t
 ```
+
+**主訊號**：`deviation_pct_20`（用於所有子假設與 GATE 條件）
+**探索維度**：`deviation_pct_1`、`deviation_pct_5`、`deviation_pct_10`（不入 GATE，但會比較訊號強度）
+**補充指標**：`zscore_N`（穩健性檢查；不入 GATE）
+
+**N=1 個股決定方式**：用 list_month 該月底成交金額排名第 1 的個股（動態，預期 8 年內幾乎都是 2330 台積電，但設計上不 hardcode）。
+
+**為何加多 N 維度**：TAIEX 權重 pareto 分布顯著（台積電 ~40%、前 5 ~55%、前 20 ~70%）。N 越小，訊號可能更純（少數 mega cap 主導行情）或更雜（單一個股噪音放大）。Phase 1 一次跑完 4 個 N，比較訊號強度，找出最佳 N。若小 N 顯著贏 N=20，列為衍生假設 H081 候選。
 
 ### 資料管線（新增）
 
-兩張新表 + 兩支 ETL：
+兩張新表 + 一支 ETL（清單來源從既有 `stock_day` 計算，不需爬蟲）：
 
 ```sql
-CREATE TABLE top20_lists (
-    list_month     VARCHAR,           -- 'YYYY-MM'，月底快照
+-- 月度排名清單（rank 1..20 對所有 N 都夠用）
+CREATE TABLE top_lists (
+    list_month     VARCHAR,           -- 'YYYY-MM'
     rank           INT,               -- 1..20
     symbol         VARCHAR,
     name           VARCHAR,
-    weight_pct     DECIMAL(6,3)
+    monthly_value  BIGINT             -- 該月成交金額加總（驗算用）
 );
 
-CREATE TABLE top20_concentration (
-    trade_date     DATE,
-    list_month     VARCHAR,           -- 套用清單的月份（t 的前一個月底，無未來函數）
-    top20_value    BIGINT,
-    total_value    BIGINT,
-    share_pct      DECIMAL(8,4),
-    ma20_share     DECIMAL(8,4),
-    std20_share    DECIMAL(8,4),
-    deviation_pct  DECIMAL(8,4),
-    zscore         DECIMAL(8,4),
-    list_changed   BOOLEAN            -- 當月清單與上月有變動
+-- 寬表：每個交易日同時帶 4 個 N 的指標
+CREATE TABLE concentration_index (
+    trade_date        DATE PRIMARY KEY,
+    list_month        VARCHAR,           -- 套用清單的月份（t 的前一月，無未來函數）
+    total_value       BIGINT,
+    top1_value        BIGINT,  top1_share   DECIMAL(8,4),
+    top5_value        BIGINT,  top5_share   DECIMAL(8,4),
+    top10_value       BIGINT,  top10_share  DECIMAL(8,4),
+    top20_value       BIGINT,  top20_share  DECIMAL(8,4),
+    -- ma20 / std20 / deviation_pct / zscore 對 4 個 N 各算一份（共 16 欄）
+    top1_ma20    DECIMAL(8,4), top1_std20   DECIMAL(8,4), top1_dev_pct   DECIMAL(8,4), top1_zscore   DECIMAL(8,4),
+    top5_ma20    DECIMAL(8,4), top5_std20   DECIMAL(8,4), top5_dev_pct   DECIMAL(8,4), top5_zscore   DECIMAL(8,4),
+    top10_ma20   DECIMAL(8,4), top10_std20  DECIMAL(8,4), top10_dev_pct  DECIMAL(8,4), top10_zscore  DECIMAL(8,4),
+    top20_ma20   DECIMAL(8,4), top20_std20  DECIMAL(8,4), top20_dev_pct  DECIMAL(8,4), top20_zscore  DECIMAL(8,4),
+    list_changed      BOOLEAN
 );
 ```
 
 ETL 腳本：
-- `src/etl/parse_top20_lists.py`：爬 TWSE 月報「市值比重」（端點待確認，候選 `STA0000004` 或 TAIEX 成份股月報）→ `top20_lists`
-- `src/etl/build_top20_concentration.py`：join `stock_day` + `market_breadth` + `top20_lists` → `top20_concentration`
+- `src/etl/build_top_lists.py`：從 `stock_day` 算每月個股成交金額加總，取 top 20 → `top_lists`
+- `src/etl/build_concentration_index.py`：join `stock_day` + `market_breadth` + `top_lists` → `concentration_index`（一次算 4 個 N）
+
+### 清單來源決策（重要妥協）
+
+**Phase 1 採用「上月成交金額排名前 20」近似 TAIEX 市值權重前 20**：
+- **理由**：零外部 ETL，全部用既有 `stock_day` 資料；對 mega cap（top 5 ~ top 10）排名與市值排名幾乎重疊
+- **缺點**：偏離 TAIEX 嚴格定義；在「妖股月」（如 2018 國巨）排名可能擠進 top 20
+- **未來函數防護**：t 月套用 t-1 月排名，零未來函數
+- **升級路徑**：若 Phase 1 訊號顯著，考慮 Phase 1.x 升級為爬 TWSE 「指數彙整月報」PDF 取得真正市值權重，比較訊號是否更強
 
 ### 行情分類（9 宮格）
 
@@ -127,16 +150,14 @@ ETL 腳本：
 - 以**主力連續合約**為準（用 `adj_close` 換算的點數變動率，但這裡用單日 OHLC 不需處理換倉跳空）
 - 注意：close/open 與 high/low 用單日 raw（非 adjusted）
 
-### 清單來源（重要決策）
-- **嚴謹版（採用）**：用 t 的**前一個月底**月報快照 → 套用到 t 月份每一天，零未來函數
-- 不採用「當月底快照套用本月」（會有微量未來函數）
 
 ## Notes
 
 ### 已知限制（必須在 distribution.md 顯眼處標記）
 1. 🚨 **同期相關性 ≠ 預測力**：本研究結論不可直接用於實戰策略
 2. 🚨 **核心假設 A 待驗證**：實戰可行性建立在「早盤即時集中度 ≈ 全日集中度」上，目前無歷史 5 分鐘級資料可驗證
-3. 🚨 **月報快照法的清單漂移**：結構性變化期（2018 國巨進榜、2021 長榮進榜、2024 廣達/緯創 AI 進榜）的清單會在當月後段才反映實際排名
+3. 🚨 **成交金額排名近似 TAIEX 權重**：Phase 1 用上月成交金額前 20 代理市值權重前 20。對 top 5 mega cap 重疊度高，但 top 10–20 在妖股月（如 2018 國巨、2021 長榮）會擠入排名
+4. 🚨 **月度清單漂移**：結構性變化期（2024 廣達/緯創 AI 進榜）的排名變動本身就值得分析（Phase 1.E）
 
 ### 後續延伸（不在本研究範圍）
 - **Phase 1.5（待議）**：建立即時集中度日記管線（每天盤中 09:00 / 09:30 / 10:00 / 10:30 / 11:00 / 12:00 / 13:00 / 13:45 各時點記錄一次「累計前 20 value / 累計總 value」），累積 60–100 日後驗證早盤 vs 全日相關性
