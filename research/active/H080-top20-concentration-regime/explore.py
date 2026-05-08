@@ -19,6 +19,7 @@ from datetime import date
 from pathlib import Path
 
 import duckdb
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -64,9 +65,92 @@ def load_daily(start: date, end: date) -> pd.DataFrame:
     return df
 
 
-# 1A – 1G stub（後續 task 會實作）
-def analyze_distribution(df): print("[1A] TODO")
-def analyze_quintile_by_N(df): print("[1B] TODO")
+def analyze_distribution(df: pd.DataFrame) -> None:
+    print("=" * 78)
+    print("1A) 分佈總覽")
+    print("=" * 78)
+    cols = [f"top{n}_share" for n in N_VALUES] + [f"top{n}_dev_pct" for n in N_VALUES]
+    desc = df[cols].describe().T[["mean", "std", "min", "50%", "max"]]
+    print(desc.to_string())
+    n_changed = df.groupby("list_month")["list_changed"].first().sum()
+    n_total = df["list_month"].nunique()
+    print(f"\nlist_changed 月份數: {n_changed} / {n_total}")
+
+    fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+    for i, n in enumerate(N_VALUES):
+        axes[0, i].hist(df[f"top{n}_share"].dropna(), bins=50, color="steelblue", edgecolor="white")
+        axes[0, i].set_title(f"N={n} share %")
+        axes[1, i].hist(df[f"top{n}_dev_pct"].dropna(), bins=50, color="darkorange", edgecolor="white")
+        axes[1, i].set_title(f"N={n} dev_pct %")
+        axes[1, i].axvline(0, color="black", lw=0.5)
+    fig.tight_layout()
+    fig.savefig(RESULT_DIR / "distribution_overview.png", dpi=120)
+    plt.close(fig)
+    print(f"已輸出: {RESULT_DIR / 'distribution_overview.png'}")
+
+
+def analyze_quintile_by_N(df: pd.DataFrame) -> None:
+    print("=" * 78)
+    print("1B) 5 桶 quintile 邊際分析（4 個 N）")
+    print("=" * 78)
+
+    rows = []
+    for n in N_VALUES:
+        sig = df[f"top{n}_dev_pct"]
+        df[f"q{n}"] = pd.qcut(sig, 5, labels=[1, 2, 3, 4, 5], duplicates="drop")
+        for q in [1, 2, 3, 4, 5]:
+            mask = df[f"q{n}"] == q
+            sub = df[mask]
+            if len(sub) == 0:
+                continue
+            rows.append({
+                "N": n, "quintile": q, "n": len(sub),
+                "share_mean": sub[f"top{n}_share"].mean(),
+                "dev_pct_mean": sub[f"top{n}_dev_pct"].mean(),
+                "tx_dir_mean": sub["tx_dir"].mean(),
+                "tx_range_mean": sub["tx_range"].mean(),
+                "p_up": (sub["tx_dir"] > 0).mean(),
+                "p_down": (sub["tx_dir"] < 0).mean(),
+            })
+    res = pd.DataFrame(rows)
+    res.to_csv(RESULT_DIR / "A_quintile_by_N.csv", index=False)
+    print(res.to_string(index=False))
+
+    print("\n--- GATE 評估 (主訊號 N=20) ---")
+    for n in N_VALUES:
+        sub = res[res["N"] == n].sort_values("quintile")
+        if len(sub) < 5:
+            continue
+        pp_diff = (sub["p_up"].iloc[-1] - sub["p_up"].iloc[0]) * 100
+        range_diff = (sub["tx_range_mean"].iloc[-1] / sub["tx_range_mean"].iloc[0] - 1) * 100
+        mono_up = sub["p_up"].is_monotonic_increasing or sub["p_up"].is_monotonic_decreasing
+        mono_range = sub["tx_range_mean"].is_monotonic_increasing or sub["tx_range_mean"].is_monotonic_decreasing
+        gate1 = abs(pp_diff) >= 8 and mono_up
+        gate2 = abs(range_diff) >= 30 and mono_range
+        marker = " <- GATE" if n == 20 else ""
+        print(f"N={n:>2}: p_up Q5-Q1 = {pp_diff:+6.2f}pp  mono={mono_up}  GATE-1={gate1}{marker}")
+        print(f"      range Q5/Q1-1 = {range_diff:+6.1f}%   mono={mono_range}  GATE-2={gate2}{marker}")
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    for n in N_VALUES:
+        sub = res[res["N"] == n].sort_values("quintile")
+        axes[0].plot(sub["quintile"], sub["p_up"] * 100, marker="o", label=f"N={n}")
+        axes[1].plot(sub["quintile"], sub["tx_range_mean"] * 100, marker="o", label=f"N={n}")
+    axes[0].set_title("漲日機率 vs quintile (4 個 N)")
+    axes[0].set_xlabel("quintile (1=低集中度, 5=高)")
+    axes[0].set_ylabel("p_up %")
+    axes[0].axhline(50, color="gray", lw=0.5, linestyle="--")
+    axes[0].legend()
+    axes[1].set_title("平均振幅 vs quintile (4 個 N)")
+    axes[1].set_xlabel("quintile")
+    axes[1].set_ylabel("range %")
+    axes[1].legend()
+    fig.tight_layout()
+    fig.savefig(RESULT_DIR / "A_quintile_by_N.png", dpi=120)
+    plt.close(fig)
+    print(f"\n已輸出: {RESULT_DIR / 'A_quintile_by_N.png'}")
+
+
 def analyze_27grid(df, n=20): print(f"[1C] TODO (N={n})")
 def analyze_crash(df, n=20): print(f"[1D] TODO (N={n})")
 def analyze_list_changes(df): print("[1E] TODO")
