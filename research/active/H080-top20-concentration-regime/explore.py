@@ -151,8 +151,83 @@ def analyze_quintile_by_N(df: pd.DataFrame) -> None:
     print(f"\n已輸出: {RESULT_DIR / 'A_quintile_by_N.png'}")
 
 
-def analyze_27grid(df, n=20): print(f"[1C] TODO (N={n})")
-def analyze_crash(df, n=20): print(f"[1D] TODO (N={n})")
+def analyze_27grid(df: pd.DataFrame, n: int = 20) -> None:
+    print("=" * 78)
+    print(f"1C) 27 格主分析 (N={n})")
+    print("=" * 78)
+    work = df.dropna(subset=[f"top{n}_dev_pct", "tx_dir", "tx_range"]).copy()
+
+    work["c_bucket"] = pd.qcut(work[f"top{n}_dev_pct"], 3, labels=["c_low", "c_mid", "c_high"])
+    work["d_bucket"] = pd.cut(
+        work["tx_dir"], bins=[-np.inf, -0.003, 0.003, np.inf],
+        labels=["dn", "flat", "up"]
+    )
+    work["r_bucket"] = pd.qcut(work["tx_range"], 3, labels=["sm", "md", "lg"])
+    work["regime"] = work["d_bucket"].astype(str) + "_" + work["r_bucket"].astype(str)
+
+    counts = work.groupby(["c_bucket", "regime"], observed=True).size().unstack(fill_value=0)
+    baseline = work["regime"].value_counts(normalize=True)
+    cond_prob = counts.div(counts.sum(axis=1), axis=0)
+    lift = cond_prob.div(baseline, axis=1)
+
+    print("\n樣本數 (橫列：集中度桶, 縱欄：行情格):")
+    print(counts.to_string())
+    print("\n條件機率 % (橫列：集中度桶):")
+    print((cond_prob * 100).round(2).to_string())
+    print("\nLift (vs baseline):")
+    print(lift.round(2).to_string())
+    print(f"\nBaseline (無條件機率):")
+    print((baseline * 100).round(2).to_string())
+
+    chi2, p, dof, expected = stats.chi2_contingency(counts.values)
+    print(f"\nChi-square: chi2={chi2:.2f}, p={p:.6f}, dof={dof}")
+
+    extreme = []
+    for c in lift.index:
+        for r in lift.columns:
+            if pd.isna(lift.loc[c, r]) or counts.loc[c, r] < 20:
+                continue
+            if lift.loc[c, r] >= 1.8 or lift.loc[c, r] <= 0.5:
+                extreme.append({
+                    "c_bucket": c, "regime": r, "n": int(counts.loc[c, r]),
+                    "lift": float(lift.loc[c, r]),
+                    "p_cond": float(cond_prob.loc[c, r])
+                })
+    print(f"\n極端格 (lift>=1.8 或 <=0.5, n>=20): {len(extreme)} 格")
+    for e in extreme:
+        print(f"  c_bucket={e['c_bucket']}  regime={e['regime']:<8} n={e['n']:>3}  lift={e['lift']:.2f}  cond_p={e['p_cond']*100:.1f}%")
+
+    n_high_lift = sum(1 for e in extreme if e["lift"] >= 1.8)
+    gate4 = n_high_lift >= 2 and p < 0.05
+    print(f"\nGATE-4 (極端格): {n_high_lift} 格 lift>=1.8 + chi2 p={p:.4f} → 通過={gate4}")
+
+    out = lift.stack().reset_index()
+    out.columns = ["c_bucket", "regime", "lift"]
+    out["count"] = out.apply(lambda r: int(counts.loc[r["c_bucket"], r["regime"]]), axis=1)
+    out["cond_prob"] = out.apply(lambda r: float(cond_prob.loc[r["c_bucket"], r["regime"]]), axis=1)
+    out.to_csv(RESULT_DIR / f"B_3x9_grid_top{n}.csv", index=False)
+
+
+def analyze_crash(df: pd.DataFrame, n: int = 20) -> None:
+    print("=" * 78)
+    print(f"1D) 大跌規避分析 (N={n})")
+    print("=" * 78)
+    work = df.dropna(subset=[f"top{n}_dev_pct", "tx_dir", "tx_range"]).copy()
+    work["c_bucket"] = pd.qcut(work[f"top{n}_dev_pct"], 3, labels=["c_low", "c_mid", "c_high"])
+    range_top_tercile = work["tx_range"].quantile(2 / 3)
+    work["is_crash"] = (work["tx_dir"] < -0.005) & (work["tx_range"] > range_top_tercile)
+
+    baseline_crash = work["is_crash"].mean()
+    by_bucket = work.groupby("c_bucket", observed=True)["is_crash"].agg(["mean", "count"])
+    by_bucket["lift"] = by_bucket["mean"] / baseline_crash
+    print(f"baseline 大跌機率: {baseline_crash*100:.2f}%  (定義: tx_dir<-0.5% 且 tx_range > 上 1/3 振幅閾值 {range_top_tercile*100:.2f}%)")
+    print(by_bucket.round(4).to_string())
+
+    max_lift = by_bucket["lift"].max()
+    gate3 = max_lift >= 1.5
+    print(f"\nGATE-3 (大跌規避): max lift = {max_lift:.2f} → 通過={gate3}")
+
+    by_bucket.to_csv(RESULT_DIR / "C_crash_by_bucket.csv")
 def analyze_list_changes(df): print("[1E] TODO")
 def analyze_correlation_h079(df, s, e): print("[1F] TODO")
 def analyze_weekday(df, n=20): print(f"[1G] TODO (N={n})")
