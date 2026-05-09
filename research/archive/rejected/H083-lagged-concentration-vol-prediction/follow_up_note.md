@@ -1,7 +1,7 @@
-# H083 Follow-up Note: 與夜盤訊號的比較與暫停決定
+# H083 Follow-up Note: 與夜盤訊號的比較與 reject 決定
 
 **日期**：2026-05-09
-**狀態**：H083 proposal **PAUSED**（不執行 Phase 1）
+**最終狀態**：**REJECTED** — 集中度對既有夜盤 vol 訊號在 vol prediction 兩個關鍵 metric（振幅 mean、reach rate）上都無顯著獨立增量。
 
 ## 起因
 
@@ -94,9 +94,71 @@ H083 不是永久 reject，而是等到有 differentiated 設計再啟動。可�
 
 執行任一 direction 前，先重寫 proposal，明確跟 H070 的差異點與 differentiated value。
 
-## 已執行
-- `explore_night_vs_concentration.py`：一次性探索腳本（保留作為歷史紀錄）
+## 補充探索：集中度對 EstRange 觸及率的影響（2026-05-09 後續）
 
-## 未執行
-- Phase 1 全部
-- Phase 2 全部
+User 提出新問題：「集中度高的時候，能不能更常觸及 1× EstRange？」執行 `explore_concentration_reach.py` 驗證。
+
+### EstRange 定義（沿用 H070）
+- `ema_hl[t]` = EMA20 of `day_hl`, shifted 1
+- `hl_ratio[t]` = `day_hl[t] / ema_hl[t]`
+- `reach_1x` = `hl_ratio >= 1.0`
+
+### 集中度單變量 → P(reach 1x)
+| 集中度桶 | n | P(reach 1x) |
+|---|---|---|
+| D1 | 180 | 37.2% |
+| D2 | 179 | 35.8% (非單調，比 D1 低) |
+| D3 | 180 | 39.4% |
+| D4 | 179 | 41.9% |
+| D5 | 180 | **49.4%** |
+
+baseline 40.8%。D5/D1 = +12 pp，但**非單調**。
+
+### 夜盤單變量（對照）
+| 夜盤桶 | n | P(reach 1x) |
+|---|---|---|
+| N1 | 180 | 32.2% |
+| N5 | 180 | **60.0%** |
+
+N5/N1 = +27.8 pp，**強 2.3 倍且單調**。
+
+### OLS 比較
+| 模型 | dev t | night t | R² |
+|---|---|---|---|
+| dev only | 3.96 | — | 0.017 |
+| night only | — | 11.30 | **0.125** |
+| joint | **1.60** ⚠️ | 10.62 | 0.127 |
+
+**joint model 中 dev_lag1 t-stat 從 3.96 → 1.60，p ≈ 0.11 邊緣不顯著。增量 R² 只 +0.0025**。
+
+### 5×5 矩陣 P(reach 1x) % 關鍵格
+- 雙重高 D5×N5：60.7% (n=61)
+- **集中低夜盤高 D1×N5：58.6% (n=29)** ← 跟雙重高幾乎一樣
+- 集中高夜盤低 D5×N1：38.9% (n=18) ← 集中度高無法救觸及率
+- 雙重低 D1×N1：39.6% (n=53)
+
+→ **集中度只在夜盤已經高的日子提供 +2 pp 微小補強，在夜盤低的日子完全無效**。
+
+## Reject 的證據鏈
+
+### 三條獨立證據都指向同一結論
+
+1. **振幅預測（之前已測）**：集中度 joint t=2.85 顯著但增量 R² 只 +0.007
+2. **觸及率預測（本次測）**：集中度 joint t=1.60 邊緣不顯著，增量 R² +0.0025
+3. **H070 negative finding**：用夜盤 vol 連續縮放 SatZone 的 Phase 2 已證無效；集中度版本是更弱的重演
+
+### 為何是 rejected 不是 inconclusive
+- **inconclusive** 適用「結果不明確、可能未來重新探索」
+- 本研究**不是不明確** — 兩個 metric 都顯示集中度對既有夜盤訊號無實質增量，conditional t-stat 接近不顯著
+- 即使未來想到「differentiated 設計」，那會是新假設（HXXX），不是 H083 重啟
+- Reject 並不否定 H080（同期相關 indicator） — 只否定「將集中度當作獨立的 vol predictor」這個 H083 假設核心
+
+## 已執行
+- `explore_night_vs_concentration.py`：振幅 mean 比較
+- `explore_concentration_reach.py`：reach rate 比較
+- 兩支腳本保留作為 reject 證據與未來防誤
+
+## 未執行（且不再執行）
+- Phase 1 正式 explore（無此必要 — 證據已收斂）
+- Phase 2 backtest（H070 已證類似設計無效）
+- Phase 1.5 即時資料管線（不為 H083 建，但可為其他研究建）

@@ -4,11 +4,14 @@
 H083
 
 ## Status
-🛑 **PAUSED**（2026-05-09）— 純集中度版本經與夜盤訊號比較後，研究設計需要修正。詳見 [`follow_up_note.md`](follow_up_note.md)。
+❌ **REJECTED**（2026-05-09）— 集中度對既有夜盤 vol 訊號在 vol prediction 兩個關鍵 metric 都無顯著獨立增量。詳見 [`follow_up_note.md`](follow_up_note.md)。
 
-**摘要為何暫停**：探索發現夜盤振幅對 t 日盤振幅的 R²=0.236（vs 集中度 0.032），夜盤壓倒性主導。集中度在 joint OLS 中 t=2.85 仍顯著，但增量 R² 只 +0.007。且 H070（confirmed）已測過用夜盤訊號做連續倍數縮放 → Phase 2 無效；H083 純集中度版本是 H070 設計的弱化重演，預期同樣無效。
+**證據摘要**：
+- 振幅預測：joint OLS 中 dev_lag1 t=2.85 顯著但增量 R² 只 +0.007
+- 觸及率預測：joint OLS 中 dev_lag1 t=1.60 邊緣不顯著，增量 R² +0.0025
+- H070 (confirmed) 已證夜盤連續縮放策略無效；集中度版本是更弱的重演
 
-**重啟條件**：找到與 H070 differentiated 的設計（如 binary filter、極端格倉位調整、Tue/Wed 條件）後再啟動。
+**未執行 Phase 1 即 reject 的理由**：兩個獨立探索（夜盤 vs 集中度比較 + 觸及率分析）已提供足夠證據，conditional t-stat 接近不顯著。正式 Phase 1 預期得到 inconclusive 而非 confirmed，但證據已收斂到「reject」。
 
 ---
 
