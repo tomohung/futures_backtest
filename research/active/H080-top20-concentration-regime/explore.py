@@ -322,6 +322,171 @@ def analyze_correlation_h079(df: pd.DataFrame, start: date, end: date) -> None:
         print(f"\n與 H079 訊號獨立性高 (max |corr| = {res['corr'].abs().max():.3f})")
 
 
+def analyze_quintile_weekday_ev(df: pd.DataFrame, n: int = 20) -> None:
+    """5 桶 quintile × 5 weekday = 25 格 的整體期望值 + 大跌規避。"""
+    print("=" * 78)
+    print(f"1I) Quintile × Weekday EV (N={n})")
+    print("=" * 78)
+    work = df.dropna(subset=[f"top{n}_dev_pct"]).copy()
+    work["q"] = pd.qcut(work[f"top{n}_dev_pct"], 5, labels=["Q1", "Q2", "Q3", "Q4", "Q5"], duplicates="drop")
+    wd_map = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri"}
+    work["wd"] = work["weekday"].map(wd_map)
+    range_top_tercile = work["tx_range"].quantile(2 / 3)
+    work["is_crash"] = (work["tx_dir"] < -0.005) & (work["tx_range"] > range_top_tercile)
+    baseline_crash = work["is_crash"].mean()
+
+    rows = []
+    for q in ["Q1", "Q2", "Q3", "Q4", "Q5"]:
+        for wd in ["Mon", "Tue", "Wed", "Thu", "Fri"]:
+            sub = work[(work["q"] == q) & (work["wd"] == wd)]
+            if len(sub) < 10:
+                continue
+            rows.append({
+                "quintile": q, "weekday": wd, "n": len(sub),
+                "p_up_pct": (sub["tx_dir"] > 0).mean() * 100,
+                "p_crash_pct": sub["is_crash"].mean() * 100,
+                "crash_lift": sub["is_crash"].mean() / baseline_crash,
+                "mean_dir_pct": sub["tx_dir"].mean() * 100,
+                "range_mean_pct": sub["tx_range"].mean() * 100,
+            })
+    res = pd.DataFrame(rows)
+    res.to_csv(RESULT_DIR / "H_quintile_weekday.csv", index=False)
+
+    print("\nMean tx_dir % (整體 EV):")
+    pivot = res.pivot(index="quintile", columns="weekday", values="mean_dir_pct")
+    pivot = pivot[["Mon", "Tue", "Wed", "Thu", "Fri"]]
+    print(pivot.round(3).to_string())
+
+    print(f"\nP(crash) % (baseline = {baseline_crash*100:.2f}%):")
+    pivot_p = res.pivot(index="quintile", columns="weekday", values="p_crash_pct")
+    pivot_p = pivot_p[["Mon", "Tue", "Wed", "Thu", "Fri"]]
+    print(pivot_p.round(2).to_string())
+
+    print(f"\nCrash lift vs baseline:")
+    pivot_l = res.pivot(index="quintile", columns="weekday", values="crash_lift")
+    pivot_l = pivot_l[["Mon", "Tue", "Wed", "Thu", "Fri"]]
+    print(pivot_l.round(2).to_string())
+
+    print("\np_up % (Q5-Q1 行/列差距):")
+    pivot_pu = res.pivot(index="quintile", columns="weekday", values="p_up_pct")
+    pivot_pu = pivot_pu[["Mon", "Tue", "Wed", "Thu", "Fri"]]
+    pivot_pu.loc["Q5-Q1 (pp)"] = pivot_pu.loc["Q5"] - pivot_pu.loc["Q1"]
+    print(pivot_pu.round(2).to_string())
+
+    print("\n樣本數 n:")
+    pivot_n = res.pivot(index="quintile", columns="weekday", values="n")
+    pivot_n = pivot_n[["Mon", "Tue", "Wed", "Thu", "Fri"]]
+    print(pivot_n.to_string())
+
+    print("\n顯著 EV 格 (n>=30 且 |mean_dir| >= 0.20%):")
+    ev_strong = res[(res["n"] >= 30) & (res["mean_dir_pct"].abs() >= 0.20)]
+    if len(ev_strong) > 0:
+        print(ev_strong.sort_values("mean_dir_pct", ascending=False).round(3).to_string(index=False))
+    else:
+        print("  (無符合條件)")
+
+    print("\n極低 / 極高 crash lift 格 (n>=30 且 lift<=0.5 或 lift>=1.5):")
+    crash_strong = res[(res["n"] >= 30) & ((res["crash_lift"] <= 0.5) | (res["crash_lift"] >= 1.5))]
+    if len(crash_strong) > 0:
+        print(crash_strong.sort_values("crash_lift").round(3).to_string(index=False))
+    else:
+        print("  (無符合條件)")
+
+
+def analyze_ev_matrix(df: pd.DataFrame, n: int = 20) -> None:
+    """細格 (c_bucket × weekday) 的完整機率與期望值。
+
+    回答的問題：
+    - 各情況下漲、跌、大跌的機率
+    - 漲日的平均漲幅、跌日的平均跌幅
+    - 整體期望值 (mean_tx_dir) — 是否有方向 EV
+    - 大跌時的平均損失（風險大小）
+    """
+    print("=" * 78)
+    print(f"1H) EV matrix (c_bucket × weekday, N={n})")
+    print("=" * 78)
+    work = df.dropna(subset=[f"top{n}_dev_pct"]).copy()
+    work["c_bucket"] = pd.qcut(work[f"top{n}_dev_pct"], 3, labels=["c_low", "c_mid", "c_high"])
+    wd_map = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri"}
+    work["wd"] = work["weekday"].map(wd_map)
+
+    range_top_tercile = work["tx_range"].quantile(2 / 3)
+    work["is_crash"] = (work["tx_dir"] < -0.005) & (work["tx_range"] > range_top_tercile)
+    work["is_rally"] = (work["tx_dir"] > 0.005) & (work["tx_range"] > range_top_tercile)
+
+    rows = []
+    for c in ["c_low", "c_mid", "c_high"]:
+        for wd in ["Mon", "Tue", "Wed", "Thu", "Fri"]:
+            sub = work[(work["c_bucket"] == c) & (work["wd"] == wd)]
+            if len(sub) < 10:
+                continue
+            up = sub[sub["tx_dir"] > 0]
+            dn = sub[sub["tx_dir"] < 0]
+            crash = sub[sub["is_crash"]]
+            rally = sub[sub["is_rally"]]
+            rows.append({
+                "c_bucket": c, "weekday": wd, "n": len(sub),
+                "p_up_pct": (sub["tx_dir"] > 0).mean() * 100,
+                "p_dn_pct": (sub["tx_dir"] < 0).mean() * 100,
+                "p_crash_pct": sub["is_crash"].mean() * 100,
+                "p_rally_pct": sub["is_rally"].mean() * 100,
+                "mean_dir_pct": sub["tx_dir"].mean() * 100,            # 整體 EV
+                "mean_up_pct": up["tx_dir"].mean() * 100 if len(up) else np.nan,
+                "mean_dn_pct": dn["tx_dir"].mean() * 100 if len(dn) else np.nan,
+                "mean_crash_loss_pct": crash["tx_dir"].mean() * 100 if len(crash) else np.nan,
+                "mean_rally_gain_pct": rally["tx_dir"].mean() * 100 if len(rally) else np.nan,
+                "range_mean_pct": sub["tx_range"].mean() * 100,
+            })
+    res = pd.DataFrame(rows)
+    res.to_csv(RESULT_DIR / "G_ev_matrix.csv", index=False)
+
+    # === 整體 EV (mean_tx_dir) ===
+    print("\nMean tx_dir % (整體期望值, 越正越偏漲):")
+    pivot_ev = res.pivot(index="c_bucket", columns="weekday", values="mean_dir_pct")
+    pivot_ev = pivot_ev[["Mon", "Tue", "Wed", "Thu", "Fri"]]
+    print(pivot_ev.round(3).to_string())
+
+    # === P(crash) 矩陣 ===
+    print("\nP(crash) %:  (定義: tx_dir<-0.5% 且 tx_range > 上 1/3 振幅)")
+    pivot_crash = res.pivot(index="c_bucket", columns="weekday", values="p_crash_pct")
+    pivot_crash = pivot_crash[["Mon", "Tue", "Wed", "Thu", "Fri"]]
+    print(pivot_crash.round(2).to_string())
+
+    # === P(rally) 矩陣 ===
+    print("\nP(rally) %:  (定義: tx_dir>+0.5% 且 tx_range > 上 1/3 振幅)")
+    pivot_rally = res.pivot(index="c_bucket", columns="weekday", values="p_rally_pct")
+    pivot_rally = pivot_rally[["Mon", "Tue", "Wed", "Thu", "Fri"]]
+    print(pivot_rally.round(2).to_string())
+
+    # === Crash 條件損失 ===
+    print("\nMean loss when crash %:")
+    pivot_loss = res.pivot(index="c_bucket", columns="weekday", values="mean_crash_loss_pct")
+    pivot_loss = pivot_loss[["Mon", "Tue", "Wed", "Thu", "Fri"]]
+    print(pivot_loss.round(3).to_string())
+
+    # === Rally 條件漲幅 ===
+    print("\nMean gain when rally %:")
+    pivot_gain = res.pivot(index="c_bucket", columns="weekday", values="mean_rally_gain_pct")
+    pivot_gain = pivot_gain[["Mon", "Tue", "Wed", "Thu", "Fri"]]
+    print(pivot_gain.round(3).to_string())
+
+    # === 樣本數 ===
+    print("\n樣本數 n:")
+    pivot_n = res.pivot(index="c_bucket", columns="weekday", values="n")
+    pivot_n = pivot_n[["Mon", "Tue", "Wed", "Thu", "Fri"]]
+    print(pivot_n.to_string())
+
+    # === EV 顯著格 (n>=30 且 |mean_dir| >= 0.15%) ===
+    print("\n顯著 EV 格 (n>=30 且 |mean_dir| >= 0.15%):")
+    ev_extreme = res[(res["n"] >= 30) & (res["mean_dir_pct"].abs() >= 0.15)]
+    if len(ev_extreme) > 0:
+        cols = ["c_bucket", "weekday", "n", "mean_dir_pct", "p_up_pct",
+                "p_crash_pct", "mean_crash_loss_pct", "p_rally_pct", "mean_rally_gain_pct"]
+        print(ev_extreme[cols].sort_values("mean_dir_pct", ascending=False).round(3).to_string(index=False))
+    else:
+        print("  (無符合條件)")
+
+
 def analyze_weekday(df: pd.DataFrame, n: int = 20) -> None:
     print("=" * 78)
     print(f"1G) Weekday 子分析 (N={n})")
@@ -378,6 +543,8 @@ def main() -> None:
     analyze_list_changes(df)
     analyze_correlation_h079(df, args.start, args.end)
     analyze_weekday(df, n=20)
+    analyze_ev_matrix(df, n=20)
+    analyze_quintile_weekday_ev(df, n=20)
 
 
 if __name__ == "__main__":
