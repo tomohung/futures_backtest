@@ -1,0 +1,8 @@
+indicator,extreme_dir,events_total,events_with_data,hits_total,hit_rate_total,hit_rate_mode1,hit_rate_mode2
+dist 250MA,low,21,20,13,13/20 (65%),5/9 (56%),8/11 (73%)
+z 125MA,low,21,17,14,14/17 (82%),7/9 (78%),7/8 (88%)
+vol 5/60,high,21,20,4,4/20 (20%),4/9 (44%),0/11 (0%)
+VIX,high,21,8,7,7/8 (88%),5/6 (83%),2/2 (100%)
+VIX_pct,high,21,8,7,7/8 (88%),5/6 (83%),2/2 (100%)
+econ_score,low,21,21,5,5/21 (24%),0/10 (0%),5/11 (45%)
+blue_streak,high,21,21,1,1/21 (5%),0/10 (0%),1/11 (9%)
