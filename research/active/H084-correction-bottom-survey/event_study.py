@@ -28,9 +28,9 @@ WINDOW = 30  # ±30 trading days
 INDICATORS = [
     ("taiex_dist_250ma_pct", "TAIEX dist 250MA (%)"),
     ("taiex_dist_125ma_z", "TAIEX dist 125MA (z)"),
-    ("volume_5m_60m", "Volume 5MA / 60MA"),
-    ("vix", "VIX"),
     ("vix_pct", "VIX 1y percentile"),
+    ("margin_drop_60d_pct", "Margin drop from 60d high (%)"),
+    ("margin_amt_pct_1y", "Margin amount 1y percentile"),
     ("econ_score", "Econ signal score"),
 ]
 

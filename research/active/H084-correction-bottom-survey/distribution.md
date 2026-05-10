@@ -8,15 +8,15 @@
 **GATE 判決：✅ PASS**
 
 Phase 0 Survey 確認：
-- **VIX_pct + z 125MA + (dist 250MA)** 三個指標在歷史 Tier B/C trough 命中率 65-88%
+- **VIX_pct + z 125MA + dist 250MA** 三個指標在歷史 Tier B/C trough 命中率 65-88%
+- **margin_drop_60d 與 margin_amt_pct_1y**（融資餘額）50%/47% 命中率，作為**慢頻 fundamental 確認指標**（與 z 125MA 強相關 r=0.66~0.68，與 VIX_pct 弱相關 r=-0.35）
 - **econ_score + blue_streak** 能將 Tier A regime（系統熊）vs Tier B/C regime（多頭修正）的中位數**乾淨分流**（28.5 vs 17.0）
-- 指標精簡後有 **4 個非冗餘軸**：VIX_pct（panic）/ z 125MA（technical）/ econ_score（regime）/ vol 5/60（volume，弱）
 - 必抓事件全部捕捉：**2024-08（C-sub）、2025-04（B）、2026-03（C）** 都會被 VIX_pct 觸發
 
-**Survey 限制（影響後續解讀，不影響 GATE）**：
+**Survey 限制**：
 - VIX 資料只有 2017+，pre-2017 Mode 2 樣本太少
-- 融資資料 backfill 受 TWSE rate limit 影響，目前只 57 天可用，**等 backfill 完成後本 survey 應重跑加入 margin**
-- 廣度（market_breadth、52w 新低家數）資料尚未跑 ETL，後續補
+- 融資資料 ✅ 已 backfill 完整（4416 個交易日，2008-01 ~ 2026-05）
+- 廣度（market_breadth、52w 新低家數）資料尚未跑 ETL，後續補（H088）
 
 ---
 
@@ -27,7 +27,7 @@ Phase 0 Survey 確認：
 | TAIEX 日線 | 2008-01 ~ 2026-05（4484 行） | ✅ via yfinance ^TWII |
 | VIX (vixtwn) | 2016-11 ~ 2026-04（2408 行） | ✅ 既有 |
 | 景氣信號 | 1982-01 ~ 2026-03（531 月） | ✅ NDC ZIP via data.gov.tw 6099 |
-| 融資餘額 | 2008+ 計畫，**目前 57 天** | ⏳ backfill 受 TWSE rate limit 影響，重跑中 |
+| 融資餘額 | 2008-01 ~ 2026-05（4416 個交易日） | ✅ 完整（重跑後）|
 | 個股 / 廣度 | 未跑 ETL | ❌ 後續補（task #11） |
 
 ETL 新增腳本：
@@ -86,24 +86,36 @@ ETL 新增腳本：
 | **VIX_pct** | high | **88%** (7/8) | 83% | 100% | ⭐ 強訊號（限 2017+） |
 | **z 125MA** | low | **82%** (14/17) | 78% | 88% | ⭐ 強訊號 + 樣本足 |
 | dist 250MA | low | 65% (13/20) | 56% | 73% | 中 |
+| **margin drop 60d** | low | **50%** (10/20) | 44% | 55% | ⭐ fundamental 慢頻 |
+| **margin pct 1y** | low | **47%** (9/19) | 33% | 60% | ⭐ fundamental 慢頻 |
 | vol 5/60 | high | 20% (4/20) | 44% | 0% | 弱 → 候選刪除 |
 | econ_score | low | 24% (5/21) | 0% | 45% | regime（非 trough 訊號） |
 | blue_streak | high | 5% (1/21) | 0% | 9% | regime（非 trough 訊號） |
+
+**Margin 觀察**：對深層慢速事件（2008-11 -54%、2020-03 -36%、2025-04 -32%）強信號；對快速 V 型底（2024-08 -10%、2026-03 -5%）相對失效。**反映融資需要時間去槓桿**。
 
 ### 相關性矩陣（冗餘對）
 
 | Pair | Pearson r | 處理 |
 |---|---|---|
 | dist 250MA ~ z 125MA | **+0.82** | 留 z（命中率較高） |
-| VIX ~ VIX_pct | **+0.62** | 留 VIX_pct（跨時代可比） |
+| dist 250MA ~ margin pct 1y | **+0.76** | 同樣是「跌深去槓桿」群 |
+| margin drop 60d ~ z 125MA | **+0.68** | 留 z（命中率較高） |
+| margin drop 60d ~ margin pct 1y | **+0.68** | margin 內部冗餘，留 drop_60d（命中率高） |
+| margin pct 1y ~ z 125MA | **+0.66** | 同上 |
 | econ_score ~ blue_streak | **-0.64** | 留 econ_score（更敏感） |
+| VIX ~ VIX_pct | **+0.62** | 留 VIX_pct（跨時代可比） |
+| **VIX_pct ~ margin drop 60d** | **-0.35** | **弱相關 → 兩者互補** |
+| **VIX_pct ~ z 125MA** | **-0.27** | **弱相關 → 兩者互補** |
 
 **精簡後 4 個非冗餘軸**：
 
-1. **VIX_pct**（快頻 panic / fear）
-2. **z 125MA**（快頻 technical 急殺）
-3. **econ_score**（慢頻 regime classifier）
-4. **vol 5/60**（待補後續資料；融資、廣度可能取代之）
+1. **VIX_pct**（快頻 panic / fear，急殺指標）
+2. **z 125MA**（快頻 technical 急殺，與 VIX_pct 互補）
+3. **margin drop 60d**（慢頻 fundamental 去槓桿；雖然與 z 125MA 中度相關 0.68，但對深層事件提供獨立 fundamental 確認）
+4. **econ_score**（很慢的 regime classifier）
+
+加上 vol 5/60 弱訊號 5 個指標 → 確認 GATE 條件「≥3 個指標 hit ≥60%」+「≥2 個非冗餘」**仍 PASS**。
 
 ---
 
@@ -189,6 +201,7 @@ H084 通過 GATE 後，建議衍生以下假設：
 
 ## 後續工作清單
 
-- [ ] 融資 backfill 完成後重跑 build_indicators.py + percentile_correlation.py
+- [x] 融資 backfill 完成（4416 個交易日 2008-2026）
+- [x] 重跑 build_indicators.py + percentile_correlation.py + event_study.py + fuse_validation.py 加入 margin
 - [ ] 補 stock_day / market_breadth ETL（task #11），加入 breadth_adv_dec、52w 新低家數
 - [ ] 開新假設 H085 進行 forward-return 驗證

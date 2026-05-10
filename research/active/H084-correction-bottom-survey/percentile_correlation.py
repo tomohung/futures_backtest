@@ -38,6 +38,8 @@ INDICATORS = [
     ("volume_5m_60m", "high", "vol 5/60"),  # 恐慌量增是底部
     ("vix", "high", "VIX"),
     ("vix_pct", "high", "VIX_pct"),
+    ("margin_drop_60d_pct", "low", "margin drop 60d"),  # 大跌幅 = 底部
+    ("margin_amt_pct_1y", "low", "margin pct 1y"),       # 低槓桿水位 = 底部
     ("econ_score", "low", "econ_score"),
     ("econ_blue_streak", "high", "blue_streak"),
 ]
