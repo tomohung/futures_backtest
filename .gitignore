@@ -223,6 +223,8 @@ data/*.duckdb.wal
 data/raw/
 data/raw_options/
 data/raw_market/
+data/raw_margin/
+data/raw_econ/
 
 tags.lock
 .claude/scheduled_tasks.lock
