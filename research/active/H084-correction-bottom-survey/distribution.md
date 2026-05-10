@@ -174,28 +174,24 @@ ETL 新增腳本：
 
 ## 衍生假設提案
 
-H084 通過 GATE 後，建議衍生以下假設：
+H084 通過 GATE 後，建議衍生以下假設（已 spawn）：
 
 ### H085-fg-composite（推薦優先）
 **TW Fear & Greed 合成版 forward-return 驗證**
-- 用 4 個非冗餘指標（VIX_pct、z 125MA、econ_score、vol 5/60）做合成 score
+- 用 4 個非冗餘指標（VIX_pct、z 125MA、margin_drop_60d、econ_score）做合成 score
 - 評估方式：訊號觸發日後 +60D / +120D / +250D 0050 含息報酬 vs monthly DCA baseline
-- 子問題：z-score 加總 vs 計票 vs 邏輯回歸權重
+- 子問題：z-score 加總 vs 計票
 
-### H086-vix-percentile-single（如 H085 失敗才開）
-**VIX_pct 單因子 forward-return 驗證**
-- 88% 命中率最高
-- 但限 2017+ 樣本
-
-### H087-mode-switch-rule-tune
+### H086-mode-switch-tuning
 **Mode 1/2 切換規則調校**
 - 測試多個版本（streak ≥ 1 vs ≥ 3，250MA below 持續天數要求等）
-- 評估方式：歷史每天 Mode 狀態 → 與 forward 24m return 的條件分佈
+- 找出 Tier A recall ≥ 80% + bull FPR ≤ 10% 的規則組合
 
-### H088-margin-breadth-augment（資料就緒後）
-**融資 + 廣度 + 52w 新低家數補入 H084 重跑**
-- 等 margin backfill 完成 + market_breadth ETL 補齊
-- 看是否能補強 vol 5/60 的弱位置
+### H087-margin-breadth-augment（依賴 stock_day ETL）
+**加入廣度指標補強 H084 指標集**
+- 前置：stock_day / market_breadth backfill 2010+
+- 驗證廣度指標能否提供第 5 個非冗餘軸
+- 通過後納入 H085 合成 score
 
 ---
 
