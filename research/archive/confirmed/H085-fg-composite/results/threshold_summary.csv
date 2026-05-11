@@ -1,0 +1,10 @@
+score,quantile,threshold,n_triggers,n_clusters
+comp_pct,top 19%,66.294,419,28
+comp_pct,top 9%,75.673,210,14
+comp_pct,top 5%,81.637,105,11
+comp_z,top 19%,1.71,419,22
+comp_z,top 9%,3.462,210,7
+comp_z,top 5%,4.593,105,7
+comp_vote,top 19%,1.0,927,44
+comp_vote,top 9%,2.0,255,16
+comp_vote,top 5%,2.0,255,16
