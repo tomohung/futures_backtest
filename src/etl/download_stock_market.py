@@ -79,6 +79,21 @@ def _build_url(source: Source, target: date) -> str:
     )
 
 
+TRANSIENT_PATTERNS = ("尖峰時間", "暫停", "暫不", "請稍", "rate", "Too Many", "請於")
+
+
+def _is_transient_failure(payload: dict) -> bool:
+    """暫時性錯誤（如 TWSE 13:30-13:45 尖峰阻擋）— 不應建立 non_trading marker。"""
+    if not isinstance(payload, dict):
+        return False
+    stat = payload.get("stat")
+    if isinstance(stat, str):
+        for pat in TRANSIENT_PATTERNS:
+            if pat in stat:
+                return True
+    return False
+
+
 def _looks_like_data(payload: dict) -> bool:
     """JSON 是否真的有資料（非交易日 / 異常）。"""
     if not isinstance(payload, dict):
@@ -136,6 +151,12 @@ def download_one(
         print(f"  [error] JSON decode failed for {source} {target}: {e}")
         return "error"
 
+    # Transient failures (TWSE peak hour, rate limit) → 不建 marker，下次再試
+    if _is_transient_failure(payload):
+        stat = payload.get("stat", "")
+        print(f"  [transient] {source} {target}: {stat[:60]}")
+        return "transient"
+
     if not _looks_like_data(payload):
         marker = _marker_path(source, target)
         marker.parent.mkdir(parents=True, exist_ok=True)
@@ -162,14 +183,14 @@ def download_range(
 ) -> dict[str, dict[str, int]]:
     """Download (sources × date range). Returns per-source counts."""
     counts: dict[str, dict[str, int]] = {
-        s: {"saved": 0, "skipped": 0, "non_trading": 0, "error": 0} for s in sources
+        s: {"saved": 0, "skipped": 0, "non_trading": 0, "error": 0, "transient": 0} for s in sources
     }
 
     current = start
     while current <= end:
         for source in sources:
             result = download_one(source, current, delay=delay)
-            counts[source][result] += 1
+            counts[source][result] = counts[source].get(result, 0) + 1
             if result == "saved":
                 print(f"  [saved] {source} {current}")
             elif result == "error":
