@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""H089 Phase 1 — 30m BB%B(20, open, 2σ) 在 EstHL 訊號上的分佈與假突破率分析。
+"""H091 Phase 1 — 30m BB%B(20, open, 2σ) 在 EstHL 訊號上的分佈與假突破率分析。
 
 雙 Pool 設計：
     Pool A — S001 filtered entries：跑 ORBWithEstHLExitStrategy（完整濾網），看實際成交筆
@@ -235,7 +235,7 @@ def plot_bbpct_histogram(pool_a: pd.DataFrame, pool_b: pd.DataFrame, out_path: P
         ax.set_title(f"{title}  (N={len(valid)})")
         ax.set_xlabel("30m BB%B(20, open, 2σ) at entry-day first bar")
         ax.set_ylabel("Trade count")
-    fig.suptitle("H089 — 30m BB%B distribution at EstHL signal entries")
+    fig.suptitle("H091 — 30m BB%B distribution at EstHL signal entries")
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
@@ -263,7 +263,7 @@ def plot_sl_rate_bars(stats_a: pd.DataFrame, stats_b: pd.DataFrame,
         ax.set_ylabel("Fixed SL hit rate (%)")
         ax.set_ylim(0, max(100, ax.get_ylim()[1]))
         ax.legend(loc="upper left")
-    fig.suptitle("H089 — Fixed SL hit rate by 30m BB%B bucket")
+    fig.suptitle("H091 — Fixed SL hit rate by 30m BB%B bucket")
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
@@ -304,7 +304,7 @@ def plot_yearly_heatmap(trades_a: pd.DataFrame, trades_b: pd.DataFrame, out_path
                     text = f"{v*100:.0f}%\n(N={int(n)})"
                 ax.text(j, i, text, ha="center", va="center", fontsize=8)
         fig.colorbar(im, ax=ax, label="SL hit rate (%)")
-    fig.suptitle("H089 — Yearly SL hit rate by BB%B bucket")
+    fig.suptitle("H091 — Yearly SL hit rate by BB%B bucket")
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
