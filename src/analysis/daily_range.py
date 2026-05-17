@@ -95,15 +95,15 @@ def get_night_vol_alert():
     if nvf and nvf.get("night_norm") is not None:
         norm = nvf["night_norm"]
         ema20 = nvf["ema20"]
-        if nvf["pass"]:
-            alert_type = "go"
-            alert_text = f"GO {norm:.2f}\n(EMA20 {ema20}pt)"
-        else:
-            alert_type = "stop"
-            alert_text = f"STOP {norm:.2f}\n(EMA20 {ema20}pt)"
+        tier = nvf.get("tier", "?")
+        # H092: 4-tier classification for color/label; binary STOP/GO for S001/S002 filter
+        alert_type = tier  # deep STOP / mid STOP / mid GO / strong GO
+        binary = "GO" if nvf["pass"] else "STOP"
+        alert_text = f"{tier}\n{binary} {norm:.2f}\n(EMA20 {ema20}pt)"
     else:
         alert_type = "normal"
         alert_text = f"夜盤 {night_range}pt"
+        tier = None
 
     return {
         "night_range": night_range,
@@ -114,6 +114,7 @@ def get_night_vol_alert():
         "today": next_day,
         "night_norm": nvf["night_norm"] if nvf else None,
         "pass": nvf["pass"] if nvf else None,
+        "tier": tier,
     }
 
 
@@ -248,11 +249,17 @@ def main():
     ax1.axhline(avg20_range, color=COLOR_ACCENT_ORANGE, linewidth=2, linestyle="--",
                 zorder=4, label=f"20日均波動 {avg20_range:.0f}pt")
 
-    # 夜盤振幅警示（H066/H067）
+    # 夜盤振幅警示（H092 4-tier color)
     if night_alert:
         nr = night_alert["night_range"]
         alert_x = n_bars
-        alert_color = {"go": COLOR_UP, "stop": COLOR_DOWN, "normal": COLOR_TEXT_LIGHT}
+        alert_color = {
+            "deep STOP": COLOR_ACCENT_BLUE,
+            "mid STOP":  COLOR_TEXT_LIGHT,
+            "mid GO":    COLOR_UP,
+            "strong GO": COLOR_ACCENT_ORANGE,
+            "normal":    COLOR_TEXT_LIGHT,
+        }
         bar_color = alert_color.get(night_alert["alert_type"], COLOR_TEXT_LIGHT)
         ax1.bar(alert_x, nr, color=bar_color, width=0.6, zorder=3,
                 alpha=0.4, edgecolor=bar_color, linewidth=2, linestyle="--")

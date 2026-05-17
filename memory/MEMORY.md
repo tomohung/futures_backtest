@@ -1,5 +1,8 @@
 # Futures Backtest Project Memory
 
+## Research scope preference
+- [feedback_research_scope.md](feedback_research_scope.md) — Phase 2 偏好現象描述性研究，非綁特定策略 filter 測試
+
 ## Phase 2 best params (baseline)
 range_end=90, entry_end=120, sl_pct=0.005, tp_multiplier=1.5, trail=45, trend_ma=10
 6-year total: +4,632 pts
@@ -59,3 +62,12 @@ Results: trades=232, win=58.6%, Sharpe=3.96, total=+5,649
 - 研究過但沒有交易價值 = **rejected**（無 edge）
 - **inconclusive** 僅用於結果真正不明確、未來可能重新探索的情況（如樣本不足、資料品質問題）
 - 統計顯著但效應不足以產生 actionable edge → rejected
+
+## NVF 4-tier 顯示（已實作於 H092 confirmed 之後,2026-05-17）
+H092 confirmed cutoffs 0.8 / 1.0 / 1.2 — 4 tier 標籤:deep STOP / mid STOP / mid GO / strong GO。
+
+實作:
+- `src/analysis/key_prices.py`:`_classify_nvf_tier()` + `_NVF_TIER_CUTS` + `_compute_night_vol_filter` 加 `tier` 欄位
+- morning_briefing 顯示拆 2 行:H092 tier(視覺+提示)+ H075 binary STOP/GO(策略濾網)
+- `src/analysis/daily_range.py`:`get_night_vol_alert` 加 `tier`,4 tier 對應 4 種 bar color
+- Binary STOP/GO 邏輯不變(H075 production behavior),tier 是 orthogonal 顯示

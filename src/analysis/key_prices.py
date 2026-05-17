@@ -67,6 +67,31 @@ def _get_put_s1(trade_date, ref_price):
 _NVF_FALLBACK_THRESHOLD = 0.93   # warmup fallback (近 4 年 EMA expanding median ~0.935)
 _NVF_MIN_HISTORY_NIGHTS = 60     # warmup 期最少夜盤數
 
+# H092 4-tier classification (cutoffs validated 2021-2026)
+_NVF_TIER_CUTS = (0.8, 1.0, 1.2)
+_NVF_TIER_LABELS = ("deep STOP", "mid STOP", "mid GO", "strong GO")
+_NVF_TIER_ICONS = {
+    "deep STOP": "🟦", "mid STOP": "🟨",
+    "mid GO": "🟩", "strong GO": "🟧",
+}
+_NVF_TIER_HINTS = {
+    "deep STOP": "窄幅震盪日 — 趨勢停,日內反轉/賣方期權可",
+    "mid STOP":  "方向中性 — 標準操作",
+    "mid GO":    "偏多日 — upper bias +9pp,適合 long-trend",
+    "strong GO": "高波動 + V 型風險 — 減倉、加大 SL、留意 mean-revert",
+}
+
+
+def _classify_nvf_tier(night_norm: float) -> str:
+    """4-tier NVF classification per H092 (cutoffs 0.8 / 1.0 / 1.2)."""
+    if night_norm < _NVF_TIER_CUTS[0]:
+        return _NVF_TIER_LABELS[0]
+    if night_norm < _NVF_TIER_CUTS[1]:
+        return _NVF_TIER_LABELS[1]
+    if night_norm < _NVF_TIER_CUTS[2]:
+        return _NVF_TIER_LABELS[2]
+    return _NVF_TIER_LABELS[3]
+
 
 def _compute_night_vol_filter(last_day, tonight_range):
     """Night vol filter (H075 升級版).
@@ -152,6 +177,7 @@ def _compute_night_vol_filter(last_day, tonight_range):
         "night_norm": round(night_norm, 3),
         "threshold": round(threshold, 3),
         "pass": night_norm >= threshold,
+        "tier": _classify_nvf_tier(night_norm),
         "method": method,
     }
 
@@ -542,18 +568,20 @@ def print_report(data):
     print(f"| 30分K 20MA 方向           | {ma_dir} |")
     print(f"| 均線轉向風險              | {reversal_risk} |")
 
-    # 夜盤波動濾網（H066/H067 + H075 升級：EMA20 + expanding median）
+    # 夜盤波動 — H092 4-tier 分類 + H075 binary STOP/GO 濾網
     nvf = d.get("night_vol_filter")
     if nvf and nvf.get("night_norm") is not None:
         norm = nvf["night_norm"]
         ema = nvf["ema20"]
         nr = nvf["night_range"]
         thr = nvf["threshold"]
-        if nvf["pass"]:
-            label = f"✅ GO｜夜盤 {nr}pt / EMA20 {ema}pt = {norm:.2f} ≥ {thr:.2f}"
-        else:
-            label = f"🚫 STOP｜夜盤 {nr}pt / EMA20 {ema}pt = {norm:.2f} < {thr:.2f}"
-        print(f"| 夜盤波動（EstHL+Rev）     | {label} |")
+        tier = nvf.get("tier", "?")
+        tier_icon = _NVF_TIER_ICONS.get(tier, "")
+        tier_hint = _NVF_TIER_HINTS.get(tier, "")
+        print(f"| 夜盤波動 tier (H092)      | {tier_icon} **{tier}** (norm={norm:.2f}) — {tier_hint} |")
+        binary = "✅ GO" if nvf["pass"] else "🚫 STOP"
+        op = "≥" if nvf["pass"] else "<"
+        print(f"| S001/S002 NVF (H075)      | {binary}  夜盤 {nr}pt / EMA20 {ema}pt = {norm:.2f} {op} {thr:.2f} |")
 
     # 策略進場建議
     wd_stats = d.get("weekday_stats")
@@ -575,13 +603,13 @@ def print_report(data):
             print("| S001 EstHL | 🚫 不做 | 週五固定跳過 |")
         elif today_wd == 1:
             # H078: Tue 結構性 NVF 失效，bypass NVF（連敗加深 28% 已知 caveat）
-            nvf_note = (f"NVF={nvf['night_norm']:.2f}" if nvf and nvf.get("night_norm") is not None
-                        else "無夜盤資料")
-            print(f"| S001 EstHL | ✅ 可做 | 週二 NVF bypass (H078)；參考 {nvf_note} |")
+            tier_hint = (f"{nvf.get('tier','?')} norm={nvf['night_norm']:.2f}"
+                         if nvf and nvf.get("night_norm") is not None else "無夜盤資料")
+            print(f"| S001 EstHL | ✅ 可做 | 週二 NVF bypass (H078)；{tier_hint} |")
         elif nvf_pass is False:
-            print(f"| S001 EstHL | 🚫 不做 | 夜盤波動 STOP ({nvf['night_norm']:.2f} < {nvf_thr:.2f}) |")
+            print(f"| S001 EstHL | 🚫 不做 | NVF STOP ({nvf.get('tier','?')}, norm {nvf['night_norm']:.2f} < {nvf_thr:.2f}) |")
         elif nvf_pass is True:
-            print(f"| S001 EstHL | ✅ 可做 | 夜盤波動 GO ({nvf['night_norm']:.2f} ≥ {nvf_thr:.2f}) |")
+            print(f"| S001 EstHL | ✅ 可做 | NVF GO ({nvf.get('tier','?')}, norm {nvf['night_norm']:.2f} ≥ {nvf_thr:.2f}) |")
         else:
             print("| S001 EstHL | ⚠️ 未知 | 無夜盤資料 |")
 
@@ -591,9 +619,9 @@ def print_report(data):
         elif today_wd == 4:
             print("| S002 Reversal | 🚫 不做 | 週五固定跳過 |")
         elif nvf_pass is False:
-            print(f"| S002 Reversal | 🚫 不做 | 夜盤波動 STOP ({nvf['night_norm']:.2f} < {nvf_thr:.2f}) |")
+            print(f"| S002 Reversal | 🚫 不做 | NVF STOP ({nvf.get('tier','?')}, norm {nvf['night_norm']:.2f} < {nvf_thr:.2f}) |")
         elif nvf_pass is True:
-            print(f"| S002 Reversal | ✅ 可做 | 夜盤波動 GO ({nvf['night_norm']:.2f} ≥ {nvf_thr:.2f}) |")
+            print(f"| S002 Reversal | ✅ 可做 | NVF GO ({nvf.get('tier','?')}, norm {nvf['night_norm']:.2f} ≥ {nvf_thr:.2f}) |")
         else:
             print("| S002 Reversal | ⚠️ 未知 | 無夜盤資料 |")
 
