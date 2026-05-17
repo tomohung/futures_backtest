@@ -208,6 +208,38 @@ def main() -> None:
     if not ok:
         print("\n[WARN] build_vixtwn.py 失敗，VIX 資料未更新。")
 
+    # Step 6: download_taiex (yfinance ^TWII, optional, warn-only)
+    # 從 2008 起完整重抓(yfinance 不限速,每次幾秒鐘),避免 CSV 歷史 regression
+    ok = run_step(ETL_DIR / "download_taiex.py", ["--start", "2008-01-01"])
+    if not ok:
+        print("\n[WARN] download_taiex.py 失敗，TAIEX 指數未更新。")
+
+    # Step 7: download_margin (TWSE recent only)
+    margin_start = (taiwan_today() - timedelta(days=args.backfill_days)).isoformat()
+    ok = run_step(ETL_DIR / "download_margin.py",
+                  ["--start", margin_start, "--end", args.end])
+    if not ok:
+        print("\n[WARN] download_margin.py 失敗，融資餘額未更新。")
+
+    # Step 8: parse_margin (only since margin_start)
+    ok = run_step(ETL_DIR / "parse_margin.py", ["--start", margin_start])
+    if not ok:
+        print("\n[WARN] parse_margin.py 失敗，融資餘額未匯入 DB。")
+
+    # Step 9: download_econ + parse_econ (monthly NDC report)
+    ok = run_step(ETL_DIR / "download_econ.py")
+    if not ok:
+        print("\n[WARN] download_econ.py 失敗，景氣對策信號未更新。")
+    else:
+        ok = run_step(ETL_DIR / "parse_econ.py")
+        if not ok:
+            print("\n[WARN] parse_econ.py 失敗，景氣對策信號未匯入 DB。")
+
+    # Step 10: build_indicators (rebuild fg-composite indicators.csv from CSV + DB)
+    ok = run_step(ETL_DIR / "build_indicators.py")
+    if not ok:
+        print("\n[WARN] build_indicators.py 失敗，indicators.csv 未更新（comp_z 可能停在舊日期）。")
+
     print("\n" + "=" * 60)
     print("Pipeline 完成。")
     print("=" * 60)
