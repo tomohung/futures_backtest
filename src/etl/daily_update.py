@@ -156,7 +156,7 @@ def main() -> None:
         # Step 0c: Download TWSE/TPEX stock market breadth
         stock_market_args = [
             "--end", args.end,
-            "--delay", str(max(args.delay, 3.0)),  # TWSE/TPEX rate limit 較嚴
+            "--delay", str(max(args.delay, 1.0)),  # TWSE/TPEX rate limit 較嚴
         ]
         if args.start:
             stock_market_args += ["--start", args.start]

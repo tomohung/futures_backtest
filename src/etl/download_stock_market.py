@@ -117,7 +117,7 @@ def _looks_like_data(payload: dict) -> bool:
 def download_one(
     source: Source,
     target: date,
-    delay: float = 3.0,
+    delay: float = 1.0,
     force: bool = False,
 ) -> str:
     """Download one (source, date). Returns: saved/skipped/non_trading/error."""
