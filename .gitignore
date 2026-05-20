@@ -226,6 +226,10 @@ data/raw_market/
 data/raw_margin/
 data/raw_econ/
 
+# 由 ETL pipeline 重建的衍生資料（不納入版控，跑 daily_update 會自動產生）
+data/external_sources/TAIEX_daily.csv
+research/archive/confirmed/H084-correction-bottom-survey/results/indicators.csv
+
 tags.lock
 .claude/scheduled_tasks.lock
 

@@ -1,7 +1,5 @@
 """
-下載 TAIEX 加權指數日線（FinMind TaiwanStockPrice/TAIEX）
-                                       → DuckDB table `taiex_day`
-                                       → data/external_sources/TAIEX_daily.csv
+下載 TAIEX 加權指數日線（FinMind TaiwanStockPrice/TAIEX）→ DuckDB table `taiex_day`。
 
 歷史可追溯：2008-01-02 起（FinMind 涵蓋）。
 
@@ -26,7 +24,6 @@ import pandas as pd
 import requests
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-CSV_PATH = PROJECT_ROOT / "data" / "external_sources" / "TAIEX_daily.csv"
 DB_PATH = PROJECT_ROOT / "data" / "futures.duckdb"
 
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
@@ -72,11 +69,6 @@ def fetch(start: date, end: date) -> pd.DataFrame:
     return df
 
 
-def write_csv(df: pd.DataFrame) -> None:
-    CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(CSV_PATH, index=False)
-
-
 def write_db(df: pd.DataFrame) -> None:
     with duckdb.connect(str(DB_PATH)) as conn:
         conn.execute(SCHEMA_TAIEX)
@@ -103,8 +95,6 @@ def main() -> None:
     print(f"Fetching FinMind TAIEX {args.start} ~ {args.end}")
     df = fetch(args.start, args.end)
     print(f"  Got {len(df)} rows: {df['trade_date'].min()} ~ {df['trade_date'].max()}")
-    write_csv(df)
-    print(f"  CSV → {CSV_PATH}")
     write_db(df)
 
 
