@@ -208,8 +208,8 @@ def main() -> None:
     if not ok:
         print("\n[WARN] build_vixtwn.py 失敗，VIX 資料未更新。")
 
-    # Step 6: download_taiex (yfinance ^TWII, optional, warn-only)
-    # 從 2008 起完整重抓(yfinance 不限速,每次幾秒鐘),避免 CSV 歷史 regression
+    # Step 6: download_taiex (FinMind TaiwanStockPrice/TAIEX, optional, warn-only)
+    # 從 2008 起完整重抓(FinMind 一次回傳全歷史 < 1 秒),避免 CSV 歷史 regression
     ok = run_step(ETL_DIR / "download_taiex.py", ["--start", "2008-01-01"])
     if not ok:
         print("\n[WARN] download_taiex.py 失敗，TAIEX 指數未更新。")
