@@ -11,7 +11,10 @@ const state = {
   activeIdx: -1,
 };
 
-const chartState = { chart: null, candle: null, volume: null, bars: [] };
+const chartState = {
+  chart: null, candle: null, volume: null, bars: [],
+  sessionCanvas: null, sessionPaneEl: null, sessionResizeObserver: null,
+};
 
 const markerState = { handle: null, priceLines: [] };
 
@@ -129,6 +132,89 @@ function initChart() {
     1,                       // pane index 1 = 成交量副圖
   );
   chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+  chart.timeScale().subscribeVisibleLogicalRangeChange(() => drawSessionLines());
+}
+
+// === 盤別分界垂直線（overlay canvas，mirror screener-ui VPVR 技法）===
+function isDayTod(t) {                       // t = epoch 秒（intraday）
+  const d = new Date(t * 1000);
+  const tod = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return tod >= 525 && tod <= 825;           // 08:45 ~ 13:45
+}
+function dayKey(t) {
+  const d = new Date(t * 1000);
+  return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+}
+
+function ensureSessionLines() {
+  if (chartState.sessionCanvas) return;
+  const chart = chartState.chart;
+  if (!chart || typeof chart.panes !== 'function') return;
+  const panes = chart.panes();
+  if (!panes || !panes.length) return;
+  const paneEl = panes[0].getHTMLElement?.();
+  if (!paneEl) return;
+  if (getComputedStyle(paneEl).position === 'static') paneEl.style.position = 'relative';
+  const canvas = document.createElement('canvas');
+  Object.assign(canvas.style, { position: 'absolute', left: '0', top: '0', pointerEvents: 'none', zIndex: '2' });
+  paneEl.appendChild(canvas);
+  chartState.sessionCanvas = canvas;
+  chartState.sessionPaneEl = paneEl;
+  const ro = new ResizeObserver(() => drawSessionLines());
+  ro.observe(paneEl);
+  chartState.sessionResizeObserver = ro;
+}
+
+function drawSessionLines() {
+  const canvas = chartState.sessionCanvas;
+  const paneEl = chartState.sessionPaneEl;
+  const chart = chartState.chart;
+  const bars = chartState.bars || [];
+  if (!canvas || !paneEl || !chart) return;
+  const rect = paneEl.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) {
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  if (state.tf === '1d' || !bars.length) return;       // 日線無盤中分界
+
+  const ts = chart.timeScale();
+  const logical = ts.getVisibleLogicalRange();
+  if (!logical) return;
+  const lo = Math.max(0, Math.floor(logical.from));
+  const hi = Math.min(bars.length - 1, Math.ceil(logical.to));
+  const half = (ts.options().barSpacing || 6) / 2;
+
+  const drawLine = (x, color) => {
+    if (x == null || x < 0 || x > rect.width) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, rect.height);
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  for (let i = lo; i <= hi; i++) {
+    const t = bars[i].time;
+    if (!isDayTod(t)) continue;
+    const x = ts.timeToCoordinate(t);
+    if (x == null) continue;
+    const isOpen = i === 0 || !isDayTod(bars[i - 1].time) || dayKey(bars[i - 1].time) !== dayKey(t);
+    const isClose = i === bars.length - 1 || !isDayTod(bars[i + 1].time) || dayKey(bars[i + 1].time) !== dayKey(t);
+    if (isOpen) drawLine(x - half, '#4a80c0');   // 換日：日盤開始（08:45 前）
+    if (isClose) drawLine(x + half, '#b08442');  // 日盤結束（13:45 後）
+  }
 }
 
 function klineUrl() {
@@ -151,6 +237,8 @@ async function loadKline(centerEpochToFocus) {
   })));
   focusTime(centerEpochToFocus);
   if (window._afterKline) window._afterKline();        // Task 10 掛 marker
+  ensureSessionLines();
+  requestAnimationFrame(drawSessionLines);
 }
 
 // 將視窗置中到某 time（epoch 或 'YYYY-MM-DD'）；找不到就顯示尾段。
@@ -166,10 +254,14 @@ function focusTime(target) {
       if (diff < best) { best = diff; idx = i; }
     });
   }
-  const want = state.tf === '1d' ? 120 : 90;
-  const half = Math.floor(want / 2);
-  const from = Math.max(0, idx - half);
-  const to = Math.min(bars.length - 1 + 2, idx + half);
+  // 預設可見 K 棒數（比原本多一倍）；目標放螢幕左側 1/4，右側留 3/4 看行情。
+  const want = state.tf === '1d' ? 240 : 180;
+  const before = Math.floor(want / 4);
+  let from = idx - before;
+  let to = idx + (want - before);
+  const maxTo = bars.length - 1 + 3;           // 右側少量 padding
+  if (to > maxTo) { from -= (to - maxTo); to = maxTo; }  // 觸右界 → 整段左移，維持視窗大小
+  from = Math.max(0, from);
   chartState.chart.timeScale().setVisibleLogicalRange({ from, to });
 }
 

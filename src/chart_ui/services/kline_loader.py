@@ -22,6 +22,17 @@ DAY_CLOSE = time(13, 45)
 NIGHT_OPEN = time(15, 0)
 DEFAULT_BUFFER_DAYS = 3
 
+# 各 tf 日盤每日約略 bar 數，用來推算要載入幾個交易日，讓較大 tf 也有足夠 bar。
+_BARS_PER_DAY = {"1m": 300, "5m": 60, "15m": 20, "30m": 10, "60m": 5}
+_LOAD_TARGET_BARS = 600  # 目標載入量（含平移餘裕）
+
+
+def _auto_buffer(tf: str) -> int:
+    """依 tf 推算 center 兩側要載入的交易日數，使載入 bar 數約達 _LOAD_TARGET_BARS。"""
+    bpd = _BARS_PER_DAY.get(tf, 300)
+    span = bpd * 2  # center 兩側 → (2*buffer+1) 天
+    return max(DEFAULT_BUFFER_DAYS, (_LOAD_TARGET_BARS + span - 1) // span)
+
 # daily 聚合較重，快取（每路徑+session+adjust，TTL 1h）。
 _daily_cache: TTLCache = TTLCache(maxsize=32, ttl=3600)
 
@@ -75,12 +86,14 @@ def _in_ranges(ts: datetime, ranges) -> bool:
 
 def load_kline(*, db_path: Path | None = None, center=None, frm=None, to=None,
                tf: str = "1m", session: str = "day", adjust: str = "raw",
-               buffer_days: int = DEFAULT_BUFFER_DAYS) -> list[dict]:
+               buffer_days: int | None = None) -> list[dict]:
     db_path = Path(db_path) if db_path else paths.DUCKDB_PATH
     if tf == "1d":
         return _load_daily(str(db_path), session, adjust)
 
     minutes = _TF_MINUTES[tf]
+    if buffer_days is None:                 # 未指定 → 依 tf 自動推算載入交易日數
+        buffer_days = _auto_buffer(tf)
     with duckdb.connect(str(db_path), read_only=True) as conn:
         all_days = _trading_days(conn)
         if not all_days:
