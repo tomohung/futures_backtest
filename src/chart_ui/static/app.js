@@ -11,10 +11,8 @@ const state = {
   activeIdx: -1,
 };
 
-const chartState = {
-  chart: null, candle: null, volume: null, bars: [],
-  sessionCanvas: null, sessionPaneEl: null, sessionResizeObserver: null,
-};
+const chartState = { chart: null, candle: null, volume: null, bars: [] };
+let sessionReqUpdate = null;        // primitive 的 requestUpdate（資料變動時觸發重畫）
 
 const markerState = { handle: null, priceLines: [] };
 
@@ -125,6 +123,7 @@ function initChart() {
     wickUpColor: COLORS.wick, wickDownColor: COLORS.wick,
     priceLineVisible: false, lastValueVisible: false,
   });
+  chartState.candle.attachPrimitive(sessionLinesPrimitive);   // 盤別分界垂直線
   chartState.volume = chart.addSeries(
     LightweightCharts.HistogramSeries,
     { priceFormat: { type: 'volume' }, priceScaleId: 'volume',
@@ -132,10 +131,9 @@ function initChart() {
     1,                       // pane index 1 = 成交量副圖
   );
   chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
-  chart.timeScale().subscribeVisibleLogicalRangeChange(() => drawSessionLines());
 }
 
-// === 盤別分界垂直線（overlay canvas，mirror screener-ui VPVR 技法）===
+// === 盤別分界垂直線（Lightweight Charts series primitive，畫在主圖自身座標系，x 必與 K 棒對齊）===
 function isDayTod(t) {                       // t = epoch 秒（intraday）
   const d = new Date(t * 1000);
   const tod = d.getUTCHours() * 60 + d.getUTCMinutes();
@@ -146,76 +144,55 @@ function dayKey(t) {
   return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
 }
 
-function ensureSessionLines() {
-  if (chartState.sessionCanvas) return;
-  const chart = chartState.chart;
-  if (!chart || typeof chart.panes !== 'function') return;
-  const panes = chart.panes();
-  if (!panes || !panes.length) return;
-  const paneEl = panes[0].getHTMLElement?.();
-  if (!paneEl) return;
-  if (getComputedStyle(paneEl).position === 'static') paneEl.style.position = 'relative';
-  const canvas = document.createElement('canvas');
-  Object.assign(canvas.style, { position: 'absolute', left: '0', top: '0', pointerEvents: 'none', zIndex: '2' });
-  paneEl.appendChild(canvas);
-  chartState.sessionCanvas = canvas;
-  chartState.sessionPaneEl = paneEl;
-  const ro = new ResizeObserver(() => drawSessionLines());
-  ro.observe(paneEl);
-  chartState.sessionResizeObserver = ro;
-}
-
-function drawSessionLines() {
-  const canvas = chartState.sessionCanvas;
-  const paneEl = chartState.sessionPaneEl;
-  const chart = chartState.chart;
-  const bars = chartState.bars || [];
-  if (!canvas || !paneEl || !chart) return;
-  const rect = paneEl.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) return;
-  const dpr = window.devicePixelRatio || 1;
-  if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) {
-    canvas.width = Math.round(rect.width * dpr);
-    canvas.height = Math.round(rect.height * dpr);
-    canvas.style.width = rect.width + 'px';
-    canvas.style.height = rect.height + 'px';
-  }
-  const ctx = canvas.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, rect.width, rect.height);
-  if (state.tf === '1d' || !bars.length) return;       // 日線無盤中分界
-
-  const ts = chart.timeScale();
-  const logical = ts.getVisibleLogicalRange();
-  if (!logical) return;
-  const lo = Math.max(0, Math.floor(logical.from));
-  const hi = Math.min(bars.length - 1, Math.ceil(logical.to));
-  const half = (ts.options().barSpacing || 6) / 2;
-
-  const drawLine = (x, color) => {
-    if (x == null || x < 0 || x > rect.width) return;
-    ctx.save();
-    ctx.beginPath();
-    ctx.setLineDash([5, 4]);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1;
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, rect.height);
-    ctx.stroke();
-    ctx.restore();
-  };
-
-  for (let i = lo; i <= hi; i++) {
-    const t = bars[i].time;
-    if (!isDayTod(t)) continue;
-    const x = ts.timeToCoordinate(t);
-    if (x == null) continue;
-    const isOpen = i === 0 || !isDayTod(bars[i - 1].time) || dayKey(bars[i - 1].time) !== dayKey(t);
-    const isClose = i === bars.length - 1 || !isDayTod(bars[i + 1].time) || dayKey(bars[i + 1].time) !== dayKey(t);
-    if (isOpen) drawLine(x - half, '#4a80c0');   // 換日：日盤開始（08:45 前）
-    if (isClose) drawLine(x + half, '#b08442');  // 日盤結束（13:45 後）
-  }
-}
+const _sessionRenderer = {
+  draw(target) {
+    if (state.tf === '1d') return;                     // 日線無盤中分界
+    const chart = chartState.chart;
+    const bars = chartState.bars || [];
+    if (!chart || !bars.length) return;
+    const ts = chart.timeScale();
+    const logical = ts.getVisibleLogicalRange();
+    if (!logical) return;
+    const half = (ts.options().barSpacing || 6) / 2;
+    const lo = Math.max(0, Math.floor(logical.from));
+    const hi = Math.min(bars.length - 1, Math.ceil(logical.to));
+    target.useBitmapCoordinateSpace((scope) => {
+      const ctx = scope.context;
+      const hpr = scope.horizontalPixelRatio;
+      const h = scope.bitmapSize.height;
+      ctx.save();
+      ctx.lineWidth = Math.max(1, Math.floor(hpr));
+      ctx.setLineDash([5 * hpr, 4 * hpr]);
+      const line = (x, color) => {
+        const px = Math.round(x * hpr);
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, h);
+        ctx.stroke();
+      };
+      for (let i = lo; i <= hi; i++) {
+        const t = bars[i].time;
+        if (!isDayTod(t)) continue;
+        const x = ts.timeToCoordinate(t);
+        if (x == null) continue;
+        // 只在「相鄰兩根」真正換盤/換日時畫；資料視窗頭尾不算交界。
+        const isOpen = i > 0 && (!isDayTod(bars[i - 1].time) || dayKey(bars[i - 1].time) !== dayKey(t));
+        const isClose = i < bars.length - 1 && (!isDayTod(bars[i + 1].time) || dayKey(bars[i + 1].time) !== dayKey(t));
+        if (isOpen) line(x - half, '#4a80c0');   // 換日：日盤開始（08:45 前）
+        if (isClose) line(x + half, '#b08442');  // 日盤結束（13:45 後）
+      }
+      ctx.restore();
+    });
+  },
+};
+const _sessionPaneView = { renderer() { return _sessionRenderer; }, zOrder() { return 'top'; } };
+const sessionLinesPrimitive = {
+  attached(p) { sessionReqUpdate = p.requestUpdate; },
+  detached() { sessionReqUpdate = null; },
+  updateAllViews() {},
+  paneViews() { return [_sessionPaneView]; },
+};
 
 function klineUrl() {
   const p = new URLSearchParams({ tf: state.tf, session: state.session, adjust: state.adjust });
@@ -237,8 +214,7 @@ async function loadKline(centerEpochToFocus) {
   })));
   focusTime(centerEpochToFocus);
   if (window._afterKline) window._afterKline();        // Task 10 掛 marker
-  ensureSessionLines();
-  requestAnimationFrame(drawSessionLines);
+  if (sessionReqUpdate) sessionReqUpdate();            // 觸發盤別分界線重畫
 }
 
 // 將視窗置中到某 time（epoch 或 'YYYY-MM-DD'）；找不到就顯示尾段。
