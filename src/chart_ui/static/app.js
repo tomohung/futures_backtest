@@ -160,31 +160,27 @@ function initChart() {
   );
   chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.2, bottom: 0 } });
   chart.subscribeCrosshairMove((param) => updateLegend(param));
+  const wrap = document.querySelector('.chart-wrap');
+  if (wrap) new ResizeObserver(() => positionVolLegend()).observe(wrap);
 }
 
-// 量能 legend 釘在成交量副圖（pane 1）左上角，與主圖 OHLC legend 分開。
-let volLegendEl = null;
-function ensureVolLegend() {
-  if (volLegendEl) return volLegendEl;
+// 把 #vol-legend 對齊到成交量副圖（pane 1）的頂端（同在 .chart-wrap 內，定位才不會被 canvas 蓋住）。
+function positionVolLegend() {
+  const wrap = document.querySelector('.chart-wrap');
+  const volEl = document.getElementById('vol-legend');
   const chart = chartState.chart;
-  if (!chart || typeof chart.panes !== 'function') return null;
+  if (!wrap || !volEl || !chart || typeof chart.panes !== 'function') return;
   const panes = chart.panes();
-  if (!panes || panes.length < 2) return null;
-  const paneEl = panes[1].getHTMLElement?.();
-  if (!paneEl) return null;
-  if (getComputedStyle(paneEl).position === 'static') paneEl.style.position = 'relative';
-  const el = document.createElement('div');
-  el.className = 'legend';
-  Object.assign(el.style, { top: '4px', left: '12px' });
-  paneEl.appendChild(el);
-  volLegendEl = el;
-  return el;
+  const paneEl = panes && panes.length >= 2 ? panes[1].getHTMLElement?.() : null;
+  if (!paneEl) return;
+  const top = paneEl.getBoundingClientRect().top - wrap.getBoundingClientRect().top + 4;
+  volEl.style.top = `${top}px`;
 }
 
 // 遊標移動時顯示該位置的主圖 OHLC（主圖 legend）與量能（副圖 legend）。無 hover → 最新一根。
 function updateLegend(param) {
   const main = document.getElementById('legend');
-  const vol = ensureVolLegend();
+  const vol = document.getElementById('vol-legend');
   const bars = chartState.bars || [];
   if (!bars.length) { if (main) main.innerHTML = ''; if (vol) vol.innerHTML = ''; return; }
   let idx = param && param.time != null ? bars.findIndex((b) => b.time === param.time) : -1;
@@ -208,6 +204,7 @@ function updateLegend(param) {
       `低 <span class="${oc}">${r(b.low)}</span>　收 <span class="${oc}">${r(b.close)}</span>${chgStr}`;
   }
   if (vol) {
+    positionVolLegend();
     const volMa = chartState.volMaArr ? chartState.volMaArr[idx] : null;
     const thr = volMa != null ? volMa * VOL_MA_MULT : null;
     const volCls = thr != null && b.volume > thr ? 'up' : 'muted';
