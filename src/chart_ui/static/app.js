@@ -301,9 +301,9 @@ function focusTime(target) {
       if (diff < best) { best = diff; idx = i; }
     });
   }
-  // 可見 K 棒數由 toolbar 切換（state.barCount）；目標放螢幕左側 1/4，右側留 3/4 看行情。
+  // 可見 K 棒數由 toolbar 切換（state.barCount）；目標放螢幕左側約 1/8，右側留更多看行情。
   const want = parseInt(state.barCount, 10) || 360;
-  const before = Math.floor(want / 4);
+  const before = Math.floor(want / 8);
   let from = idx - before;
   let to = idx + (want - before);
   const maxTo = bars.length - 1 + 3;           // 右側少量 padding
