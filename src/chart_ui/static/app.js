@@ -1,5 +1,12 @@
 const COLORS = { up: '#ef4444', down: '#22c55e', wick: '#e0e0e0', accent: '#d4a574' };
 const WD = ['日', '一', '二', '三', '四', '五', '六'];
+// 成交量：仿 TradingView「Volume vs 1.5x MA」——量 > MA(20)×1.5 → 紅，否則灰；附 MA 線與門檻線。
+const VOL_MA_LEN = 20;
+const VOL_MA_MULT = 1.5;
+const VOL_HI = '#ef4444';      // 放量（> 門檻）
+const VOL_LO = '#787b86aa';    // 一般量
+const VOL_MA_COLOR = '#2196f3';      // 量能均線（藍）
+const VOL_THRESH_COLOR = '#ff9800';  // 1.5×MA 門檻（橘）
 
 const state = {
   tf: localStorage.getItem('cu.tf') || '1m',
@@ -130,7 +137,19 @@ function initChart() {
       priceLineVisible: false, lastValueVisible: false },
     1,                       // pane index 1 = 成交量副圖
   );
-  chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+  chartState.volMa = chart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: VOL_MA_COLOR, lineWidth: 2, priceScaleId: 'volume',
+      priceLineVisible: false, lastValueVisible: false },
+    1,
+  );
+  chartState.volThresh = chart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: VOL_THRESH_COLOR, lineWidth: 1, priceScaleId: 'volume',
+      priceLineVisible: false, lastValueVisible: false },
+    1,
+  );
+  chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.2, bottom: 0 } });
 }
 
 // === 盤別分界垂直線（Lightweight Charts series primitive，畫在主圖自身座標系，x 必與 K 棒對齊）===
@@ -208,10 +227,24 @@ async function loadKline(centerEpochToFocus) {
   chartState.candle.setData(bars.map((b) => ({
     time: b.time, open: b.open, high: b.high, low: b.low, close: b.close,
   })));
-  chartState.volume.setData(bars.map((b) => ({
-    time: b.time, value: b.volume,
-    color: b.close >= b.open ? '#ef444488' : '#22c55e88',
-  })));
+  // 量能 MA(20) 與 1.5× 門檻（滑動視窗，前 19 根不足 → null）
+  const volMa = [];
+  let run = 0;
+  for (let i = 0; i < bars.length; i++) {
+    run += bars[i].volume;
+    if (i >= VOL_MA_LEN) run -= bars[i - VOL_MA_LEN].volume;
+    volMa[i] = i >= VOL_MA_LEN - 1 ? run / VOL_MA_LEN : null;
+  }
+  chartState.volume.setData(bars.map((b, i) => {
+    const thr = volMa[i] != null ? volMa[i] * VOL_MA_MULT : null;
+    return { time: b.time, value: b.volume, color: (thr != null && b.volume > thr) ? VOL_HI : VOL_LO };
+  }));
+  chartState.volMa.setData(
+    bars.flatMap((b, i) => (volMa[i] != null ? [{ time: b.time, value: volMa[i] }] : [])),
+  );
+  chartState.volThresh.setData(
+    bars.flatMap((b, i) => (volMa[i] != null ? [{ time: b.time, value: volMa[i] * VOL_MA_MULT }] : [])),
+  );
   focusTime(centerEpochToFocus);
   if (window._afterKline) window._afterKline();        // Task 10 掛 marker
   if (sessionReqUpdate) sessionReqUpdate();            // 觸發盤別分界線重畫
