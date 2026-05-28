@@ -41,6 +41,8 @@ def _trading_days(conn) -> list[date]:
 
 
 def _select_days(days: list[date], center, frm, to, buffer_days) -> list[date]:
+    """選出要載入的交易日。center 模式取最接近 center（>=）那天的 ±buffer_days。
+    center 晚於所有資料 → 落在最後一天；早於所有資料 → 落在第一天（不報錯，回傳最近端的視窗）。"""
     if center is not None:
         c = date.fromisoformat(center) if isinstance(center, str) else center
         idx = next((i for i, d in enumerate(days) if d >= c), len(days) - 1)

@@ -3,7 +3,15 @@ from datetime import datetime, timezone
 import duckdb
 import pytest
 
-from src.chart_ui.services.kline_loader import load_kline
+from src.chart_ui.services.kline_loader import clear_daily_cache, load_kline
+
+
+@pytest.fixture(autouse=True)
+def _isolate_daily_cache():
+    # daily 結果有 TTLCache（key 含 db_path），測試間先清掉避免 stale 命中。
+    clear_daily_cache()
+    yield
+    clear_daily_cache()
 
 
 def _epoch(s):  # 把本地時間字串當 UTC 算 epoch（與 loader 一致）
