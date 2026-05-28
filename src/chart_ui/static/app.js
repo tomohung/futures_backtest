@@ -13,6 +13,71 @@ const state = {
 
 const chartState = { chart: null, candle: null, volume: null, bars: [] };
 
+const markerState = { handle: null, priceLines: [] };
+
+function clearMarkers() {
+  if (markerState.handle) { try { markerState.handle.setMarkers([]); } catch (_) {} }
+  for (const pl of markerState.priceLines) { try { chartState.candle.removePriceLine(pl); } catch (_) {} }
+  markerState.priceLines = [];
+}
+
+// 把目標 epoch 對齊到最近的 bar time（marker/priceline 需落在資料點上）。
+function nearestBarTime(targetEpoch) {
+  const bars = chartState.bars;
+  if (!bars.length) return null;
+  let best = bars[0].time, bestDiff = Infinity;
+  for (const b of bars) {
+    const t = typeof b.time === 'string' ? localToEpoch(b.time + ' 08:45:00') : b.time;
+    const diff = Math.abs(t - targetEpoch);
+    if (diff < bestDiff) { bestDiff = diff; best = b.time; }
+  }
+  return best;
+}
+
+function drawTradeMarkers(item) {
+  clearMarkers();
+  if (!item || state.tf === '1d') return;            // 進出場 marker 僅 intraday
+  // 『所有交易日』項目只有 time、無交易資訊 → 不畫 marker。
+  const hasTrade = item.side || item.entry != null || item.exit_time != null
+    || (item.levels && item.levels.length);
+  if (!hasTrade) return;
+  const isLong = /long|buy|做多/i.test(item.side || '');
+  const markers = [];
+  const entryEpoch = item.time ? localToEpoch(item.time) : null;
+  if (entryEpoch != null) {
+    markers.push({
+      time: nearestBarTime(entryEpoch), position: isLong ? 'belowBar' : 'aboveBar',
+      shape: isLong ? 'arrowUp' : 'arrowDown', color: isLong ? COLORS.up : COLORS.down,
+      text: `進${item.pnl_pts != null ? ` ${item.pnl_pts > 0 ? '+' : ''}${item.pnl_pts}` : ''}`,
+    });
+  }
+  if (item.exit_time) {
+    const ex = localToEpoch(item.exit_time);
+    if (ex != null) markers.push({
+      time: nearestBarTime(ex), position: isLong ? 'aboveBar' : 'belowBar',
+      shape: isLong ? 'arrowDown' : 'arrowUp', color: COLORS.accent, text: '出',
+    });
+  }
+  if (markers.length) {
+    markers.sort((a, b) => a.time - b.time);
+    markerState.handle = markerState.handle
+      ? (markerState.handle.setMarkers(markers), markerState.handle)
+      : LightweightCharts.createSeriesMarkers(chartState.candle, markers);
+  }
+  if (item.entry != null) {
+    markerState.priceLines.push(chartState.candle.createPriceLine({
+      price: +item.entry, color: COLORS.accent, lineStyle: 1, lineWidth: 1,
+      axisLabelVisible: true, title: '進場',
+    }));
+  }
+  for (const lv of item.levels || []) {
+    if (lv && lv.price != null) markerState.priceLines.push(chartState.candle.createPriceLine({
+      price: +lv.price, color: '#6aa3ff', lineStyle: 2, lineWidth: 1,
+      axisLabelVisible: true, title: lv.label || '',
+    }));
+  }
+}
+
 function pad2(n) { return String(n).padStart(2, '0'); }
 
 // 把 'YYYY-MM-DD HH:MM:SS' 當 UTC 算 epoch 秒（與後端 _to_epoch 一致）。
@@ -136,5 +201,71 @@ async function main() {
   setTitle();
   if (window._initLists) await window._initLists();    // Task 10 提供
 }
+
+function renderSidebar() {
+  const tbl = document.getElementById('list-table');
+  const sum = document.getElementById('list-summary');
+  const list = state.list;
+  tbl.innerHTML = '';
+  if (!list) { sum.textContent = ''; return; }
+  const s = list.summary;
+  sum.textContent = s
+    ? `${s.trades ?? list.items.length} 筆　勝率 ${s.win_rate != null ? (s.win_rate * 100).toFixed(0) + '%' : '—'}　PF ${s.pf ?? '—'}　損益 ${s.pnl_pts ?? '—'}`
+    : `${list.items.length} 筆`;
+  list.items.forEach((it, i) => {
+    const row = document.createElement('div');
+    row.className = 'list-row' + (i === state.activeIdx ? ' active' : '');
+    const when = dateWeekday(it.time) + (state.list.id === '__all_days__' ? '' : ' ' + (it.time.split(' ')[1] || '').slice(0, 5));
+    const sideCls = /long|buy|做多/i.test(it.side || '') ? 'side-long' : (/short|sell|做空/i.test(it.side || '') ? 'side-short' : '');
+    const pnlCls = it.pnl_pts == null ? '' : (it.pnl_pts > 0 ? 'pnl-pos' : 'pnl-neg');
+    row.innerHTML = `<span class="when">${when}</span>`
+      + `<span class="${sideCls}">${it.side ? it.side.slice(0, 6) : ''}</span>`
+      + `<span class="${pnlCls}">${it.pnl_pts != null ? (it.pnl_pts > 0 ? '+' : '') + it.pnl_pts : ''}</span>`;
+    row.addEventListener('click', () => selectItem(i));
+    tbl.appendChild(row);
+  });
+}
+
+async function selectItem(i) {
+  const it = state.list.items[i];
+  if (!it) return;
+  state.activeIdx = i;
+  state.centerDate = it.time.slice(0, 10);
+  setTitle();
+  renderSidebar();
+  const focus = state.tf === '1d' ? state.centerDate : localToEpoch(it.time);
+  window._pendingItem = it;
+  await loadKline(focus);
+  document.querySelector('.list-row.active')?.scrollIntoView({ block: 'nearest' });
+}
+
+window._afterKline = () => { drawTradeMarkers(window._pendingItem); };
+
+async function loadList(listId) {
+  state.list = await fetchJSON(`/api/lists/${encodeURIComponent(listId)}`);
+  state.listId = listId;
+  state.activeIdx = -1;
+  renderSidebar();
+  if (state.list.items.length) selectItem(0);          // 預設選第一筆
+}
+
+window._initLists = async () => {
+  const lists = await fetchJSON('/api/lists');
+  const sel = document.getElementById('list-select');
+  sel.innerHTML = '';
+  for (const l of lists) {
+    const o = document.createElement('option');
+    o.value = l.id; o.textContent = `${l.name}（${l.count}）`;
+    sel.appendChild(o);
+  }
+  sel.addEventListener('change', () => loadList(sel.value));
+  if (lists.length) await loadList(lists[0].id);        // 預設『所有交易日』
+};
+
+window.addEventListener('keydown', (e) => {
+  if (!state.list || !state.list.items.length) return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); selectItem(Math.min(state.list.items.length - 1, state.activeIdx + 1)); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); selectItem(Math.max(0, state.activeIdx - 1)); }
+});
 
 main();
