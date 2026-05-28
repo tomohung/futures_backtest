@@ -35,10 +35,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .seg button:last-child { border-right: 0; }
 .seg button.active { background: var(--accent); color: #000; font-weight: 600; }
 /* 指標 legend 上的開關（可點，蓋過 legend 的 pointer-events:none） */
-.legend .ind-toggle { pointer-events: auto; cursor: pointer; padding: 0 4px; border-radius: 3px;
-  border: 1px solid var(--border); }
+.legend .ind-toggle { pointer-events: auto; cursor: pointer; }
 .legend .ind-toggle.on { color: var(--text); }
 .legend .ind-toggle.off { color: var(--muted); opacity: 0.7; }
+.legend .ind-toggle.ma-off { color: var(--muted); opacity: 0.55; text-decoration: line-through; }
 .chart-wrap { position: relative; flex: 1; min-height: 0; }
 #chart { position: absolute; inset: 0; }
 .legend { position: absolute; top: 6px; left: 12px; z-index: 5; pointer-events: none;

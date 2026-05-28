@@ -27,7 +27,8 @@ const state = {
   session: localStorage.getItem('cu.session') || 'day',
   adjust: localStorage.getItem('cu.adjust') || 'raw',
   barCount: localStorage.getItem('cu.barCount') || '360',   // 可見 K 棒數
-  showMa: localStorage.getItem('cu.ma') !== '0',            // 均線開關（預設開）
+  // 6 條均線各自開關（預設全開）；存成 '111111' 字串
+  maOn: (localStorage.getItem('cu.maOn') || '111111').padEnd(6, '1').slice(0, 6).split('').map((c) => c === '1'),
   centerDate: null,           // 'YYYY-MM-DD'
   list: null,                 // 目前清單 payload
   listId: null,
@@ -105,7 +106,10 @@ function drawTradeMarkers(item) {
 function pad2(n) { return String(n).padStart(2, '0'); }
 
 function applyMaVisibility() {
-  if (chartState.maSeries) chartState.maSeries.forEach((s) => s.applyOptions({ visible: state.showMa }));
+  if (chartState.maSeries) chartState.maSeries.forEach((s, k) => s.applyOptions({ visible: state.maOn[k] }));
+}
+function saveMaOn() {
+  localStorage.setItem('cu.maOn', state.maOn.map((b) => (b ? '1' : '0')).join(''));
 }
 
 // 滑動視窗 SMA；不足 period 的前段為 null。
@@ -255,12 +259,17 @@ function updateLegend(param) {
     chgStr = ` <span class="${cls}">${chg >= 0 ? '+' : ''}${r(chg)} (${chg >= 0 ? '+' : ''}${pct.toFixed(2)}%)</span>`;
   }
   if (main) {
-    const maToggle = `<span class="ind-toggle ${state.showMa ? 'on' : 'off'}" data-toggle="ma">均線</span>`;
-    const maVals = state.showMa ? MA_DEFS.map((d, k) => {
+    const anyMaOn = state.maOn.some(Boolean);
+    const master = `<span class="ind-toggle ${anyMaOn ? 'on' : 'off'}" data-toggle="ma">均線</span>`;
+    const perMa = MA_DEFS.map((d, k) => {
+      const on = state.maOn[k];
       const v = chartState.maArrs ? chartState.maArrs[k][idx] : null;
-      return v == null ? '' : `<span style="color:${d.color}">${d.p} ${r(v)}</span>`;
-    }).filter(Boolean).join('　') : '';
-    const maLine = maToggle + (maVals ? `　${maVals}` : '');
+      const label = on && v != null ? `${d.p} ${r(v)}` : `${d.p}`;
+      return on
+        ? `<span class="ind-toggle" data-ma="${k}" style="color:${d.color}">${label}</span>`
+        : `<span class="ind-toggle ma-off" data-ma="${k}">${label}</span>`;
+    }).join('　');
+    const maLine = `${master}　${perMa}`;
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
@@ -474,14 +483,23 @@ function wireIndicatorToggles() {
     const el = document.getElementById(id);
     if (!el) continue;
     el.addEventListener('click', (e) => {
+      const maEl = e.target.closest('[data-ma]');
+      if (maEl) {                                   // 單條均線開關
+        const k = +maEl.dataset.ma;
+        state.maOn[k] = !state.maOn[k];
+        saveMaOn();
+        applyMaVisibility();
+        updateLegend(null);
+        return;
+      }
       const t = e.target.closest('[data-toggle]');
-      if (!t) return;
-      const key = t.dataset.toggle;
-      const sKey = 'show' + key.charAt(0).toUpperCase() + key.slice(1);
-      state[sKey] = !state[sKey];
-      localStorage.setItem(`cu.${key}`, state[sKey] ? '1' : '0');
-      if (key === 'ma') applyMaVisibility();
-      updateLegend(null);
+      if (t && t.dataset.toggle === 'ma') {         // 「均線」總開關：全關→全開，否則全關
+        const anyOn = state.maOn.some(Boolean);
+        state.maOn = state.maOn.map(() => !anyOn);
+        saveMaOn();
+        applyMaVisibility();
+        updateLegend(null);
+      }
     });
   }
 }
