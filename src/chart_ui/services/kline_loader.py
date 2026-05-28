@@ -24,7 +24,7 @@ DEFAULT_BUFFER_DAYS = 3
 
 # 各 tf 日盤每日約略 bar 數，用來推算要載入幾個交易日，讓較大 tf 也有足夠 bar。
 _BARS_PER_DAY = {"1m": 300, "5m": 60, "15m": 20, "30m": 10, "60m": 5}
-_LOAD_TARGET_BARS = 600  # 目標載入量（含平移餘裕）
+_LOAD_TARGET_BARS = 1100  # 目標載入量（需 > 最大可見 K 棒選項 720 + 平移餘裕）
 
 
 def _auto_buffer(tf: str) -> int:

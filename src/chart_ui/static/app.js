@@ -12,6 +12,7 @@ const state = {
   tf: localStorage.getItem('cu.tf') || '1m',
   session: localStorage.getItem('cu.session') || 'day',
   adjust: localStorage.getItem('cu.adjust') || 'raw',
+  barCount: localStorage.getItem('cu.barCount') || '360',   // 可見 K 棒數
   centerDate: null,           // 'YYYY-MM-DD'
   list: null,                 // 目前清單 payload
   listId: null,
@@ -129,6 +130,7 @@ function initChart() {
     borderUpColor: COLORS.up, borderDownColor: COLORS.down,
     wickUpColor: COLORS.wick, wickDownColor: COLORS.wick,
     priceLineVisible: false, lastValueVisible: false,
+    priceFormat: { type: 'price', precision: 0, minMove: 1 },   // 台指期為整數，y 軸不顯示小數
   });
   chartState.candle.attachPrimitive(sessionLinesPrimitive);   // 盤別分界垂直線
   chartState.volume = chart.addSeries(
@@ -150,6 +152,40 @@ function initChart() {
     1,
   );
   chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.2, bottom: 0 } });
+  chart.subscribeCrosshairMove((param) => updateLegend(param));
+}
+
+// 遊標移動時顯示該位置的主圖 OHLC 與副圖量能（無 hover 時顯示最新一根）。
+function updateLegend(param) {
+  const el = document.getElementById('legend');
+  const bars = chartState.bars || [];
+  if (!el || !bars.length) { if (el) el.innerHTML = ''; return; }
+  let idx = param && param.time != null ? bars.findIndex((b) => b.time === param.time) : -1;
+  if (idx < 0) idx = bars.length - 1;
+  const b = bars[idx];
+  const prev = idx > 0 ? bars[idx - 1] : null;
+  const r = Math.round;
+  const oc = b.close >= b.open ? 'up' : 'down';
+  const tStr = typeof b.time === 'string' ? b.time : fmtAxisTime(b.time);
+  let chgStr = '';
+  if (prev && prev.close) {
+    const chg = b.close - prev.close;
+    const pct = (chg / prev.close) * 100;
+    const cls = chg >= 0 ? 'up' : 'down';
+    chgStr = ` <span class="${cls}">${chg >= 0 ? '+' : ''}${r(chg)} (${chg >= 0 ? '+' : ''}${pct.toFixed(2)}%)</span>`;
+  }
+  const volMa = chartState.volMaArr ? chartState.volMaArr[idx] : null;
+  const thr = volMa != null ? volMa * VOL_MA_MULT : null;
+  const volCls = thr != null && b.volume > thr ? 'up' : 'muted';
+  const volLine =
+    `量 <span class="${volCls}">${b.volume.toLocaleString()}</span>` +
+    (volMa != null ? `　<span style="color:${VOL_MA_COLOR}">MA${VOL_MA_LEN} ${r(volMa).toLocaleString()}</span>` : '') +
+    (thr != null ? `　<span style="color:${VOL_THRESH_COLOR}">×${VOL_MA_MULT} ${r(thr).toLocaleString()}</span>` : '');
+  el.innerHTML =
+    `<span class="muted">${tStr}</span>　` +
+    `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
+    `低 <span class="${oc}">${r(b.low)}</span>　收 <span class="${oc}">${r(b.close)}</span>${chgStr}` +
+    `<br>${volLine}`;
 }
 
 // === 盤別分界垂直線（Lightweight Charts series primitive，畫在主圖自身座標系，x 必與 K 棒對齊）===
@@ -235,6 +271,7 @@ async function loadKline(centerEpochToFocus) {
     if (i >= VOL_MA_LEN) run -= bars[i - VOL_MA_LEN].volume;
     volMa[i] = i >= VOL_MA_LEN - 1 ? run / VOL_MA_LEN : null;
   }
+  chartState.volMaArr = volMa;        // 供 legend 查詢
   chartState.volume.setData(bars.map((b, i) => {
     const thr = volMa[i] != null ? volMa[i] * VOL_MA_MULT : null;
     return { time: b.time, value: b.volume, color: (thr != null && b.volume > thr) ? VOL_HI : VOL_LO };
@@ -248,6 +285,7 @@ async function loadKline(centerEpochToFocus) {
   focusTime(centerEpochToFocus);
   if (window._afterKline) window._afterKline();        // Task 10 掛 marker
   if (sessionReqUpdate) sessionReqUpdate();            // 觸發盤別分界線重畫
+  updateLegend(null);                                  // 預設顯示最新一根
 }
 
 // 將視窗置中到某 time（epoch 或 'YYYY-MM-DD'）；找不到就顯示尾段。
@@ -263,8 +301,8 @@ function focusTime(target) {
       if (diff < best) { best = diff; idx = i; }
     });
   }
-  // 預設可見 K 棒數（比原本多一倍）；目標放螢幕左側 1/4，右側留 3/4 看行情。
-  const want = state.tf === '1d' ? 240 : 180;
+  // 可見 K 棒數由 toolbar 切換（state.barCount）；目標放螢幕左側 1/4，右側留 3/4 看行情。
+  const want = parseInt(state.barCount, 10) || 360;
   const before = Math.floor(want / 4);
   let from = idx - before;
   let to = idx + (want - before);
@@ -288,9 +326,10 @@ function wireToolbar() {
         state[group] = btn.dataset.v;
         localStorage.setItem(`cu.${group}`, btn.dataset.v);
         seg.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
-        const focus = state.centerDate ? `${state.centerDate} 08:45:00` : null;
+        const focus = state.centerDate ? (state.tf === '1d' ? state.centerDate : localToEpoch(`${state.centerDate} 08:45:00`)) : null;
+        if (group === 'barCount') { focusTime(focus); return; }   // 只重新縮放，不必重抓資料
         setTitle();
-        loadKline(state.tf === '1d' ? state.centerDate : (focus ? localToEpoch(focus) : null));
+        loadKline(focus);
       });
     });
   });

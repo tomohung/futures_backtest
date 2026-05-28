@@ -36,8 +36,17 @@
           <button data-v="raw">原始</button>
           <button data-v="adj">調整</button>
         </div>
+        <div class="seg" id="count-seg" data-group="barCount" title="可見 K 棒數">
+          <button data-v="180">180</button>
+          <button data-v="360">360</button>
+          <button data-v="540">540</button>
+          <button data-v="720">720</button>
+        </div>
       </header>
-      <div class="chart-wrap" id="chart"></div>
+      <div class="chart-wrap">
+        <div id="chart"></div>
+        <div id="legend" class="legend"></div>
+      </div>
     </main>
   </div>
   <script type="module" src="/app.js"></script>
