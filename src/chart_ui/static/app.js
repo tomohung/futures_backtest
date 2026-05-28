@@ -27,6 +27,7 @@ const state = {
   session: localStorage.getItem('cu.session') || 'day',
   adjust: localStorage.getItem('cu.adjust') || 'raw',
   barCount: localStorage.getItem('cu.barCount') || '360',   // 可見 K 棒數
+  showMa: localStorage.getItem('cu.ma') !== '0',            // 均線開關（預設開）
   centerDate: null,           // 'YYYY-MM-DD'
   list: null,                 // 目前清單 payload
   listId: null,
@@ -103,6 +104,10 @@ function drawTradeMarkers(item) {
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 
+function applyMaVisibility() {
+  if (chartState.maSeries) chartState.maSeries.forEach((s) => s.applyOptions({ visible: state.showMa }));
+}
+
 // 滑動視窗 SMA；不足 period 的前段為 null。
 function sma(values, period) {
   const out = [];
@@ -171,6 +176,7 @@ function initChart() {
     priceLineVisible: false, lastValueVisible: false,
     priceFormat: { type: 'price', precision: 0, minMove: 1 },
   }));
+  applyMaVisibility();
   chartState.volume = chart.addSeries(
     LightweightCharts.HistogramSeries,
     { priceFormat: { type: 'volume' }, priceScaleId: 'volume',
@@ -249,10 +255,10 @@ function updateLegend(param) {
     chgStr = ` <span class="${cls}">${chg >= 0 ? '+' : ''}${r(chg)} (${chg >= 0 ? '+' : ''}${pct.toFixed(2)}%)</span>`;
   }
   if (main) {
-    const maLine = MA_DEFS.map((d, k) => {
+    const maLine = state.showMa ? MA_DEFS.map((d, k) => {
       const v = chartState.maArrs ? chartState.maArrs[k][idx] : null;
       return v == null ? '' : `<span style="color:${d.color}">${d.p} ${r(v)}</span>`;
-    }).filter(Boolean).join('　');
+    }).filter(Boolean).join('　') : '';
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
@@ -455,6 +461,18 @@ function wireToolbar() {
         setTitle();
         loadKline(focus);
       });
+    });
+  });
+  // 開關按鈕（顯示/隱藏圖層）
+  document.querySelectorAll('.toggle').forEach((btn) => {
+    const key = btn.dataset.toggle;                       // 'ma'
+    const sKey = 'show' + key.charAt(0).toUpperCase() + key.slice(1);  // 'showMa'
+    btn.classList.toggle('active', !!state[sKey]);
+    btn.addEventListener('click', () => {
+      state[sKey] = !state[sKey];
+      localStorage.setItem(`cu.${key}`, state[sKey] ? '1' : '0');
+      btn.classList.toggle('active', state[sKey]);
+      if (key === 'ma') { applyMaVisibility(); updateLegend(null); }
     });
   });
 }
