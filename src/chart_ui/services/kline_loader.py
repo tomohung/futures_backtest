@@ -89,7 +89,7 @@ def load_kline(*, db_path: Path | None = None, center=None, frm=None, to=None,
                buffer_days: int | None = None) -> list[dict]:
     db_path = Path(db_path) if db_path else paths.DUCKDB_PATH
     if tf == "1d":
-        return _load_daily(str(db_path), session, adjust)
+        return _load_daily(str(db_path), session, adjust, _db_token(db_path))
 
     minutes = _TF_MINUTES[tf]
     if buffer_days is None:                 # 未指定 → 依 tf 自動推算載入交易日數
@@ -137,8 +137,18 @@ def load_kline(*, db_path: Path | None = None, center=None, frm=None, to=None,
     ]
 
 
-@cached(_daily_cache, key=lambda db_path, session, adjust: (db_path, session, adjust))
-def _load_daily(db_path: str, session: str, adjust: str) -> list[dict]:
+def _db_token(db_path: Path) -> float:
+    """DB 新鮮度 token（.duckdb 與 .wal 的最新 mtime）；放進 daily cache key，
+    資料更新後 token 改變→自動失效，不需重啟 server。"""
+    mt = db_path.stat().st_mtime if db_path.exists() else 0.0
+    wal = db_path.with_name(db_path.name + ".wal")
+    if wal.exists():
+        mt = max(mt, wal.stat().st_mtime)
+    return mt
+
+
+@cached(_daily_cache, key=lambda db_path, session, adjust, token: (db_path, session, adjust, token))
+def _load_daily(db_path: str, session: str, adjust: str, token: float) -> list[dict]:
     with duckdb.connect(db_path, read_only=True) as conn:
         if session == "full":
             sql = """
