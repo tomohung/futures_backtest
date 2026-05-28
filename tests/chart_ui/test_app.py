@@ -22,4 +22,4 @@ def test_index_served():
     client = TestClient(create_app())
     r = client.get("/")
     assert r.status_code == 200
-    assert "chart-ui ok" in r.text
+    assert "台指期 Chart UI" in r.text

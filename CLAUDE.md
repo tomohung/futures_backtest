@@ -257,3 +257,12 @@ uv run python src/backtest/summary_all.py         # 跨年度策略比較
 - `build_continuous.py` 重跑時會清除 rollover_log 並重算所有 adjustment
 - 回答用台灣繁體中文優先，但可視需求保留英文的專有名詞
 - K線圖配色遵循台灣慣例：**漲紅跌綠**（上漲=紅色、下跌=綠色）
+
+## Chart UI（行情瀏覽 app）
+```bash
+uv run chart-ui            # 啟動，預設 http://127.0.0.1:8888/
+CHART_UI_HOST=$(tailscale ip -4) ./run-chart-ui.sh   # 綁 tailscale
+```
+- 讀 `data/futures.duckdb` 的 `ohlcv_1m`；清單放 `data/chart_lists/*.json`（不納版控）。
+- 回測腳本輸出清單：`from src.chart_ui.list_writer import write_chart_list_from_backtesting`。
+- 內建『所有交易日』清單，點日期跳到當天 08:45。
