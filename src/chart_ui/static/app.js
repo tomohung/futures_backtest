@@ -106,6 +106,13 @@ function fmtAxisTime(epochOrStr) {
   const d = new Date(epochOrStr * 1000);
   return `${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
 }
+// legend 用：日期帶星期幾（intraday 再加 HH:MM）。
+function fmtLegendTime(time) {
+  if (typeof time === 'string') return dateWeekday(time);         // daily 'YYYY-MM-DD (三)'
+  const d = new Date(time * 1000);
+  const date = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+  return `${date} (${WD[d.getUTCDay()]}) ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+}
 
 async function fetchJSON(url) {
   const r = await fetch(url);
@@ -147,26 +154,46 @@ function initChart() {
   );
   chartState.volThresh = chart.addSeries(
     LightweightCharts.LineSeries,
-    { color: VOL_THRESH_COLOR, lineWidth: 1, priceScaleId: 'volume',
-      priceLineVisible: false, lastValueVisible: false },
+    { color: VOL_THRESH_COLOR, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+      priceScaleId: 'volume', priceLineVisible: false, lastValueVisible: false },
     1,
   );
   chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.2, bottom: 0 } });
   chart.subscribeCrosshairMove((param) => updateLegend(param));
 }
 
-// 遊標移動時顯示該位置的主圖 OHLC 與副圖量能（無 hover 時顯示最新一根）。
+// 量能 legend 釘在成交量副圖（pane 1）左上角，與主圖 OHLC legend 分開。
+let volLegendEl = null;
+function ensureVolLegend() {
+  if (volLegendEl) return volLegendEl;
+  const chart = chartState.chart;
+  if (!chart || typeof chart.panes !== 'function') return null;
+  const panes = chart.panes();
+  if (!panes || panes.length < 2) return null;
+  const paneEl = panes[1].getHTMLElement?.();
+  if (!paneEl) return null;
+  if (getComputedStyle(paneEl).position === 'static') paneEl.style.position = 'relative';
+  const el = document.createElement('div');
+  el.className = 'legend';
+  Object.assign(el.style, { top: '4px', left: '12px' });
+  paneEl.appendChild(el);
+  volLegendEl = el;
+  return el;
+}
+
+// 遊標移動時顯示該位置的主圖 OHLC（主圖 legend）與量能（副圖 legend）。無 hover → 最新一根。
 function updateLegend(param) {
-  const el = document.getElementById('legend');
+  const main = document.getElementById('legend');
+  const vol = ensureVolLegend();
   const bars = chartState.bars || [];
-  if (!el || !bars.length) { if (el) el.innerHTML = ''; return; }
+  if (!bars.length) { if (main) main.innerHTML = ''; if (vol) vol.innerHTML = ''; return; }
   let idx = param && param.time != null ? bars.findIndex((b) => b.time === param.time) : -1;
   if (idx < 0) idx = bars.length - 1;
   const b = bars[idx];
   const prev = idx > 0 ? bars[idx - 1] : null;
   const r = Math.round;
   const oc = b.close >= b.open ? 'up' : 'down';
-  const tStr = typeof b.time === 'string' ? b.time : fmtAxisTime(b.time);
+  const tStr = fmtLegendTime(b.time);
   let chgStr = '';
   if (prev && prev.close) {
     const chg = b.close - prev.close;
@@ -174,18 +201,21 @@ function updateLegend(param) {
     const cls = chg >= 0 ? 'up' : 'down';
     chgStr = ` <span class="${cls}">${chg >= 0 ? '+' : ''}${r(chg)} (${chg >= 0 ? '+' : ''}${pct.toFixed(2)}%)</span>`;
   }
-  const volMa = chartState.volMaArr ? chartState.volMaArr[idx] : null;
-  const thr = volMa != null ? volMa * VOL_MA_MULT : null;
-  const volCls = thr != null && b.volume > thr ? 'up' : 'muted';
-  const volLine =
-    `量 <span class="${volCls}">${b.volume.toLocaleString()}</span>` +
-    (volMa != null ? `　<span style="color:${VOL_MA_COLOR}">MA${VOL_MA_LEN} ${r(volMa).toLocaleString()}</span>` : '') +
-    (thr != null ? `　<span style="color:${VOL_THRESH_COLOR}">×${VOL_MA_MULT} ${r(thr).toLocaleString()}</span>` : '');
-  el.innerHTML =
-    `<span class="muted">${tStr}</span>　` +
-    `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
-    `低 <span class="${oc}">${r(b.low)}</span>　收 <span class="${oc}">${r(b.close)}</span>${chgStr}` +
-    `<br>${volLine}`;
+  if (main) {
+    main.innerHTML =
+      `<span class="muted">${tStr}</span>　` +
+      `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
+      `低 <span class="${oc}">${r(b.low)}</span>　收 <span class="${oc}">${r(b.close)}</span>${chgStr}`;
+  }
+  if (vol) {
+    const volMa = chartState.volMaArr ? chartState.volMaArr[idx] : null;
+    const thr = volMa != null ? volMa * VOL_MA_MULT : null;
+    const volCls = thr != null && b.volume > thr ? 'up' : 'muted';
+    vol.innerHTML =
+      `量 <span class="${volCls}">${b.volume.toLocaleString()}</span>` +
+      (volMa != null ? `　<span style="color:${VOL_MA_COLOR}">MA${VOL_MA_LEN} ${r(volMa).toLocaleString()}</span>` : '') +
+      (thr != null ? `　<span style="color:${VOL_THRESH_COLOR}">×${VOL_MA_MULT} ${r(thr).toLocaleString()}</span>` : '');
+  }
 }
 
 // === 盤別分界垂直線（Lightweight Charts series primitive，畫在主圖自身座標系，x 必與 K 棒對齊）===
