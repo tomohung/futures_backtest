@@ -255,10 +255,12 @@ function updateLegend(param) {
     chgStr = ` <span class="${cls}">${chg >= 0 ? '+' : ''}${r(chg)} (${chg >= 0 ? '+' : ''}${pct.toFixed(2)}%)</span>`;
   }
   if (main) {
-    const maLine = state.showMa ? MA_DEFS.map((d, k) => {
+    const maToggle = `<span class="ind-toggle ${state.showMa ? 'on' : 'off'}" data-toggle="ma">均線</span>`;
+    const maVals = state.showMa ? MA_DEFS.map((d, k) => {
       const v = chartState.maArrs ? chartState.maArrs[k][idx] : null;
       return v == null ? '' : `<span style="color:${d.color}">${d.p} ${r(v)}</span>`;
     }).filter(Boolean).join('　') : '';
+    const maLine = maToggle + (maVals ? `　${maVals}` : '');
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
@@ -463,23 +465,31 @@ function wireToolbar() {
       });
     });
   });
-  // 開關按鈕（顯示/隱藏圖層）
-  document.querySelectorAll('.toggle').forEach((btn) => {
-    const key = btn.dataset.toggle;                       // 'ma'
-    const sKey = 'show' + key.charAt(0).toUpperCase() + key.slice(1);  // 'showMa'
-    btn.classList.toggle('active', !!state[sKey]);
-    btn.addEventListener('click', () => {
+}
+
+// 指標 legend 上的開關（事件委派；legend 為 pointer-events:none，但 .ind-toggle 為 auto，
+// 點擊會冒泡到 legend 容器）。
+function wireIndicatorToggles() {
+  for (const id of ['legend', 'vol-legend', 'bb-legend']) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.addEventListener('click', (e) => {
+      const t = e.target.closest('[data-toggle]');
+      if (!t) return;
+      const key = t.dataset.toggle;
+      const sKey = 'show' + key.charAt(0).toUpperCase() + key.slice(1);
       state[sKey] = !state[sKey];
       localStorage.setItem(`cu.${key}`, state[sKey] ? '1' : '0');
-      btn.classList.toggle('active', state[sKey]);
-      if (key === 'ma') { applyMaVisibility(); updateLegend(null); }
+      if (key === 'ma') applyMaVisibility();
+      updateLegend(null);
     });
-  });
+  }
 }
 
 async function main() {
   initChart();
   wireToolbar();
+  wireIndicatorToggles();
   setTitle();
   if (window._initLists) await window._initLists();    // Task 10 提供
 }
