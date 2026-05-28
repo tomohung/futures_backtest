@@ -7,6 +7,11 @@ const VOL_HI = '#ef4444';      // 放量（> 門檻）
 const VOL_LO = '#787b86aa';    // 一般量
 const VOL_MA_COLOR = '#2196f3';      // 量能均線（藍）
 const VOL_THRESH_COLOR = '#ff9800';  // 1.5×MA 門檻（橘）
+// BB %B（length 15, mult 2）：另開副圖，y 軸畫 1/0 虛線；突破 1 或跌破 0 標記每段第一筆。
+const BB_LEN = 15;
+const BB_MULT = 2;
+const BB_COLOR = '#c678dd';
+const BB_REF_COLOR = '#888';
 
 const state = {
   tf: localStorage.getItem('cu.tf') || '1m',
@@ -159,30 +164,50 @@ function initChart() {
     1,
   );
   chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.2, bottom: 0 } });
+  // BB %B 副圖（pane 2）：自動縮放但永遠包含 0~1，使 0/1 虛線恆可見。
+  chartState.bb = chart.addSeries(
+    LightweightCharts.LineSeries,
+    {
+      color: BB_COLOR, lineWidth: 1, priceScaleId: 'bb',
+      priceLineVisible: false, lastValueVisible: false,
+      autoscaleInfoProvider: (orig) => {
+        const r = orig();
+        if (!r || !r.priceRange) return { priceRange: { minValue: 0, maxValue: 1 } };
+        return { priceRange: { minValue: Math.min(0, r.priceRange.minValue), maxValue: Math.max(1, r.priceRange.maxValue) } };
+      },
+    },
+    2,
+  );
+  chartState.bb.createPriceLine({ price: 1, color: BB_REF_COLOR, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '1' });
+  chartState.bb.createPriceLine({ price: 0, color: BB_REF_COLOR, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '0' });
+  chart.priceScale('bb').applyOptions({ scaleMargins: { top: 0.15, bottom: 0.15 } });
   chart.subscribeCrosshairMove((param) => updateLegend(param));
   const wrap = document.querySelector('.chart-wrap');
-  if (wrap) new ResizeObserver(() => positionVolLegend()).observe(wrap);
+  if (wrap) new ResizeObserver(() => {
+    positionPaneLegend(document.getElementById('vol-legend'), 1);
+    positionPaneLegend(document.getElementById('bb-legend'), 2);
+  }).observe(wrap);
 }
 
-// 把 #vol-legend 對齊到成交量副圖（pane 1）的頂端（同在 .chart-wrap 內，定位才不會被 canvas 蓋住）。
-function positionVolLegend() {
+// 把副圖 legend 對齊到對應 pane 頂端（同在 .chart-wrap 內，定位才不會被 canvas 蓋住）。
+function positionPaneLegend(el, paneIndex) {
   const wrap = document.querySelector('.chart-wrap');
-  const volEl = document.getElementById('vol-legend');
   const chart = chartState.chart;
-  if (!wrap || !volEl || !chart || typeof chart.panes !== 'function') return;
+  if (!wrap || !el || !chart || typeof chart.panes !== 'function') return;
   const panes = chart.panes();
-  const paneEl = panes && panes.length >= 2 ? panes[1].getHTMLElement?.() : null;
+  const paneEl = panes && panes.length > paneIndex ? panes[paneIndex].getHTMLElement?.() : null;
   if (!paneEl) return;
   const top = paneEl.getBoundingClientRect().top - wrap.getBoundingClientRect().top + 4;
-  volEl.style.top = `${top}px`;
+  el.style.top = `${top}px`;
 }
 
-// 遊標移動時顯示該位置的主圖 OHLC（主圖 legend）與量能（副圖 legend）。無 hover → 最新一根。
+// 遊標移動時顯示該位置的主圖 OHLC（主圖 legend）、量能與 %B（各副圖 legend）。無 hover → 最新一根。
 function updateLegend(param) {
   const main = document.getElementById('legend');
   const vol = document.getElementById('vol-legend');
+  const bb = document.getElementById('bb-legend');
   const bars = chartState.bars || [];
-  if (!bars.length) { if (main) main.innerHTML = ''; if (vol) vol.innerHTML = ''; return; }
+  if (!bars.length) { for (const e of [main, vol, bb]) if (e) e.innerHTML = ''; return; }
   let idx = param && param.time != null ? bars.findIndex((b) => b.time === param.time) : -1;
   if (idx < 0) idx = bars.length - 1;
   const b = bars[idx];
@@ -204,7 +229,7 @@ function updateLegend(param) {
       `低 <span class="${oc}">${r(b.low)}</span>　收 <span class="${oc}">${r(b.close)}</span>${chgStr}`;
   }
   if (vol) {
-    positionVolLegend();
+    positionPaneLegend(vol, 1);
     const volMa = chartState.volMaArr ? chartState.volMaArr[idx] : null;
     const thr = volMa != null ? volMa * VOL_MA_MULT : null;
     const volCls = thr != null && b.volume > thr ? 'up' : 'muted';
@@ -212,6 +237,12 @@ function updateLegend(param) {
       `量 <span class="${volCls}">${b.volume.toLocaleString()}</span>` +
       (volMa != null ? `　<span style="color:${VOL_MA_COLOR}">MA${VOL_MA_LEN} ${r(volMa).toLocaleString()}</span>` : '') +
       (thr != null ? `　<span style="color:${VOL_THRESH_COLOR}">×${VOL_MA_MULT} ${r(thr).toLocaleString()}</span>` : '');
+  }
+  if (bb) {
+    positionPaneLegend(bb, 2);
+    const v = chartState.bbArr ? chartState.bbArr[idx] : null;
+    const cls = v == null ? 'muted' : (v > 1 ? 'up' : (v < 0 ? 'down' : ''));
+    bb.innerHTML = `<span style="color:${BB_COLOR}">%B(${BB_LEN},${BB_MULT})</span> <span class="${cls}">${v == null ? '-' : v.toFixed(2)}</span>`;
   }
 }
 
@@ -309,6 +340,33 @@ async function loadKline(centerEpochToFocus) {
   chartState.volThresh.setData(
     bars.flatMap((b, i) => (volMa[i] != null ? [{ time: b.time, value: volMa[i] * VOL_MA_MULT }] : [])),
   );
+  // BB %B（length 15, mult 2，population stdev）；突破 1 / 跌破 0 標記每段第一筆。
+  const bbArr = [];
+  let bs = 0, bs2 = 0;
+  for (let i = 0; i < bars.length; i++) {
+    const c = bars[i].close;
+    bs += c; bs2 += c * c;
+    if (i >= BB_LEN) { const o = bars[i - BB_LEN].close; bs -= o; bs2 -= o * o; }
+    if (i >= BB_LEN - 1) {
+      const mean = bs / BB_LEN;
+      const sd = Math.sqrt(Math.max(0, bs2 / BB_LEN - mean * mean));
+      const up = mean + BB_MULT * sd, lo = mean - BB_MULT * sd;
+      bbArr[i] = up > lo ? (c - lo) / (up - lo) : null;
+    } else bbArr[i] = null;
+  }
+  chartState.bbArr = bbArr;
+  chartState.bb.setData(bars.flatMap((b, i) => (bbArr[i] != null ? [{ time: b.time, value: bbArr[i] }] : [])));
+  const bbMarks = [];
+  for (let i = 0; i < bars.length; i++) {
+    const v = bbArr[i];
+    if (v == null) continue;
+    const prev = i > 0 ? bbArr[i - 1] : null;
+    if (v > 1 && (prev == null || prev <= 1)) bbMarks.push({ time: bars[i].time, position: 'aboveBar', shape: 'circle', color: COLORS.up });
+    if (v < 0 && (prev == null || prev >= 0)) bbMarks.push({ time: bars[i].time, position: 'belowBar', shape: 'circle', color: COLORS.down });
+  }
+  chartState.bbMarkersHandle = chartState.bbMarkersHandle
+    ? (chartState.bbMarkersHandle.setMarkers(bbMarks), chartState.bbMarkersHandle)
+    : LightweightCharts.createSeriesMarkers(chartState.bb, bbMarks);
   focusTime(centerEpochToFocus);
   if (window._afterKline) window._afterKline();        // Task 10 掛 marker
   if (sessionReqUpdate) sessionReqUpdate();            // 觸發盤別分界線重畫
