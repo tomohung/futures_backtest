@@ -1,5 +1,45 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
-<head><meta charset="UTF-8" /><title>台指期 Chart UI</title></head>
-<body><h1>chart-ui ok</h1></body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>台指期 Chart UI</title>
+  <link rel="stylesheet" href="/app.css" />
+  <script src="/vendor/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="list-picker">
+        <select id="list-select"></select>
+      </div>
+      <div class="list-summary" id="list-summary"></div>
+      <div class="list-table" id="list-table"></div>
+    </aside>
+    <main class="main">
+      <header class="toolbar">
+        <div class="title" id="chart-title">—</div>
+        <div class="spacer"></div>
+        <div class="seg" id="tf-seg" data-group="tf">
+          <button data-v="1m">1分</button>
+          <button data-v="5m">5分</button>
+          <button data-v="15m">15分</button>
+          <button data-v="30m">30分</button>
+          <button data-v="60m">60分</button>
+          <button data-v="1d">日</button>
+        </div>
+        <div class="seg" id="session-seg" data-group="session">
+          <button data-v="day">日盤</button>
+          <button data-v="full">全日盤</button>
+        </div>
+        <div class="seg" id="adjust-seg" data-group="adjust">
+          <button data-v="raw">原始</button>
+          <button data-v="adj">調整</button>
+        </div>
+      </header>
+      <div class="chart-wrap" id="chart"></div>
+    </main>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
 </html>
