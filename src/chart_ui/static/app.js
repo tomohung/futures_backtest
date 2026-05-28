@@ -12,6 +12,15 @@ const BB_LEN = 15;
 const BB_MULT = 2;
 const BB_COLOR = '#c678dd';
 const BB_REF_COLOR = '#888';
+// 主圖 6 條均線（SMA(close)），週期/顏色仿 screener-ui。
+const MA_DEFS = [
+  { p: 5, color: '#ff9800' },
+  { p: 10, color: '#4caf50' },
+  { p: 21, color: '#00bcd4' },
+  { p: 65, color: '#2196f3' },
+  { p: 130, color: '#9c27b0' },
+  { p: 233, color: '#f44336' },
+];
 
 const state = {
   tf: localStorage.getItem('cu.tf') || '1m',
@@ -94,6 +103,18 @@ function drawTradeMarkers(item) {
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 
+// 滑動視窗 SMA；不足 period 的前段為 null。
+function sma(values, period) {
+  const out = [];
+  let run = 0;
+  for (let i = 0; i < values.length; i++) {
+    run += values[i];
+    if (i >= period) run -= values[i - period];
+    out[i] = i >= period - 1 ? run / period : null;
+  }
+  return out;
+}
+
 // 把 'YYYY-MM-DD HH:MM:SS' 當 UTC 算 epoch 秒（與後端 _to_epoch 一致）。
 function localToEpoch(s) {
   const m = s.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
@@ -145,6 +166,11 @@ function initChart() {
     priceFormat: { type: 'price', precision: 0, minMove: 1 },   // 台指期為整數，y 軸不顯示小數
   });
   chartState.candle.attachPrimitive(sessionLinesPrimitive);   // 盤別分界垂直線
+  chartState.maSeries = MA_DEFS.map((d) => chart.addSeries(LightweightCharts.LineSeries, {
+    color: d.color, lineWidth: 1, priceScaleId: 'right',
+    priceLineVisible: false, lastValueVisible: false,
+    priceFormat: { type: 'price', precision: 0, minMove: 1 },
+  }));
   chartState.volume = chart.addSeries(
     LightweightCharts.HistogramSeries,
     { priceFormat: { type: 'volume' }, priceScaleId: 'volume',
@@ -223,10 +249,15 @@ function updateLegend(param) {
     chgStr = ` <span class="${cls}">${chg >= 0 ? '+' : ''}${r(chg)} (${chg >= 0 ? '+' : ''}${pct.toFixed(2)}%)</span>`;
   }
   if (main) {
+    const maLine = MA_DEFS.map((d, k) => {
+      const v = chartState.maArrs ? chartState.maArrs[k][idx] : null;
+      return v == null ? '' : `<span style="color:${d.color}">${d.p} ${r(v)}</span>`;
+    }).filter(Boolean).join('　');
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
-      `低 <span class="${oc}">${r(b.low)}</span>　收 <span class="${oc}">${r(b.close)}</span>${chgStr}`;
+      `低 <span class="${oc}">${r(b.low)}</span>　收 <span class="${oc}">${r(b.close)}</span>${chgStr}` +
+      (maLine ? `<br>${maLine}` : '');
   }
   if (vol) {
     positionPaneLegend(vol, 1);
@@ -321,6 +352,14 @@ async function loadKline(centerEpochToFocus) {
   chartState.candle.setData(bars.map((b) => ({
     time: b.time, open: b.open, high: b.high, low: b.low, close: b.close,
   })));
+  // 主圖 6 條均線
+  const closes = bars.map((b) => b.close);
+  chartState.maArrs = MA_DEFS.map((d) => sma(closes, d.p));
+  chartState.maArrs.forEach((arr, k) => {
+    chartState.maSeries[k].setData(
+      bars.flatMap((b, i) => (arr[i] != null ? [{ time: b.time, value: arr[i] }] : [])),
+    );
+  });
   // 量能 MA(20) 與 1.5× 門檻（滑動視窗，前 19 根不足 → null）
   const volMa = [];
   let run = 0;
