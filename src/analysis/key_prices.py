@@ -28,42 +28,6 @@ DB_PATH = Path(__file__).parents[2] / "data" / "futures.duckdb"
 SYMBOL = "TX"
 
 
-def _get_put_s1(trade_date, ref_price):
-    """取某日近月 Put 成交量最大的履約價（需低於 ref_price）作為支撐。"""
-    try:
-        with duckdb.connect(str(DB_PATH), read_only=True) as conn:
-            top = conn.execute("""
-                SELECT contract FROM ticks_options
-                WHERE trade_date = ? AND LENGTH(contract) = 6
-                GROUP BY contract ORDER BY SUM(volume) DESC LIMIT 1
-            """, [trade_date]).fetchone()
-            if not top:
-                return None
-
-            rows = conn.execute("""
-                SELECT strike, SUM(volume) AS vol
-                FROM ticks_options
-                WHERE trade_date = ? AND contract = ? AND put_call = 'P'
-                  AND strike BETWEEN ? - 3000 AND ?
-                GROUP BY strike ORDER BY vol DESC
-            """, [trade_date, top[0], ref_price, ref_price]).fetchall()
-
-            if not rows:
-                return None
-
-            s1_strike = float(rows[0][0])
-            s1_vol = rows[0][1]
-            s2_strike = float(rows[1][0]) if len(rows) > 1 else None
-            s2_vol = rows[1][1] if len(rows) > 1 else None
-            return {
-                "s1": s1_strike, "s1_vol": s1_vol,
-                "s2": s2_strike, "s2_vol": s2_vol,
-                "contract": top[0],
-            }
-    except Exception:
-        return None
-
-
 _NVF_FALLBACK_THRESHOLD = 0.93   # warmup fallback (近 4 年 EMA expanding median ~0.935)
 _NVF_MIN_HISTORY_NIGHTS = 60     # warmup 期最少夜盤數
 
@@ -466,10 +430,6 @@ def get_key_prices():
         }
     }
 
-    # 選擇權 Put S1 支撐（H064 研究：前日近月 Put 成交量最大的履約價）
-    ref_price = night[2] if has_night else day[2]  # 夜收 or 日收
-    put_s1 = _get_put_s1(last_day, float(ref_price))
-
     result = {
         "last_day": last_day,
         "prev_day": prev_day,
@@ -481,7 +441,6 @@ def get_key_prices():
         "bars_15m_pre10": bars_15m_pre10,
         "night_vol_filter": night_vol_filter,
         "weekday_stats": weekday_stats,
-        "put_s1": put_s1,
     }
     return result
 
@@ -583,49 +542,8 @@ def print_report(data):
         op = "≥" if nvf["pass"] else "<"
         print(f"| S001/S002 NVF (H075)      | {binary}  夜盤 {nr}pt / EMA20 {ema}pt = {norm:.2f} {op} {thr:.2f} |")
 
-    # 策略進場建議
-    wd_stats = d.get("weekday_stats")
-    if wd_stats:
-        today_wd = wd_stats["today_wd"]
-        nvf_pass = nvf["pass"] if nvf and nvf.get("night_norm") is not None else None
-
-        print()
-        print("### 今日策略進場建議")
-        print("| 策略 | 判定 | 原因 |")
-        print("|------|------|------|")
-
-        nvf_thr = nvf["threshold"] if nvf and nvf.get("threshold") is not None else 0.93
-
-        # EstHL: skip Thu(3) + Fri(4); Tue(1) bypasses NVF (H078); Mon/Wed use NVF
-        if today_wd == 3:
-            print("| S001 EstHL | 🚫 不做 | 週四固定跳過 |")
-        elif today_wd == 4:
-            print("| S001 EstHL | 🚫 不做 | 週五固定跳過 |")
-        elif today_wd == 1:
-            # H078: Tue 結構性 NVF 失效，bypass NVF（連敗加深 28% 已知 caveat）
-            tier_hint = (f"{nvf.get('tier','?')} norm={nvf['night_norm']:.2f}"
-                         if nvf and nvf.get("night_norm") is not None else "無夜盤資料")
-            print(f"| S001 EstHL | ✅ 可做 | 週二 NVF bypass (H078)；{tier_hint} |")
-        elif nvf_pass is False:
-            print(f"| S001 EstHL | 🚫 不做 | NVF STOP ({nvf.get('tier','?')}, norm {nvf['night_norm']:.2f} < {nvf_thr:.2f}) |")
-        elif nvf_pass is True:
-            print(f"| S001 EstHL | ✅ 可做 | NVF GO ({nvf.get('tier','?')}, norm {nvf['night_norm']:.2f} ≥ {nvf_thr:.2f}) |")
-        else:
-            print("| S001 EstHL | ⚠️ 未知 | 無夜盤資料 |")
-
-        # Reversal: skip Mon(0) + Fri(4), plus night vol filter
-        if today_wd == 0:
-            print("| S002 Reversal | 🚫 不做 | 週一固定跳過 |")
-        elif today_wd == 4:
-            print("| S002 Reversal | 🚫 不做 | 週五固定跳過 |")
-        elif nvf_pass is False:
-            print(f"| S002 Reversal | 🚫 不做 | NVF STOP ({nvf.get('tier','?')}, norm {nvf['night_norm']:.2f} < {nvf_thr:.2f}) |")
-        elif nvf_pass is True:
-            print(f"| S002 Reversal | ✅ 可做 | NVF GO ({nvf.get('tier','?')}, norm {nvf['night_norm']:.2f} ≥ {nvf_thr:.2f}) |")
-        else:
-            print("| S002 Reversal | ⚠️ 未知 | 無夜盤資料 |")
-
     # Weekday 漲跌統計
+    wd_stats = d.get("weekday_stats")
     if wd_stats:
         wd_names = {0: "一", 1: "二", 2: "三", 3: "四", 4: "五"}
         today_wd = wd_stats["today_wd"]
@@ -649,21 +567,6 @@ def print_report(data):
             marker = " ◀" if wd == today_wd else ""
             label = f"週{wd_names[wd]}{marker}"
             print(f"| {label:4s} | {_fmt(s['day']):16s} | {_fmt(s['morning']):16s} | {_fmt(s['night']):16s} |")
-
-    # 選擇權 Put 支撐（H064）
-    put_s1 = d.get("put_s1")
-    if put_s1:
-        print()
-        print(f"### 選擇權支撐（前日 Put 成交量 Top，{put_s1['contract']}）")
-        print(f"| 層級 | 履約價 | 成交量 | 距基準 |")
-        print(f"|------|-------:|-------:|-------:|")
-        s1_dist = ref - put_s1["s1"] if ref else None
-        s1_pct = f"{s1_dist / ref * 100:.1f}%" if ref and s1_dist else "—"
-        print(f"| S1   | {n(int(put_s1['s1']))} | {put_s1['s1_vol']:,} | -{s1_pct} |")
-        if put_s1.get("s2"):
-            s2_dist = ref - put_s1["s2"] if ref else None
-            s2_pct = f"{s2_dist / ref * 100:.1f}%" if ref and s2_dist else "—"
-            print(f"| S2   | {n(int(put_s1['s2']))} | {put_s1['s2_vol']:,} | -{s2_pct} |")
 
 
 def get_30m_bars(n_days=20):
@@ -847,41 +750,10 @@ def plot_sr_chart(data, n_days=20):
     ax.set_xticks(tick_pos)
     ax.set_xticklabels(tick_lbl, rotation=45, ha="right", fontsize=8)
     ax.set_xlim(-1, n)
-    # 策略進場建議（醒目顯示在圖表右上角）
-    nvf = data.get("night_vol_filter")
-    nvf_pass = nvf["pass"] if nvf and nvf.get("night_norm") is not None else None
-    wd_stats = data.get("weekday_stats")
-    today_wd = wd_stats["today_wd"] if wd_stats else None
-
-    strategy_lines = []
-    # EstHL: skip Thu/Fri; Tue bypasses NVF (H078); Mon/Wed gated by NVF
-    if today_wd in (3, 4):
-        wd_label = "Thu" if today_wd == 3 else "Fri"
-        strategy_lines.append((f"EstHL: SKIP ({wd_label})", "#f44336"))
-    elif today_wd == 1:
-        nvf_str = f"{nvf['night_norm']:.2f}" if nvf and nvf.get("night_norm") is not None else "n/a"
-        strategy_lines.append((f"EstHL: GO (Tue bypass, NVF={nvf_str})", "#4caf50"))
-    elif nvf_pass is False:
-        strategy_lines.append((f"EstHL: STOP ({nvf['night_norm']:.2f})", "#f44336"))
-    elif nvf_pass is True:
-        strategy_lines.append((f"EstHL: GO ({nvf['night_norm']:.2f})", "#4caf50"))
-    # Reversal: skip Mon(0) + Fri(4)
-    if today_wd in (0, 4):
-        wd_label = "Mon" if today_wd == 0 else "Fri"
-        strategy_lines.append((f"Reversal: SKIP ({wd_label})", "#f44336"))
-    elif nvf_pass is False:
-        strategy_lines.append((f"Reversal: STOP ({nvf['night_norm']:.2f})", "#f44336"))
-    elif nvf_pass is True:
-        strategy_lines.append((f"Reversal: GO ({nvf['night_norm']:.2f})", "#4caf50"))
-
     ax.set_title(
         f"TX 1H K線（近 {n_days} 日，基準 {ref:,}）",
         color=COLOR_TEXT, fontsize=12, pad=8, loc="left",
     )
-    for i, (label, color) in enumerate(strategy_lines):
-        ax.text(0.99, 1.02 - i * 0.05, label, transform=ax.transAxes,
-                fontsize=12, fontweight="bold", color=color,
-                ha="right", va="bottom")
     ax.legend(loc="upper left", fontsize=7, facecolor=BG_FIG,
               labelcolor=COLOR_TEXT, edgecolor=COLOR_GRID, ncol=5)
 
