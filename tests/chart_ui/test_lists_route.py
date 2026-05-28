@@ -1,5 +1,6 @@
 import json
 
+import pytest
 import src.chart_ui.paths as paths
 from fastapi.testclient import TestClient
 
@@ -38,3 +39,10 @@ def test_load_file_list(test_db_path, tmp_path, monkeypatch):
 def test_load_missing_404(test_db_path, tmp_path, monkeypatch):
     client = _client(test_db_path, tmp_path, monkeypatch)
     assert client.get("/api/lists/nope").status_code == 404
+
+
+def test_load_traversal_blocked(test_db_path, tmp_path, monkeypatch):
+    # path traversal 的 list_id 應被拒（404），不可讀到 chart_lists 以外的檔
+    from src.chart_ui.services.list_index import load_list
+    with pytest.raises(FileNotFoundError):
+        load_list(tmp_path, test_db_path, "../secret")

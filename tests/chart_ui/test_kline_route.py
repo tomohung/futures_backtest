@@ -29,3 +29,10 @@ def test_kline_bad_tf(test_db_path, monkeypatch):
     client = _client(test_db_path, monkeypatch)
     r = client.get("/api/kline", params={"center": "2025-06-17", "tf": "3m"})
     assert r.status_code == 400
+
+
+def test_kline_empty_center_400(test_db_path, monkeypatch):
+    # 空字串 center 應視同未帶 → 400，而非 date.fromisoformat('') 的 500
+    client = _client(test_db_path, monkeypatch)
+    r = client.get("/api/kline", params={"center": "", "tf": "1m", "session": "day"})
+    assert r.status_code == 400

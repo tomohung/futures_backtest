@@ -54,6 +54,9 @@ def list_lists(chart_lists_dir: Path, db_path: Path) -> list[dict]:
 def load_list(chart_lists_dir: Path, db_path: Path, list_id: str) -> dict:
     if list_id == ALL_DAYS_ID:
         return _all_days_payload(db_path)
+    # 防 path traversal（app 可能綁 tailscale）：list_id 不可含路徑分隔或 ..
+    if "/" in list_id or "\\" in list_id or ".." in list_id:
+        raise FileNotFoundError(f"No such list: {list_id}")
     path = chart_lists_dir / f"{list_id}.json"
     if not path.exists():
         raise FileNotFoundError(f"No such list: {list_id}")

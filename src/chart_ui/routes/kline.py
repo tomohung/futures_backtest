@@ -18,6 +18,9 @@ def get_kline(
     session: str = Query("day"),
     adjust: str = Query("raw"),
 ):
+    center = center or None  # 空字串視同未帶（避免 date.fromisoformat('') → 500）
+    frm = frm or None
+    to = to or None
     if tf not in ALLOWED_TF:
         raise HTTPException(400, f"tf must be one of {sorted(ALLOWED_TF)}")
     if session not in ALLOWED_SESSION:
