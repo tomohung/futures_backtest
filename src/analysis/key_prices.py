@@ -64,7 +64,6 @@ def _compute_night_vol_filter(last_day, tonight_range):
     H066 原評估方法為 EMA + median split，本實作為其 causal 版本。
     Warmup 期（< 60 夜盤值）fallback 到 fixed 0.93。
     """
-    import bisect
     import pandas as _pd
 
     with duckdb.connect(str(DB_PATH), read_only=True) as conn:
@@ -91,16 +90,18 @@ def _compute_night_vol_filter(last_day, tonight_range):
 
     night_raw["timestamp"] = _pd.to_datetime(night_raw["timestamp"])
 
-    def find_next_trade_date(ts):
-        cal_time = ts.time()
-        if cal_time >= _pd.Timestamp("15:00").time():
-            search_date = (ts + _pd.Timedelta(days=1)).normalize()
-        else:
-            search_date = ts.normalize()
-        idx = bisect.bisect_left(day_dates_list, search_date)
-        return day_dates_list[idx] if idx < len(day_dates_list) else None
-
-    night_raw["trade_date"] = night_raw["timestamp"].apply(find_next_trade_date)
+    # Vectorised find_next_trade_date (原本逐列 .apply 對全歷史夜盤 1 分 K 太慢)：
+    # 夜盤(>=15:00) → 隔日(含)之後第一個交易日；凌晨(<05:00) → 該日(含)之後第一個交易日。
+    # np.searchsorted side='left' 等價於 bisect_left，輸出與原版完全一致。
+    day_arr = np.array(day_dates_list, dtype="datetime64[ns]")
+    ts = night_raw["timestamp"]
+    search = ts.dt.normalize().mask(ts.dt.hour >= 15, (ts + _pd.Timedelta(days=1)).dt.normalize())
+    idx = np.searchsorted(day_arr, search.values, side="left")
+    valid = idx < len(day_arr)
+    night_raw["trade_date"] = _pd.Series(
+        np.where(valid, day_arr[np.where(valid, idx, 0)], np.datetime64("NaT")),
+        index=night_raw.index,
+    )
     night_raw = night_raw.dropna(subset=["trade_date"])
 
     night = night_raw.groupby("trade_date").agg(
