@@ -536,6 +536,52 @@ function renderSidebar() {
   });
 }
 
+// 右側欄：每日統計（20日平均振幅 / 今日日盤高低振幅 / 前一日 TWNVIX / 關卡價）。切換日期時更新。
+async function renderDayStats(date) {
+  const el = document.getElementById('rail');
+  if (!el) return;
+  if (!date) { el.innerHTML = ''; return; }
+  let d;
+  try { d = await fetchJSON(`/api/daystats?date=${encodeURIComponent(date)}`); }
+  catch (_) { el.innerHTML = '<div class="sec sec-title">統計載入失敗</div>'; return; }
+  const r = (x) => (x == null ? '—' : Math.round(x).toLocaleString());
+  const ar = d.avg_range_20 || {};
+  const t = d.today;
+  const pv = d.prev_vix;
+
+  const avgSec =
+    `<div class="sec"><div class="sec-title">20日平均振幅</div>`
+    + `<div class="kv"><span class="k">日盤</span><span class="v">${r(ar.day)}<span class="n"> n=${ar.n_day ?? 0}</span></span></div>`
+    + `<div class="kv"><span class="k">全日盤</span><span class="v">${r(ar.full)}<span class="n"> n=${ar.n_full ?? 0}</span></span></div></div>`;
+
+  const todaySec =
+    `<div class="sec"><div class="sec-title">今日 ${dateWeekday(d.date)}（日盤）</div>`
+    + (t
+      ? `<div class="kv"><span class="k">最高</span><span class="v up">${r(t.high)}</span></div>`
+        + `<div class="kv"><span class="k">最低</span><span class="v down">${r(t.low)}</span></div>`
+        + `<div class="kv"><span class="k">振幅</span><span class="v">${r(t.range)}</span></div>`
+      : `<div class="kv"><span class="k">—</span><span class="v">無日盤資料</span></div>`)
+    + `</div>`;
+
+  const vixSec =
+    `<div class="sec"><div class="sec-title">前一日 TWNVIX</div>`
+    + (pv
+      ? `<div class="kv"><span class="k">${pv.date}</span><span class="v">${pv.vix.toFixed(2)}</span></div>`
+      : `<div class="kv"><span class="k">—</span><span class="v">—</span></div>`)
+    + `</div>`;
+
+  const lvlRow = (cls, o) =>
+    `<div class="lvl ${cls}"><span class="lbl">${o.label}</span><span class="px">${(+o.price).toLocaleString()}</span></div>`;
+  const lvlBody = (d.bull && d.bear)
+    ? d.bull.map((o) => lvlRow('bull', o)).join('') + `<div class="gap"></div>` + d.bear.map((o) => lvlRow('bear', o)).join('')
+    : `<div class="kv"><span class="k">—</span><span class="v">資料不足</span></div>`;
+  const r20 = d.range20_day;
+  const lvlSub = r20 ? `<span class="n"> 均${r(r20.avg)} 大${r(r20.max)} 小${r(r20.min)}</span>` : '';
+  const lvlSec = `<div class="sec"><div class="sec-title">關卡價${lvlSub}</div>${lvlBody}</div>`;
+
+  el.innerHTML = avgSec + todaySec + vixSec + lvlSec;
+}
+
 async function selectItem(i) {
   const it = state.list.items[i];
   if (!it) return;
@@ -543,6 +589,7 @@ async function selectItem(i) {
   state.centerDate = it.time.slice(0, 10);
   setTitle();
   renderSidebar();
+  renderDayStats(state.centerDate);
   const focus = state.tf === '1d' ? state.centerDate : localToEpoch(it.time);
   window._pendingItem = it;
   await loadKline(focus);

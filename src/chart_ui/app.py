@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
 from src.chart_ui.paths import STATIC_DIR
-from src.chart_ui.routes import kline, lists
+from src.chart_ui.routes import daystats, kline, lists
 
 
 def create_app() -> FastAPI:
@@ -23,6 +23,7 @@ def create_app() -> FastAPI:
 
     app.include_router(kline.router)
     app.include_router(lists.router)
+    app.include_router(daystats.router)
 
     if STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
