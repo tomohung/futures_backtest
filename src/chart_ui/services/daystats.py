@@ -1,7 +1,8 @@
-"""右側欄每日統計：20日平均振幅(日盤/全日盤)、今日日盤高低振幅、前一日 twnvix、關卡價。
+"""右側欄每日統計：20日平均振幅(日盤/全日盤)、同星期平均振幅、今日日盤高低振幅、
+夜盤波動(NVF norm/分級)、加權成交金額(今日 vs 20日均)、前一日 twnvix、關卡價。
 
 關卡價與今日高低固定以日盤(08:45–13:45)為基準；20日視窗為選定日之前的 20 個交易日(不含當日)。
-DuckDB 唯讀。
+夜盤波動重用 key_prices 的 NVF；成交金額取 market_breadth 的 TWSE total_value。DuckDB 唯讀。
 """
 
 from __future__ import annotations
@@ -11,10 +12,12 @@ from pathlib import Path
 
 import duckdb
 
+from src.analysis.key_prices import _NVF_TIER_ICONS, _compute_night_vol_filter
 from src.chart_ui import paths
 
 SYMBOL = "TX"
 WINDOW = 20
+_WD_NAMES = ("週一", "週二", "週三", "週四", "週五", "週六", "週日")
 
 
 def _trading_days(conn) -> list[date]:
@@ -105,6 +108,69 @@ def _prev_vix(conn, sel: date) -> dict | None:
     return {"date": str(row[0]), "vix": float(row[1])}
 
 
+def _night_range(conn, sel: date, prev_day: date | None) -> float | None:
+    """sel 前一夜（前一交易日 15:00 → sel 05:00）日內振幅，from ohlcv_1m。
+
+    跨假日時 <=05:00 的延續段落（如週六凌晨）歸屬到下一交易日 sel，與
+    key_prices._compute_night_vol_filter 的 find_next_trade_date 對齊。
+    """
+    if prev_day is None:
+        return None
+    row = conn.execute(
+        "SELECT MAX(high) - MIN(low) FROM ohlcv_1m WHERE symbol = ? AND ("
+        "  (CAST(timestamp AS TIME) >= TIME '15:00:00' AND CAST(timestamp AS DATE) = ?) "
+        "  OR (CAST(timestamp AS TIME) <= TIME '05:00:00' "
+        "      AND CAST(timestamp AS DATE) > ? AND CAST(timestamp AS DATE) <= ?))",
+        [SYMBOL, prev_day, prev_day, sel],
+    ).fetchone()
+    if not row or row[0] is None:
+        return None
+    return float(row[0])
+
+
+def _turnover(conn, sel: date, prior: list[date]) -> dict | None:
+    """加權指數（集中市場 TWSE）成交金額：今日 + 前 20 交易日均，單位億元。"""
+    today = conn.execute(
+        "SELECT total_value FROM market_breadth WHERE market = 'TWSE' AND trade_date = ?", [sel]
+    ).fetchone()
+    today_v = float(today[0]) if today and today[0] is not None else None
+    avg_v, n = None, 0
+    if prior:
+        ph = ",".join(["?"] * len(prior))
+        rows = conn.execute(
+            f"SELECT total_value FROM market_breadth WHERE market = 'TWSE' "
+            f"AND trade_date IN ({ph}) AND total_value IS NOT NULL",
+            list(prior),
+        ).fetchall()
+        vals = [float(r[0]) for r in rows]
+        if vals:
+            avg_v, n = sum(vals) / len(vals), len(vals)
+    if today_v is None and avg_v is None:
+        return None
+    return {
+        "today": round(today_v / 1e8) if today_v is not None else None,
+        "avg20": round(avg_v / 1e8) if avg_v is not None else None,
+        "n": n,
+    }
+
+
+def _weekday_range(conn, sel: date) -> dict | None:
+    """同星期、過去 60 日（不含當日）的日盤平均振幅。"""
+    wd = sel.weekday()  # 0=Mon
+    rows = conn.execute(
+        "SELECT MAX(high) - MIN(low) FROM ohlcv_1m "
+        "WHERE symbol = ? AND CAST(timestamp AS TIME) BETWEEN TIME '08:45:00' AND TIME '13:45:00' "
+        "AND CAST(timestamp AS DATE) < ? AND CAST(timestamp AS DATE) >= ?::DATE - INTERVAL '60 days' "
+        "AND dayofweek(CAST(timestamp AS DATE)) = ? "
+        "GROUP BY CAST(timestamp AS DATE)",
+        [SYMBOL, sel, sel, (wd + 1) % 7],
+    ).fetchall()
+    vals = [float(r[0]) for r in rows]
+    if not vals:
+        return None
+    return {"avg": round(sum(vals) / len(vals)), "n": len(vals), "wd": _WD_NAMES[wd]}
+
+
 def _stats(vals: list[float]) -> dict | None:
     if not vals:
         return None
@@ -126,6 +192,28 @@ def compute_daystats(*, date_str: str, db_path: Path | None = None) -> dict:
         full_r = _full_ranges(conn, prior)
         today = _today_hl(conn, sel)
         prev_vix = _prev_vix(conn, sel)
+        prev_day = prior[-1] if prior else None
+        night_range = _night_range(conn, sel, prev_day)
+        turnover = _turnover(conn, sel, prior)
+        weekday_range = _weekday_range(conn, sel)
+
+    # 夜盤波動分級：重用 morning briefing 的 NVF（norm = 夜振 / EMA20 + 4 級分類）。
+    # _compute_night_vol_filter 連自己的預設 DB；chart-ui 一律走預設 DB，故一致。
+    night_vol = None
+    if night_range is not None and prev_day is not None:
+        night_vol = {"range": round(night_range)}
+        try:
+            nvf = _compute_night_vol_filter(prev_day, night_range)
+        except Exception:
+            nvf = None
+        if nvf and nvf.get("night_norm") is not None:
+            night_vol.update({
+                "norm": nvf["night_norm"],
+                "ema20": nvf["ema20"],
+                "tier": nvf["tier"],
+                "icon": _NVF_TIER_ICONS.get(nvf["tier"], ""),
+                "pass": nvf["pass"],
+            })
 
     day_stats = _stats([day_r[d] for d in prior if d in day_r])
     full_stats = _stats([full_r[d] for d in prior if d in full_r])
@@ -171,6 +259,9 @@ def compute_daystats(*, date_str: str, db_path: Path | None = None) -> dict:
         "date": date_str,
         "avg_range_20": avg_range_20,
         "today": today_out,
+        "night_vol": night_vol,
+        "turnover": turnover,
+        "weekday_range": weekday_range,
         "prev_vix": prev_vix,
         "range20_day": day_stats,
         "bull": bull,

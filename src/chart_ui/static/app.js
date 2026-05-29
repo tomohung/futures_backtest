@@ -536,7 +536,7 @@ function renderSidebar() {
   });
 }
 
-// 右側欄：每日統計（20日平均振幅 / 今日日盤高低振幅 / 前一日 TWNVIX / 關卡價）。切換日期時更新。
+// 右側欄：每日統計（20日平均振幅 / 同星期振幅 / 今日日盤高低 / 夜盤波動 / 加權成交金額 / 前一日 TWNVIX / 關卡價）。切換日期時更新。
 async function renderDayStats(date) {
   const el = document.getElementById('rail');
   if (!el) return;
@@ -563,6 +563,39 @@ async function renderDayStats(date) {
       : `<div class="kv"><span class="k">—</span><span class="v">無日盤資料</span></div>`)
     + `</div>`;
 
+  const wr = d.weekday_range;
+  const wdSec =
+    `<div class="sec"><div class="sec-title">同星期平均振幅（近2月）</div>`
+    + (wr
+      ? `<div class="kv"><span class="k">${wr.wd}</span><span class="v">${r(wr.avg)}<span class="n"> n=${wr.n}</span></span></div>`
+      : `<div class="kv"><span class="k">—</span><span class="v">資料不足</span></div>`)
+    + `</div>`;
+
+  const nv = d.night_vol;
+  const nvSec =
+    `<div class="sec"><div class="sec-title">夜盤波動（昨夜）</div>`
+    + (nv
+      ? `<div class="kv"><span class="k">振幅</span><span class="v">${r(nv.range)}</span></div>`
+        + (nv.norm != null
+          ? `<div class="kv"><span class="k">norm</span><span class="v">${nv.norm.toFixed(2)}<span class="n"> EMA20 ${r(nv.ema20)}</span></span></div>`
+            + `<div class="kv"><span class="k">分級</span><span class="v">${nv.icon || ''} ${nv.tier}</span></div>`
+          : `<div class="kv"><span class="k">norm</span><span class="v">—</span></div>`)
+      : `<div class="kv"><span class="k">—</span><span class="v">無夜盤資料</span></div>`)
+    + `</div>`;
+
+  const to = d.turnover;
+  const cmp = (a, b) =>
+    (a == null || b == null) ? ''
+    : a > b ? `<span class="up"> 偏高↑</span>`
+    : a < b ? `<span class="down"> 偏低↓</span>` : ' 持平';
+  const toSec =
+    `<div class="sec"><div class="sec-title">加權成交金額（億）</div>`
+    + (to
+      ? `<div class="kv"><span class="k">今日</span><span class="v">${r(to.today)}${cmp(to.today, to.avg20)}</span></div>`
+        + `<div class="kv"><span class="k">20日均</span><span class="v">${r(to.avg20)}<span class="n"> n=${to.n}</span></span></div>`
+      : `<div class="kv"><span class="k">—</span><span class="v">無資料</span></div>`)
+    + `</div>`;
+
   const vixSec =
     `<div class="sec"><div class="sec-title">前一日 TWNVIX</div>`
     + (pv
@@ -579,7 +612,7 @@ async function renderDayStats(date) {
   const lvlSub = r20 ? `<span class="n"> 均${r(r20.avg)} 大${r(r20.max)} 小${r(r20.min)}</span>` : '';
   const lvlSec = `<div class="sec"><div class="sec-title">關卡價${lvlSub}</div>${lvlBody}</div>`;
 
-  el.innerHTML = avgSec + todaySec + vixSec + lvlSec;
+  el.innerHTML = avgSec + wdSec + todaySec + nvSec + toSec + vixSec + lvlSec;
 }
 
 async function selectItem(i) {
