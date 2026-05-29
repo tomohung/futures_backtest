@@ -158,8 +158,14 @@ def compute_daystats(*, date_str: str, db_path: Path | None = None) -> dict:
             ("空3 0.85×均", hi - avg * 0.85),
             ("空4 最大振幅", hi - mx),
         ]
-        bull = [{"label": l, "price": round(p)} for l, p in sorted(bull_raw, key=lambda x: -x[1])]
-        bear = [{"label": l, "price": round(p)} for l, p in sorted(bear_raw, key=lambda x: -x[1])]
+        # 今高插入多方關卡（多方=今低往上推的高點預估，看今高摸到第幾階）
+        # 今低插入空方關卡（空方=今高往下推的低點預估，看今低探到第幾階）
+        bull_rows = [{"label": l, "price": round(p)} for l, p in bull_raw]
+        bull_rows.append({"label": "今高", "price": round(hi), "today": True})
+        bear_rows = [{"label": l, "price": round(p)} for l, p in bear_raw]
+        bear_rows.append({"label": "今低", "price": round(lo), "today": True})
+        bull = sorted(bull_rows, key=lambda x: -x["price"])
+        bear = sorted(bear_rows, key=lambda x: -x["price"])
 
     return {
         "date": date_str,

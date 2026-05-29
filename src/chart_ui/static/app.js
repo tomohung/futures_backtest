@@ -571,7 +571,7 @@ async function renderDayStats(date) {
     + `</div>`;
 
   const lvlRow = (cls, o) =>
-    `<div class="lvl ${cls}"><span class="lbl">${o.label}</span><span class="px">${(+o.price).toLocaleString()}</span></div>`;
+    `<div class="lvl ${cls}${o.today ? ' today' : ''}"><span class="lbl">${o.label}</span><span class="px">${(+o.price).toLocaleString()}</span></div>`;
   const lvlBody = (d.bull && d.bear)
     ? d.bull.map((o) => lvlRow('bull', o)).join('') + `<div class="gap"></div>` + d.bear.map((o) => lvlRow('bear', o)).join('')
     : `<div class="kv"><span class="k">—</span><span class="v">資料不足</span></div>`;

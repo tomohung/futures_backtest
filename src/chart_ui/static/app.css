@@ -63,6 +63,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .rail .lvl .lbl { color: var(--muted); }
 .rail .lvl.bull .px { color: var(--up); }
 .rail .lvl.bear .px { color: var(--down); }
+.rail .lvl.today { background: var(--border); border-radius: 3px; padding: 2px 4px; margin: 1px 0; }
+.rail .lvl.today .lbl, .rail .lvl.today .px { color: var(--text); font-weight: 700; }
 .rail .gap { height: 4px; border-bottom: 1px dashed var(--border); margin: 4px 0; }
 .rail .up { color: var(--up); }
 .rail .down { color: var(--down); }
