@@ -610,9 +610,26 @@ async function renderDayStats(date) {
   const lvlBody = (d.bull && d.bear)
     ? d.bull.map((o) => lvlRow('bull', o)).join('') + `<div class="gap"></div>` + d.bear.map((o) => lvlRow('bear', o)).join('')
     : `<div class="kv"><span class="k">—</span><span class="v">資料不足</span></div>`;
-  const r20 = d.range20_day;
-  const lvlSub = r20 ? `<span class="n"> 均${r(r20.avg)} 大${r(r20.max)} 小${r(r20.min)}</span>` : '';
-  const lvlSec = `<div class="sec"><div class="sec-title">關卡價${lvlSub}</div>${lvlBody}</div>`;
+  const er = d.est_range;
+  let lvlSub = '';
+  if (er) {
+    lvlSub = ` 90%地板${r(er.floor90)}·EMA20 ${r(er.ema20)}`;
+    if (er.bump != null) lvlSub += `·量能${er.bump >= 0 ? '+' : ''}${r(er.bump)}(事後,量比${er.q})`;
+    lvlSub = `<span class="n">${lvlSub}</span>`;
+  }
+  // 碰 L1 時間 → 依續航機率決定瞄到第幾階；多空各一行
+  const t1 = d.level1;
+  const touchLine = (o, side) => {
+    if (!o) return `<div class="kv"><span class="k">${side}1</span><span class="v n">未觸及</span></div>`;
+    const cls = o.action === '瞄' ? 'up' : 'down';
+    const body = o.action === '瞄'
+      ? `瞄${side}${o.target} ${o.cont}%`
+      : `拿${side}1`;
+    return `<div class="kv"><span class="k">${side}1 ${o.time}觸</span>`
+      + `<span class="v"><span class="${cls}">${body}</span></span></div>`;
+  };
+  const touchHtml = t1 ? `<div class="gap"></div>` + touchLine(t1.bull, '多') + touchLine(t1.bear, '空') : '';
+  const lvlSec = `<div class="sec"><div class="sec-title">關卡價(達到率)${lvlSub}</div>${lvlBody}${touchHtml}</div>`;
 
   el.innerHTML = avgSec + wdSec + todaySec + nvSec + toSec + vixSec + lvlSec;
 }
