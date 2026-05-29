@@ -584,14 +584,16 @@ async function renderDayStats(date) {
     + `</div>`;
 
   const to = d.turnover;
-  const cmp = (a, b) =>
-    (a == null || b == null) ? ''
-    : a > b ? `<span class="up"> 偏高↑</span>`
-    : a < b ? `<span class="down"> 偏低↓</span>` : ' 持平';
+  const pct = (a, b) => {
+    if (a == null || b == null || !b) return '';
+    const p = a / b * 100;
+    const cls = p >= 100 ? 'up' : 'down';
+    return ` <span class="${cls}">${Math.round(p)}%${p >= 100 ? '↑' : '↓'}</span>`;
+  };
   const toSec =
     `<div class="sec"><div class="sec-title">加權成交金額（億）</div>`
     + (to
-      ? `<div class="kv"><span class="k">今日</span><span class="v">${r(to.today)}${cmp(to.today, to.avg20)}</span></div>`
+      ? `<div class="kv"><span class="k">今日</span><span class="v">${r(to.today)}${pct(to.today, to.avg20)}</span></div>`
         + `<div class="kv"><span class="k">20日均</span><span class="v">${r(to.avg20)}<span class="n"> n=${to.n}</span></span></div>`
       : `<div class="kv"><span class="k">—</span><span class="v">無資料</span></div>`)
     + `</div>`;
