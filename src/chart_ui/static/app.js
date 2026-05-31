@@ -637,7 +637,28 @@ async function renderDayStats(date) {
   const touchHtml = t1 ? `<div class="gap"></div>` + touchLine(t1.bull, '多') + touchLine(t1.bear, '空') : '';
   const lvlSec = `<div class="sec"><div class="sec-title">關卡價(達到率)${lvlSub}</div>${lvlBody}${touchHtml}</div>`;
 
-  el.innerHTML = avgSec + wdSec + todaySec + nvSec + toSec + vixSec + lvlSec;
+  // DCI 方向共識指標（收盤/事後）+ 建議出場法
+  const dci = d.dci;
+  const RB = { strong: ['🟥', '強'], mid: ['⬜', '中'], weak: ['🟦', '弱'] };
+  let dciSec = '';
+  if (dci) {
+    const [li, ll] = RB[dci.regime_long] || ['', ''];
+    const [si, sl] = RB[dci.regime_short] || ['', ''];
+    dciSec =
+      `<div class="sec"><div class="sec-title">DCI 方向共識<span class="n"> 事後·收盤</span></div>`
+      + `<div class="kv"><span class="k">多 ${li}${ll}</span><span class="v">${dci.dci_long.toFixed(2)}</span></div>`
+      + `<div class="kv"><span class="k">空 ${si}${sl}</span><span class="v">${dci.dci_short.toFixed(2)}</span></div>`
+      + `<div class="kv"><span class="k n">W權值* / H熱門 / B家數</span>`
+      + `<span class="v n">${dci.W.toFixed(2)} / ${dci.H.toFixed(2)} / ${dci.B.toFixed(2)}</span></div>`;
+    if (d.exit_advice) {
+      dciSec += `<div class="gap"></div>`
+        + `<div class="advice">${d.exit_advice.bull}</div>`
+        + `<div class="advice">${d.exit_advice.bear}</div>`;
+    }
+    dciSec += `</div>`;
+  }
+
+  el.innerHTML = avgSec + wdSec + todaySec + nvSec + toSec + vixSec + lvlSec + dciSec;
 }
 
 async function selectItem(i) {
