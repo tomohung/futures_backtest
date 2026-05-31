@@ -1,0 +1,415 @@
+// ============================================================
+// Key Prices TX — 關卡價(達到率)表格
+//
+// 複製 chart-ui 右側欄「關卡價」面板，畫成 TradingView 表格。
+// 關卡價隨當日盤中新高/新低即時更新。
+//
+// 演算法（對齊 src/chart_ui/services/daystats.py）：
+//   ema20      = 前 20 個交易日「日盤振幅(high-low)」的因果式 EMA(adjust=False)
+//   四階距離   = c × ema20，c = 0.385 / 0.497 / 0.711 / 0.977
+//                達到率(碰到機率) = 90% / 75% / 50% / 25%
+//   多方關卡   = 今低 + 距（由今低往上投射預估高）→ 紅色
+//   空方關卡   = 今高 - 距（由今高往下投射預估低）→ 綠色
+//   今高/今低  = 盤中即時高低，高亮白字
+//   每組(多/空)各 5 列，依價格由高到低排序。
+//
+//   續航提示（碰 L1 後依「首觸時間」查表決定瞄第幾階）：
+//     碰 L1 → 續 L2 / 續 L3 機率；碰 L2 後再更新一次續 L3。
+//     time 為當日分鐘數（08:45 = 525）；step function。
+//
+// 僅用日盤 08:45–13:45。延遲 1 天暖機，EMA 用前一日收盤後才更新（無 lookahead）。
+// ============================================================
+//@version=6
+indicator(
+    title   = "Key Prices TX (關卡價表)",
+    overlay = true,
+    max_lines_count = 20,
+    max_labels_count = 20
+)
+
+// ============================================================
+// Inputs
+// ============================================================
+var string GRP_CALC = "計算參數"
+var string GRP_VIZ  = "顯示"
+
+ema_period   = input.int(20, "EMA Period", minval=5, maxval=100, group=GRP_CALC)
+min_warmup   = input.int(3, "最少暖機天數", minval=1, maxval=50,
+                         tooltip="累積幾個日盤後開始顯示（與 EstRange 一致）。EMA 仍以 EMA Period 平滑，天數越多越成熟", group=GRP_CALC)
+
+show_table   = input.bool(true,  "顯示關卡價表格", group=GRP_VIZ)
+show_bull    = input.bool(true,  "多方關卡線（紅）", group=GRP_VIZ)
+show_bear    = input.bool(true,  "空方關卡線（綠）", group=GRP_VIZ)
+show_lbl     = input.bool(true,  "線旁標示 L1~L4", group=GRP_VIZ)
+show_hint    = input.bool(true,  "顯示續航提示", group=GRP_VIZ)
+tbl_pos_in   = input.string("top_right", "表格位置",
+                 options=["top_right", "middle_right", "bottom_right", "top_left", "bottom_left"],
+                 group=GRP_VIZ)
+txt_size_in  = input.string("normal", "字體大小", options=["tiny","small","normal","large"], group=GRP_VIZ)
+
+// 四階係數（c × ema20）
+c1 = input.float(0.385, "L1 係數 (90%)", step=0.001, group=GRP_CALC)
+c2 = input.float(0.497, "L2 係數 (75%)", step=0.001, group=GRP_CALC)
+c3 = input.float(0.711, "L3 係數 (50%)", step=0.001, group=GRP_CALC)
+c4 = input.float(0.977, "L4 係數 (25%)", step=0.001, group=GRP_CALC)
+
+// 配色（台灣慣例：多/漲=紅，空/跌=綠）
+col_bull   = color.new(#ef4444, 0)   // 多方 紅
+col_bear   = color.new(#22c55e, 0)   // 空方 綠
+col_muted  = color.new(#888888, 0)   // 標籤灰
+col_text   = color.new(#e0e0e0, 0)   // 今高/今低 白
+col_today  = color.new(#2a2a2a, 0)   // 今高/今低 高亮底
+col_panel  = color.new(#161616, 10)  // 表格底
+col_border = color.new(#2a2a2a, 0)
+
+// ============================================================
+// Time Windows (Asia/Taipei = UTC+8)
+// ============================================================
+_h = hour(time, "Asia/Taipei")
+_m = minute(time, "Asia/Taipei")
+_t = _h * 60 + _m
+
+in_session = _t >= 525 and _t < 825   // 08:45 ~ 13:44
+
+var int prev_session_day = -1
+_cur_day = dayofmonth(time, "Asia/Taipei")
+entering_session = in_session and _cur_day != prev_session_day
+if in_session
+    prev_session_day := _cur_day
+
+// ============================================================
+// EMA20 of prior-day session range (causal, adjust=False)
+// ============================================================
+var float sess_high  = na
+var float sess_low   = na
+var float ema_range  = na
+var int   day_count  = 0
+float ema_alpha = 2.0 / (ema_period + 1)
+
+if entering_session
+    // 用「前一日」已收完的日盤振幅更新 EMA，再清空當日高低 → 無 lookahead
+    if not na(sess_high) and not na(sess_low) and sess_high > sess_low
+        prev_hl    = sess_high - sess_low
+        ema_range := na(ema_range) ? prev_hl : ema_range + ema_alpha * (prev_hl - ema_range)
+        day_count += 1
+    sess_high := na
+    sess_low  := na
+
+if in_session
+    sess_high := na(sess_high) ? high : math.max(sess_high, high)
+    sess_low  := na(sess_low)  ? low  : math.min(sess_low,  low)
+
+// 不要求 in_session：日盤收盤後 / 夜盤時段仍延用「當日日盤」的高低與關卡。
+// （TX 在 TV 多含夜盤，最後一根 K 常落在日盤外；若要求 in_session 會誤判「資料不足」）
+ready = day_count >= min_warmup and not na(ema_range) and not na(sess_high) and not na(sess_low)
+
+// 四階距離（當日 ema_range 固定）
+d1 = ema_range * c1
+d2 = ema_range * c2
+d3 = ema_range * c3
+d4 = ema_range * c4
+
+// 多方關卡（今低 + 距）
+m1 = sess_low + d1
+m2 = sess_low + d2
+m3 = sess_low + d3
+m4 = sess_low + d4
+// 空方關卡（今高 - 距）
+s1 = sess_high - d1
+s2 = sess_high - d2
+s3 = sess_high - d3
+s4 = sess_high - d4
+
+// ============================================================
+// 觸及追蹤（多方上擺 up_max / 空方下擺 dn_max，首觸時間記分鐘）
+// ============================================================
+var float run_lo  = na
+var float run_hi  = na
+var float up_max  = na
+var float dn_max  = na
+var int   bL1_min = na   // 多方碰 L1 的分鐘
+var int   bL2_min = na
+var int   sL1_min = na   // 空方碰 L1 的分鐘
+var int   sL2_min = na
+
+if entering_session
+    run_lo  := na
+    run_hi  := na
+    up_max  := na
+    dn_max  := na
+    bL1_min := na
+    bL2_min := na
+    sL1_min := na
+    sL2_min := na
+
+if in_session
+    run_lo := na(run_lo) ? low  : math.min(run_lo, low)
+    run_hi := na(run_hi) ? high : math.max(run_hi, high)
+    up_max := na(up_max) ? 0.0  : math.max(up_max, high - run_lo)
+    dn_max := na(dn_max) ? 0.0  : math.max(dn_max, run_hi - low)
+    if ready
+        if na(bL1_min) and up_max >= d1
+            bL1_min := _t
+        if na(bL2_min) and up_max >= d2
+            bL2_min := _t
+        if na(sL1_min) and dn_max >= d1
+            sL1_min := _t
+        if na(sL2_min) and dn_max >= d2
+            sL2_min := _t
+
+// ============================================================
+// 續航機率查表（step function；time = 分鐘數，08:45 = 525）
+// ============================================================
+f_contL2(mm) =>
+    p = 94
+    if mm >= 645
+        p := 61
+    else if mm >= 630
+        p := 78
+    else if mm >= 615
+        p := 66
+    else if mm >= 600
+        p := 80
+    else if mm >= 585
+        p := 80
+    else if mm >= 570
+        p := 84
+    else if mm >= 555
+        p := 87
+    else if mm >= 540
+        p := 92
+    p
+
+f_contL3(mm) =>
+    p = 76
+    if mm >= 645
+        p := 27
+    else if mm >= 630
+        p := 37
+    else if mm >= 615
+        p := 32
+    else if mm >= 600
+        p := 50
+    else if mm >= 585
+        p := 46
+    else if mm >= 570
+        p := 55
+    else if mm >= 555
+        p := 56
+    else if mm >= 540
+        p := 67
+    p
+
+f_contL3fromL2(mm) =>
+    p = 86
+    if mm >= 645
+        p := 46
+    else if mm >= 630
+        p := 55
+    else if mm >= 615
+        p := 64
+    else if mm >= 600
+        p := 65
+    else if mm >= 585
+        p := 63
+    else if mm >= 570
+        p := 69
+    else if mm >= 555
+        p := 74
+    else if mm >= 540
+        p := 79
+    p
+
+// 多/空方續航提示字串
+f_hint(side_zh, l1m, l2m) =>
+    out = side_zh + "：未碰L1"
+    if not na(l1m)
+        cc2 = f_contL2(l1m)
+        cc3 = f_contL3(l1m)
+        // 碰 L1 → 決定瞄第幾階（L3 須早於 09:30=570）
+        if cc3 >= 50 and l1m < 570
+            out := side_zh + "：碰L1→瞄3階 " + str.tostring(cc3) + "%"
+        else if cc2 >= 50
+            out := side_zh + "：碰L1→瞄2階 " + str.tostring(cc2) + "%"
+        else
+            out := side_zh + "：碰L1→拿1階"
+        // 碰 L2 後重新評估續 L3
+        if not na(l2m)
+            cc3b = f_contL3fromL2(l2m)
+            if cc3b >= 50
+                out := out + "｜碰L2→瞄3階 " + str.tostring(cc3b) + "%"
+            else
+                out := out + "｜碰L2→守2階 " + str.tostring(cc3b) + "%"
+    out
+
+// ============================================================
+// 主圖水平線（盤中即時更新）
+// ============================================================
+f_line(ln, px, col, sty) =>
+    line.set_xy1(ln, bar_index - 1, px)
+    line.set_xy2(ln, bar_index + 8, px)
+    line.set_style(ln, sty)
+    if not na(px)
+        line.set_color(ln, col)
+
+f_hide(ln) =>
+    line.set_xy1(ln, bar_index - 1, na)
+    line.set_xy2(ln, bar_index + 8, na)
+
+// 線右端標籤（L1~L4）
+f_lbl(lb, px, txt, col) =>
+    label.set_xy(lb, bar_index + 9, px)
+    label.set_text(lb, show_lbl ? txt : "")
+    label.set_textcolor(lb, col)
+
+f_hide_lbl(lb) =>
+    label.set_xy(lb, bar_index + 9, na)
+
+var line lnM1 = line.new(na, na, na, na)
+var line lnM2 = line.new(na, na, na, na)
+var line lnM3 = line.new(na, na, na, na)
+var line lnM4 = line.new(na, na, na, na)
+var line lnS1 = line.new(na, na, na, na)
+var line lnS2 = line.new(na, na, na, na)
+var line lnS3 = line.new(na, na, na, na)
+var line lnS4 = line.new(na, na, na, na)
+
+var label lbM1 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbM2 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbM3 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbM4 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbS1 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbS2 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbS3 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbS4 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+
+// ---- 多方關卡線 ----
+if show_bull and ready
+    f_line(lnM1, m1, color.new(col_bull, 0),  line.style_solid)
+    f_line(lnM2, m2, color.new(col_bull, 20), line.style_dashed)
+    f_line(lnM3, m3, color.new(col_bull, 35), line.style_dashed)
+    f_line(lnM4, m4, color.new(col_bull, 50), line.style_dotted)
+    f_lbl(lbM1, m1, "L1", col_bull)
+    f_lbl(lbM2, m2, "L2", col_bull)
+    f_lbl(lbM3, m3, "L3", col_bull)
+    f_lbl(lbM4, m4, "L4", col_bull)
+else
+    f_hide(lnM1)
+    f_hide(lnM2)
+    f_hide(lnM3)
+    f_hide(lnM4)
+    f_hide_lbl(lbM1)
+    f_hide_lbl(lbM2)
+    f_hide_lbl(lbM3)
+    f_hide_lbl(lbM4)
+
+// ---- 空方關卡線 ----
+if show_bear and ready
+    f_line(lnS1, s1, color.new(col_bear, 0),  line.style_solid)
+    f_line(lnS2, s2, color.new(col_bear, 20), line.style_dashed)
+    f_line(lnS3, s3, color.new(col_bear, 35), line.style_dashed)
+    f_line(lnS4, s4, color.new(col_bear, 50), line.style_dotted)
+    f_lbl(lbS1, s1, "L1", col_bear)
+    f_lbl(lbS2, s2, "L2", col_bear)
+    f_lbl(lbS3, s3, "L3", col_bear)
+    f_lbl(lbS4, s4, "L4", col_bear)
+else
+    f_hide(lnS1)
+    f_hide(lnS2)
+    f_hide(lnS3)
+    f_hide(lnS4)
+    f_hide_lbl(lbS1)
+    f_hide_lbl(lbS2)
+    f_hide_lbl(lbS3)
+    f_hide_lbl(lbS4)
+
+// ============================================================
+// 表格
+// ============================================================
+f_pos(p) =>
+    r = position.top_right
+    if p == "middle_right"
+        r := position.middle_right
+    else if p == "bottom_right"
+        r := position.bottom_right
+    else if p == "top_left"
+        r := position.top_left
+    else if p == "bottom_left"
+        r := position.bottom_left
+    r
+
+f_size(s) =>
+    r = size.normal
+    if s == "tiny"
+        r := size.tiny
+    else if s == "small"
+        r := size.small
+    else if s == "large"
+        r := size.large
+    r
+
+var table tbl = table.new(position.top_right, 2, 15,
+     border_width = 1, border_color = col_border, frame_width = 1, frame_color = col_border)
+
+// 一列關卡（label, price, 文字色, 是否高亮）
+f_row(t, ridx, lbl, px, txtcol, hl) =>
+    bg = hl ? col_today : col_panel
+    lc = hl ? col_text : col_muted
+    pc = hl ? col_text : txtcol
+    table.cell(t, 0, ridx, lbl, text_color = lc, text_halign = text.align_left,
+         bgcolor = bg, text_size = f_size(txt_size_in))
+    table.cell(t, 1, ridx, str.format("{0,number,#,###}", px), text_color = pc,
+         text_halign = text.align_right, bgcolor = bg, text_size = f_size(txt_size_in))
+
+if barstate.islast and show_table
+    table.clear(tbl, 0, 0, 1, 14)
+    if ready
+        table.set_position(tbl, f_pos(tbl_pos_in))
+        floor90 = math.round(d1)
+        // r0 標題 + 副標
+        table.cell(tbl, 0, 0, "關卡價·達到率", text_color = col_text, text_halign = text.align_left,
+             bgcolor = col_today, text_size = f_size(txt_size_in))
+        table.cell(tbl, 1, 0, str.format("EMA20 {0,number,#}", ema_range), text_color = col_muted,
+             text_halign = text.align_right, bgcolor = col_today, text_size = f_size(txt_size_in))
+        table.cell(tbl, 0, 1, "90%地板", text_color = col_muted, text_halign = text.align_left,
+             bgcolor = col_panel, text_size = f_size(txt_size_in))
+        table.cell(tbl, 1, 1, str.format("{0,number,#}", floor90), text_color = col_muted,
+             text_halign = text.align_right, bgcolor = col_panel, text_size = f_size(txt_size_in))
+
+        // ---- 多方組（多1-4 + 今高），依價格降序 ----
+        bull_px  = array.from(m1, m2, m3, m4, sess_high)
+        bull_lbl = array.from("多1·90%", "多2·75%", "多3·50%", "多4·25%", "今高")
+        bull_hi  = array.from(false, false, false, false, true)
+        bidx = array.sort_indices(bull_px, order.descending)
+        for i = 0 to 4
+            k = array.get(bidx, i)
+            f_row(tbl, 2 + i, array.get(bull_lbl, k), array.get(bull_px, k), col_bull, array.get(bull_hi, k))
+
+        // ---- 分隔列 ----
+        table.cell(tbl, 0, 7, "──────", text_color = col_border, text_halign = text.align_left,
+             bgcolor = col_panel, text_size = f_size(txt_size_in))
+        table.cell(tbl, 1, 7, "", bgcolor = col_panel)
+
+        // ---- 空方組（空1-4 + 今低），依價格降序 ----
+        bear_px  = array.from(s1, s2, s3, s4, sess_low)
+        bear_lbl = array.from("空1·90%", "空2·75%", "空3·50%", "空4·25%", "今低")
+        bear_hi  = array.from(false, false, false, false, true)
+        sidx = array.sort_indices(bear_px, order.descending)
+        for i = 0 to 4
+            k = array.get(sidx, i)
+            f_row(tbl, 8 + i, array.get(bear_lbl, k), array.get(bear_px, k), col_bear, array.get(bear_hi, k))
+
+        // ---- 續航提示 ----
+        if show_hint
+            table.cell(tbl, 0, 13, f_hint("多", bL1_min, bL2_min), text_color = col_bull,
+                 text_halign = text.align_left, bgcolor = col_panel, text_size = f_size(txt_size_in))
+            table.cell(tbl, 1, 13, "", bgcolor = col_panel)
+            table.cell(tbl, 0, 14, f_hint("空", sL1_min, sL2_min), text_color = col_bear,
+                 text_halign = text.align_left, bgcolor = col_panel, text_size = f_size(txt_size_in))
+            table.cell(tbl, 1, 14, "", bgcolor = col_panel)
+    else
+        table.set_position(tbl, f_pos(tbl_pos_in))
+        table.cell(tbl, 0, 0, "關卡價", text_color = col_text, bgcolor = col_today,
+             text_size = f_size(txt_size_in))
+        table.cell(tbl, 1, 0, "資料不足", text_color = col_muted, bgcolor = col_today,
+             text_size = f_size(txt_size_in))
