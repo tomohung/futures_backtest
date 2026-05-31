@@ -14,7 +14,7 @@
 | **GA-01** | 極端跳空逆勢：`\|今開−昨收\| > 10日均range` 且開盤突破前4日H/L → 反向，停損 ±50% range | Anatomy of Gaps | H033-gap-day-study（**rejected**，需先看為何被否） | — | ✅ | A | backlog |
 | **GA-02** | 一般跳空回補：跳空在前日H/L**之內**且 <閾值 → fade 回前日收，估回補機率 | Trends and Gaps | H033（rejected） | — | ✅ | B | backlog |
 | **GA-03** | 一日/四日**廣度動能%**（上漲值÷總值）預測台指隔日方向 | One/Four Day Percent | H079✅、H087（rejected） | **PREP-1** 聚合 advancing/declining value | ⚠️需聚合 | A | backlog |
-| **GA-04** | 第一腳→第二腳**等幅(±)等時**投射 + 均衡點進場（第二腳常呈 ×2/÷2 時間關係） | Always Measure Price / Trading the Open / 4 Tips | H017-intraday-swing✅、H093/H094、H034-fib（active） | **PREP-2** 波段分段演算法 | ⚠️需腿偵測 | B | backlog |
+| **GA-04** | 第一腳→第二腳**等幅(±)等時**投射 + 均衡點進場（第二腳常呈 ×2/÷2 時間關係） | Always Measure Price / Trading the Open / 4 Tips | H017-intraday-swing✅、H096/H097、H034-fib（active） | **PREP-2** 波段分段演算法 | ⚠️需腿偵測 | B | backlog |
 | **GA-05** | 第二腳**失敗 → 反轉**：時間&價格雙失敗、退回盤整區/跌破0.618 即反手 | When a Trend Fails | H036-trend-exhaustion✅、H040（active） | PREP-2 | ⚠️ | B | backlog |
 | **GA-06** | **三次法則**：第三次測試 S/R，突破則續、失敗則反轉 | Rule of Three | H028-breakout-timing（rejected） | PREP-2 / PREP-3 | ⚠️ | C | backlog |
 | **GA-07** | **買賣包絡線**預估隔日 S/R 區間（rally/decline/pivot 三日平均）vs EstRange | Buy/Sell Envelopes | EstRange、key_prices | — | ✅ | C | backlog |

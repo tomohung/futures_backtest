@@ -1,4 +1,4 @@
-"""H093 — 碰 L2 的時間是否影響後續觸及 L3 的機率？
+"""H096 — 碰 L2 的時間是否影響後續觸及 L3 的機率？
 
 背景：chart-ui 右側欄『當日觸及』提示目前只用「碰 L1 的時間」查 _CONT_L3 表決定瞄第幾階
 （src/chart_ui/services/daystats.py）。L3 必經 L2，「已碰 L2」是比「已碰 L1」更接近 L3 的
@@ -186,8 +186,8 @@ def main():
     # 存 CSV 供覆查
     out = R.copy()
     out["d"] = out["d"].dt.date
-    out.to_csv("research/active/H093-l2-touch-time-l3-reach/touches.csv", index=False)
-    print("\n明細存 research/active/H093-l2-touch-time-l3-reach/touches.csv")
+    out.to_csv("research/active/H096-l2-touch-time-l3-reach/touches.csv", index=False)
+    print("\n明細存 research/active/H096-l2-touch-time-l3-reach/touches.csv")
 
 
 if __name__ == "__main__":

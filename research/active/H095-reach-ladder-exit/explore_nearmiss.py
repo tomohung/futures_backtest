@@ -5,7 +5,7 @@
   (1) P(到 L2 | 碰 L1)，以及沒到的那批「填了 L1→L2 間距的幾成」分佈（near-miss vs 真停滯）。
   (2) 不同 buffer（差 L2 幾點內就算到）下，碰 L1 後「實質達標率」會拉高多少。
 
-關卡 EMA-only：L1=0.385×EMA20, L2=0.497×EMA20（H094）。directional swing, pooled 多空對稱。
+關卡 EMA-only：L1=0.385×EMA20, L2=0.497×EMA20（H097）。directional swing, pooled 多空對稱。
 注意：此處用全日最大擺動(MFE)，衡量「最遠摸到哪」，非逐 bar 出場模擬。
 """
 

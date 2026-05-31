@@ -1,4 +1,4 @@
-"""H094 — 關卡階梯能否只用 EMA20（單參數）取代現行『夜盤+EMA20』雙參數？
+"""H097 — 關卡階梯能否只用 EMA20（單參數）取代現行『夜盤+EMA20』雙參數？
 
 現行 daystats.LVL_QUANTILES：每階距離 rng = a×夜盤振幅 + b×EMA20，無常數分位迴歸
 (τ=0.10/0.25/0.50/0.75 ↔ 達到率 90/75/50/25%)。本腳本比較：
@@ -7,7 +7,7 @@
 比較指標：pinball loss（越低越好）、達到率覆蓋（實際 ≥ 預測的比例，應 ≈ 目標達到率）。
 另做 train(2021-2024)/test(2025-2026) 切分檢驗 OOS 覆蓋。
 
-方法論對齊 daystats / H093：TX 日盤擺動，pooled 多空對稱。
+方法論對齊 daystats / H096：TX 日盤擺動，pooled 多空對稱。
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 
-# 專案根 = 本檔往上 3 層 (research/active/H094-.../explore.py)
+# 專案根 = 本檔往上 3 層 (research/active/H097-.../explore.py)
 DB = str(Path(__file__).resolve().parents[3] / "data" / "futures.duckdb")
 SYMBOL = "TX"
 # (序號, 達到率, τ)；τ = 1 − 達到率

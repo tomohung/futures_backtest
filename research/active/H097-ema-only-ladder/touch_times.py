@@ -1,12 +1,12 @@
-"""H094 後續 — 在 EMA-only 關卡定義下，重算 L1/L2/L3 觸及時間對續航的影響。
+"""H097 後續 — 在 EMA-only 關卡定義下，重算 L1/L2/L3 觸及時間對續航的影響。
 
 關卡距離一改成 c×EMA20，觸及時間就變，故 daystats 的三張續航表必須重算：
   _CONT_L2        : P(觸 L2 | L1 於時間 t 觸)
   _CONT_L3        : P(觸 L3 | L1 於時間 t 觸)   → 同時檢查 09:30 L3 時間閘是否仍成立
   _CONT_L3_FROM_L2: P(觸 L3 | L2 於時間 t 觸)
-方法論同 H093（directional swing, pooled 多空對稱, 2021-2026）。
+方法論同 H096（directional swing, pooled 多空對稱, 2021-2026）。
 
-EMA-only 係數（H094 全樣本擬合）：L1=0.385 L2=0.497 L3=0.711（×EMA20）。
+EMA-only 係數（H097 全樣本擬合）：L1=0.385 L2=0.497 L3=0.711（×EMA20）。
 """
 
 from __future__ import annotations
