@@ -22,13 +22,19 @@ const MA_DEFS = [
   { p: 233, color: '#f44336' },
 ];
 
+// 獨立指標（與 6 均線群組分開、各自開關、預設關）
+const IND_5MA = { color: '#ffeb3b' };    // 1分K 5MA（黃）
+const IND_KAMA = { color: '#ff4081' };   // Kaufman 自適應均線（粉）
+
 const state = {
   tf: localStorage.getItem('cu.tf') || '1m',
   session: localStorage.getItem('cu.session') || 'day',
   adjust: localStorage.getItem('cu.adjust') || 'raw',
   barCount: localStorage.getItem('cu.barCount') || '360',   // 可見 K 棒數
-  // 6 條均線各自開關（預設全開）；存成 '111111' 字串
-  maOn: (localStorage.getItem('cu.maOn') || '111111').padEnd(6, '1').slice(0, 6).split('').map((c) => c === '1'),
+  // 6 條均線各自開關（預設全關）；存成 '000000' 字串（key 改版以強制重置成關）
+  maOn: (localStorage.getItem('cu.maOn2') || '000000').padEnd(6, '0').slice(0, 6).split('').map((c) => c === '1'),
+  ind5ma: localStorage.getItem('cu.ind5ma') === '1',     // 獨立 1分K 5MA（預設關）
+  indKama: localStorage.getItem('cu.indKama') === '1',   // 獨立 KAMA（預設關）
   centerDate: null,           // 'YYYY-MM-DD'
   list: null,                 // 目前清單 payload
   listId: null,
@@ -153,9 +159,11 @@ function pad2(n) { return String(n).padStart(2, '0'); }
 
 function applyMaVisibility() {
   if (chartState.maSeries) chartState.maSeries.forEach((s, k) => s.applyOptions({ visible: state.maOn[k] }));
+  if (chartState.ind5maSeries) chartState.ind5maSeries.applyOptions({ visible: state.ind5ma });
+  if (chartState.indKamaSeries) chartState.indKamaSeries.applyOptions({ visible: state.indKama });
 }
 function saveMaOn() {
-  localStorage.setItem('cu.maOn', state.maOn.map((b) => (b ? '1' : '0')).join(''));
+  localStorage.setItem('cu.maOn2', state.maOn.map((b) => (b ? '1' : '0')).join(''));
 }
 
 // 滑動視窗 SMA；不足 period 的前段為 null。
@@ -166,6 +174,25 @@ function sma(values, period) {
     run += values[i];
     if (i >= period) run -= values[i - period];
     out[i] = i >= period - 1 ? run / period : null;
+  }
+  return out;
+}
+
+// KAMA（Kaufman 自適應均線）；標準參數 ER=10/fast=2/slow=30。不足 erP 前段為 null。
+function kama(values, erP = 10, fast = 2, slow = 30) {
+  const out = new Array(values.length).fill(null);
+  if (values.length <= erP) return out;
+  const fsc = 2 / (fast + 1), ssc = 2 / (slow + 1);
+  let prev = values[erP];
+  out[erP] = prev;
+  for (let i = erP + 1; i < values.length; i++) {
+    const change = Math.abs(values[i] - values[i - erP]);
+    let vol = 0;
+    for (let j = i - erP + 1; j <= i; j++) vol += Math.abs(values[j] - values[j - 1]);
+    const er = vol ? change / vol : 0;
+    const sc = (er * (fsc - ssc) + ssc) ** 2;
+    prev = prev + sc * (values[i] - prev);
+    out[i] = prev;
   }
   return out;
 }
@@ -226,6 +253,13 @@ function initChart() {
     priceLineVisible: false, lastValueVisible: false,
     priceFormat: { type: 'price', precision: 0, minMove: 1 },
   }));
+  const _indOpts = (color) => ({
+    color, lineWidth: 2, priceScaleId: 'right',
+    priceLineVisible: false, lastValueVisible: false,
+    priceFormat: { type: 'price', precision: 0, minMove: 1 },
+  });
+  chartState.ind5maSeries = chart.addSeries(LightweightCharts.LineSeries, _indOpts(IND_5MA.color));
+  chartState.indKamaSeries = chart.addSeries(LightweightCharts.LineSeries, _indOpts(IND_KAMA.color));
   applyMaVisibility();
   chartState.volume = chart.addSeries(
     LightweightCharts.HistogramSeries,
@@ -315,12 +349,22 @@ function updateLegend(param) {
         ? `<span class="ind-toggle" data-ma="${k}" style="color:${d.color}">${label}</span>`
         : `<span class="ind-toggle ma-off" data-ma="${k}">${label}</span>`;
     }).join('　');
+    const indTog = (on, key, name, color, arr) => {
+      const v = on && arr && arr[idx] != null ? ` ${r(arr[idx])}` : '';
+      return on
+        ? `<span class="ind-toggle" data-toggle="${key}" style="color:${color}">${name}${v}</span>`
+        : `<span class="ind-toggle ma-off" data-toggle="${key}">${name}</span>`;
+    };
+    const ind5 = indTog(state.ind5ma, '5ma', '5MA', IND_5MA.color, chartState.ind5maArr);
+    const indK = indTog(state.indKama, 'kama', 'KAMA', IND_KAMA.color, chartState.indKamaArr);
     const maLine = `${master}　${perMa}`;
+    const indLine = `${ind5}<br>${indK}`;   // 5MA / KAMA 各自獨立一行
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
       `低 <span class="${oc}">${r(b.low)}</span>　收 <span class="${oc}">${r(b.close)}</span>${chgStr}` +
-      (maLine ? `<br>${maLine}` : '');
+      (maLine ? `<br>${maLine}` : '') +
+      `<br>${indLine}`;
   }
   if (vol) {
     positionPaneLegend(vol, 1);
@@ -423,6 +467,12 @@ async function loadKline(centerEpochToFocus) {
       bars.flatMap((b, i) => (arr[i] != null ? [{ time: b.time, value: arr[i] }] : [])),
     );
   });
+  // 獨立 5MA / KAMA
+  const _toData = (arr) => bars.flatMap((b, i) => (arr[i] != null ? [{ time: b.time, value: arr[i] }] : []));
+  chartState.ind5maArr = sma(closes, 5);
+  chartState.indKamaArr = kama(closes);
+  chartState.ind5maSeries.setData(_toData(chartState.ind5maArr));
+  chartState.indKamaSeries.setData(_toData(chartState.indKamaArr));
   // 量能 MA(20) 與 1.5× 門檻（滑動視窗，前 19 根不足 → null）
   const volMa = [];
   let run = 0;
@@ -539,10 +589,22 @@ function wireIndicatorToggles() {
         return;
       }
       const t = e.target.closest('[data-toggle]');
-      if (t && t.dataset.toggle === 'ma') {         // 「均線」總開關：全關→全開，否則全關
+      if (!t) return;
+      const which = t.dataset.toggle;
+      if (which === 'ma') {                          // 「均線」總開關：全關→全開，否則全關
         const anyOn = state.maOn.some(Boolean);
         state.maOn = state.maOn.map(() => !anyOn);
         saveMaOn();
+        applyMaVisibility();
+        updateLegend(null);
+      } else if (which === '5ma') {
+        state.ind5ma = !state.ind5ma;
+        localStorage.setItem('cu.ind5ma', state.ind5ma ? '1' : '0');
+        applyMaVisibility();
+        updateLegend(null);
+      } else if (which === 'kama') {
+        state.indKama = !state.indKama;
+        localStorage.setItem('cu.indKama', state.indKama ? '1' : '0');
         applyMaVisibility();
         updateLegend(null);
       }
