@@ -617,16 +617,22 @@ async function renderDayStats(date) {
     if (er.bump != null) lvlSub += `·量能${er.bump >= 0 ? '+' : ''}${r(er.bump)}(事後,量比${er.q})`;
     lvlSub = `<span class="n">${lvlSub}</span>`;
   }
-  // 碰 L1 時間 → 依續航機率決定瞄到第幾階；多空各一行
+  // 兩段式：碰 L1 → 依續航決定瞄到第幾階；碰 L2 → 再更新一次續 L3 機率(H093，更強)。
   const t1 = d.level1;
   const touchLine = (o, side) => {
-    if (!o) return `<div class="kv"><span class="k">${side}1</span><span class="v n">未觸及</span></div>`;
-    const cls = o.action === '瞄' ? 'up' : 'down';
-    const body = o.action === '瞄'
-      ? `瞄${side}${o.target} ${o.cont}%`
-      : `拿${side}1`;
-    return `<div class="kv"><span class="k">${side}1 ${o.time}觸</span>`
+    if (!o || !o.l1) return `<div class="kv"><span class="k">${side}1</span><span class="v n">未觸及</span></div>`;
+    const h = o.l1;
+    const cls = h.action === '瞄' ? 'up' : 'down';
+    const body = h.action === '瞄' ? `瞄${side}${h.target} ${h.cont}%` : `拿${side}1`;
+    let html = `<div class="kv"><span class="k">${side}1 ${h.time}觸</span>`
       + `<span class="v"><span class="${cls}">${body}</span></span></div>`;
+    if (o.l2) {
+      const c2 = o.l2.action === '瞄' ? 'up' : 'down';
+      const b2 = o.l2.action === '瞄' ? `瞄${side}3 ${o.l2.contL3}%` : `守${side}2 ${o.l2.contL3}%`;
+      html += `<div class="kv"><span class="k">${side}2 ${o.l2.time}觸</span>`
+        + `<span class="v"><span class="${c2}">${b2}</span></span></div>`;
+    }
+    return html;
   };
   const touchHtml = t1 ? `<div class="gap"></div>` + touchLine(t1.bull, '多') + touchLine(t1.bear, '空') : '';
   const lvlSec = `<div class="sec"><div class="sec-title">關卡價(達到率)${lvlSub}</div>${lvlBody}${touchHtml}</div>`;

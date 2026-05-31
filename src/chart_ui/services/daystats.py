@@ -19,29 +19,41 @@ SYMBOL = "TX"
 WINDOW = 20
 _WD_NAMES = ("週一", "週二", "週三", "週四", "週五", "週六", "週日")
 
-# 關卡價 = 達到率百分位階梯（夜盤 + EMA20 條件分位迴歸, 無常數, 2026 擬合）。
-# 每階振幅 = a×夜盤振幅 + b×EMA20(日盤振幅)；達到率 = 1−τ。
-# 2026 in-sample 達到率≈目標；2025 OOS：90% 地板穩(88%)，上階(75/50/25%)會漂、視為方向目標。
+# 關卡價 = 達到率百分位階梯（單參數：EMA20 無常數分位迴歸, 全樣本 2021-2026 擬合）。
+# 每階振幅 = c×EMA20(日盤振幅)；達到率 = 1−τ。
+# H094：夜盤校正中位僅 4~14 點、典型 <一個關卡間距的 1/5（跳格 23~56 點），且 1~2% 的日子
+# 才會跨過一格 → 夜盤只在同關卡帶內微調、決策意義低，故簡化為 EMA-only。
+# 全樣本實測達到率 90/76/50（碰 L1/L2/L3），幾乎完美對齊名目；舊雙參數(2026擬合)偏寬只 65/41/28。
 EMA_SPAN = 20
 LVL_QUANTILES = [
-    # (序號, 達到率, a_夜盤, b_EMA20)
-    ("1", "90%", 0.159, 0.440),
-    ("2", "75%", 0.157, 0.637),
-    ("3", "50%", 0.274, 0.671),
-    ("4", "25%", 0.245, 1.044),
+    # (序號, 達到率, c_EMA20)
+    ("1", "90%", 0.385),
+    ("2", "75%", 0.497),
+    ("3", "50%", 0.711),
+    ("4", "25%", 0.977),
 ]
 # 量能整排上調（覆盤用當日實際收盤量, hindsight）：bump = NVOL_W_SURP×(量比−1)×EMA20。
 # 僅資訊顯示(整排平移幾十點)，不套用到關卡本身。
 NVOL_W_SURP = 0.13
 
-# 碰到 L1 的時間 → 續到 L2 / L3 的機率(%)。方向性擺動分析(多空對稱, pooled, 2020-2026)。
-# L4 從未跨過 ~29%，且 L1 觸發時間幾乎預測不了 L4(早觸 29% vs 無條件 25%)→ L4 不是計畫性目標。
-# time = 當日分鐘數(08:45 = 525)。step function, 取 ≤ minute 的最後一格。
-_CONT_L2 = [(525, 87), (540, 78), (555, 78), (570, 74), (585, 68),
-            (600, 67), (615, 66), (630, 63), (645, 42)]
-_CONT_L3 = [(525, 69), (540, 58), (555, 59), (570, 56), (585, 41),
-            (600, 44), (615, 43), (630, 39), (645, 28)]
+# 碰到 L1 的時間 → 續到 L2 / L3 的機率(%)。方向性擺動分析(多空對稱, pooled, 2021-2026)。
+# 在 EMA-only 關卡定義下重算（H094 touch_times.py）。
+# L4 不是計畫性目標（早觸亦難預測），故不建表。time = 當日分鐘數(08:45 = 525)。step function。
+_CONT_L2 = [(525, 94), (540, 92), (555, 87), (570, 84), (585, 80),
+            (600, 80), (615, 66), (630, 78), (645, 61)]
+_CONT_L3 = [(525, 76), (540, 67), (555, 56), (570, 55), (585, 46),
+            (600, 50), (615, 32), (630, 37), (645, 27)]
 _TARGET_MIN = 50  # 該階續航 ≥ 此值才當「可瞄目標」
+# L3 額外時間閘：碰 L1 須早於 09:30(=570) 才把 L3 當目標。EMA-only 下 _CONT_L3 於 09:45 才
+# 跌破 50%（09:30 那格 55%），此閘比數據更保守，依使用者規則保留。
+_L3_CUTOFF_MIN = 570
+
+# 碰 L2 的時間 → 續到 L3 的機率(%)。H093 驗證：以「碰 L2 時間」為條件遠強於「碰 L1 時間」
+# (基準 66% vs 55%)，故碰 L2 後再更新一次續 L3 提示。在 EMA-only 關卡下重算(H094)：
+# 早盤碰 L2 ~86% 續 L3，遞減到 10:45+ 僅 46%(<門檻→改顯示「守 L2」)。不受 09:30 閘限制。
+# step function, 取 ≤ minute 的最後一格。
+_CONT_L3_FROM_L2 = [(525, 86), (540, 79), (555, 74), (570, 69), (585, 63),
+                    (600, 65), (615, 64), (630, 55), (645, 46)]
 
 
 def _trading_days(conn) -> list[date]:
@@ -228,13 +240,14 @@ def _cont_lookup(table, minute: int) -> int:
 def _touch_hint(t) -> dict | None:
     """t = datetime.time(L1 首次觸及) → {time, target, cont, action}；未觸及回 None。
 
-    依續航機率決定該瞄到第幾階：續L3 ≥50% → 瞄 L3；否則續L2 ≥50% → 瞄 L2；否則 拿 L1。
+    依續航機率決定該瞄到第幾階：碰 L1 早於 09:30 且續L3 ≥50% → 瞄 L3；
+    否則續L2 ≥50% → 瞄 L2；否則 拿 L1。
     """
     if t is None:
         return None
     m = t.hour * 60 + t.minute
     c2, c3 = _cont_lookup(_CONT_L2, m), _cont_lookup(_CONT_L3, m)
-    if c3 >= _TARGET_MIN:
+    if c3 >= _TARGET_MIN and m < _L3_CUTOFF_MIN:
         target, cont, action = "3", c3, "瞄"
     elif c2 >= _TARGET_MIN:
         target, cont, action = "2", c2, "瞄"
@@ -243,10 +256,25 @@ def _touch_hint(t) -> dict | None:
     return {"time": t.strftime("%H:%M"), "target": target, "cont": cont, "action": action}
 
 
-def _level1_signals(conn, sel: date, r1: float | None) -> dict | None:
-    """當天多1(上擺)/空1(下擺)首次達到 L1 距離 r1 的時間 + 續航建議。
+def _l2_hint(t) -> dict | None:
+    """t = L2 首次觸及 time → {time, contL3, action}；未觸及回 None。
+
+    第二段提示：站在「已碰 L2」更新一次續 L3 機率（H093，比 L1 時間強得多）。
+    續 L3 ≥ 門檻 → 瞄 L3；否則守 L2。實務上整日 ≥54%，幾乎恆為瞄 L3。
+    """
+    if t is None:
+        return None
+    m = t.hour * 60 + t.minute
+    c3 = _cont_lookup(_CONT_L3_FROM_L2, m)
+    action = "瞄" if c3 >= _TARGET_MIN else "守"
+    return {"time": t.strftime("%H:%M"), "contL3": c3, "action": action}
+
+
+def _level1_signals(conn, sel: date, r1: float | None, r2: float | None) -> dict | None:
+    """當天多/空兩方向首次達到 L1 距離 r1、L2 距離 r2 的時間 + 兩段式續航建議。
 
     上擺 = 從盤中低點往上的最大移動；下擺 = 從盤中高點往下的最大移動(方向性，與分析一致)。
+    每方向回 {"l1": 碰L1提示(_touch_hint), "l2": 碰L2後續L3提示(_l2_hint or None)}。
     """
     if r1 is None or r1 <= 0:
         return None
@@ -260,16 +288,23 @@ def _level1_signals(conn, sel: date, r1: float | None) -> dict | None:
         return None
     run_lo, run_hi = float("inf"), float("-inf")
     up_max = dn_max = 0.0
-    bull_t = bear_t = None
+    bull_t1 = bear_t1 = bull_t2 = bear_t2 = None
     for t, h, l in rows:
         h, l = float(h), float(l)
         run_lo, run_hi = min(run_lo, l), max(run_hi, h)
         up_max, dn_max = max(up_max, h - run_lo), max(dn_max, run_hi - l)
-        if bull_t is None and up_max >= r1:
-            bull_t = t
-        if bear_t is None and dn_max >= r1:
-            bear_t = t
-    return {"bull": _touch_hint(bull_t), "bear": _touch_hint(bear_t)}
+        if bull_t1 is None and up_max >= r1:
+            bull_t1 = t
+        if bear_t1 is None and dn_max >= r1:
+            bear_t1 = t
+        if r2 and bull_t2 is None and up_max >= r2:
+            bull_t2 = t
+        if r2 and bear_t2 is None and dn_max >= r2:
+            bear_t2 = t
+    return {
+        "bull": {"l1": _touch_hint(bull_t1), "l2": _l2_hint(bull_t2)},
+        "bear": {"l1": _touch_hint(bear_t1), "l2": _l2_hint(bear_t2)},
+    }
 
 
 def _stats(vals: list[float]) -> dict | None:
@@ -299,9 +334,10 @@ def compute_daystats(*, date_str: str, db_path: Path | None = None) -> dict:
         weekday_range = _weekday_range(conn, sel)
         ema20 = _ema20_range(conn, sel)
         level1 = None
-        if night_range is not None and ema20:
-            _q1 = LVL_QUANTILES[0]  # 多1/空1 的振幅距離
-            level1 = _level1_signals(conn, sel, _q1[2] * night_range + _q1[3] * ema20)
+        if ema20:
+            _r1 = LVL_QUANTILES[0][2] * ema20  # L1 振幅距離
+            _r2 = LVL_QUANTILES[1][2] * ema20  # L2 振幅距離
+            level1 = _level1_signals(conn, sel, _r1, _r2)
 
     # 夜盤波動分級：重用 morning briefing 的 NVF（norm = 夜振 / EMA20 + 4 級分類）。
     # _compute_night_vol_filter 連自己的預設 DB；chart-ui 一律走預設 DB，故一致。
@@ -336,11 +372,11 @@ def compute_daystats(*, date_str: str, db_path: Path | None = None) -> dict:
         hi, lo = today
         today_out = {"high": round(hi), "low": round(lo), "range": round(hi - lo)}
 
-    # 關卡價 = 達到率百分位階梯（多1=90%地板 … 多4=25%）。每階振幅 = a×夜盤 + b×EMA20。
+    # 關卡價 = 達到率百分位階梯（多1=90%地板 … 多4=25%）。每階振幅 = c×EMA20（單參數, H094）。
     # 多方由今低往上投射(預估高)、空方由今高往下投射(預估低)。
     # 量能上調(事後)：用當日實際收盤量算 bump，整排平移幾十點，僅在副標題顯示、不套用。
     bull = bear = est_range = None
-    if today and night_range is not None and ema20:
+    if today and ema20:
         hi, lo = today
         t20 = turnover.get("avg20") if turnover else None       # 20日均量(億)
         tv_today = turnover.get("today") if turnover else None   # 當日實際量(億, hindsight)
@@ -350,8 +386,8 @@ def compute_daystats(*, date_str: str, db_path: Path | None = None) -> dict:
             bump = NVOL_W_SURP * (q - 1.0) * ema20
         floor90 = None
         bull_rows, bear_rows = [], []
-        for s, lab, wa, we in LVL_QUANTILES:
-            rng = wa * night_range + we * ema20
+        for s, lab, coef in LVL_QUANTILES:
+            rng = coef * ema20
             if s == "1":
                 floor90 = rng
             bull_rows.append({"label": f"多{s}·{lab}", "price": round(lo + rng)})
@@ -361,7 +397,7 @@ def compute_daystats(*, date_str: str, db_path: Path | None = None) -> dict:
         bull = sorted(bull_rows, key=lambda x: -x["price"])
         bear = sorted(bear_rows, key=lambda x: -x["price"])
         est_range = {"floor90": round(floor90) if floor90 is not None else None,
-                     "ema20": round(ema20), "night": round(night_range),
+                     "ema20": round(ema20),
                      "bump": round(bump) if bump is not None else None,
                      "q": round(q, 2) if q is not None else None,
                      "tv_today": round(tv_today) if tv_today is not None else None,
