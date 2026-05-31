@@ -109,25 +109,18 @@ function drawTradeMarkers(item) {
   }
 }
 
-// 覆盤 overlay：只畫「當天最先出現 L1 的方向」之觸及 marker + 09:30/10:45 時間線。
+// 覆盤 overlay：多、空兩個方向的觸及 marker 都畫 + 09:30/10:45 時間線。
 // 關卡水平線已移除(太雜)。不自行 clearMarkers（由呼叫端 maybeDrawReview 清）；intraday 才畫。
 function drawReviewOverlay(d) {
   if (state.tf === '1d' || !chartState.candle) return;
   if (!d || !d.touches) return;
   const tch = d.touches;
-  const l1 = (arr) => (arr || []).find((t) => t.level === 'L1');
-  const bL1 = l1(tch.bull), sL1 = l1(tch.bear);
-  // 取最先碰 L1 的方向；都沒碰則不畫觸及 marker（只留時間線）
-  let side = null;
-  if (bL1 && sL1) side = bL1.minute <= sL1.minute ? 'bull' : 'bear';
-  else if (bL1) side = 'bull';
-  else if (sL1) side = 'bear';
   const tm = [];
-  if (side === 'bull') for (const t of tch.bull) tm.push({
+  for (const t of (tch.bull || [])) tm.push({
     time: nearestBarTime(localToEpoch(`${d.date} ${t.time}:00`)), position: 'belowBar',
     shape: 'circle', color: '#e0623d', text: `多${t.level} ${t.time}`,
   });
-  if (side === 'bear') for (const t of tch.bear) tm.push({
+  for (const t of (tch.bear || [])) tm.push({
     time: nearestBarTime(localToEpoch(`${d.date} ${t.time}:00`)), position: 'aboveBar',
     shape: 'circle', color: '#3d9e6a', text: `空${t.level} ${t.time}`,
   });
