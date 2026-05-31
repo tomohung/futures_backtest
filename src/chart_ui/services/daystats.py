@@ -237,6 +237,38 @@ def _cont_lookup(table, minute: int) -> int:
     return c
 
 
+_GATE_0930, _GATE_1045 = 570, 645
+_BAND_LABEL = {"strong": "強", "mid": "中", "weak": "弱"}
+
+
+def _hhmm(minute: int) -> str:
+    return f"{minute // 60:02d}:{minute % 60:02d}"
+
+
+def _exit_advice(touches: dict, band: str, side: str) -> str:
+    """依觸及時間 + 時間閘 + EOD regime 產生建議出場字串（覆盤用，事後 regime）。"""
+    bl = _BAND_LABEL.get(band, band)
+    t1, t2, t3 = touches.get("L1"), touches.get("L2"), touches.get("L3")
+    if t1 is None:
+        return f"{side}({bl})：未碰 L1"
+    parts = []
+    aim1 = "瞄L3抱BE" if (band == "strong" or t1 < _GATE_0930) else "收L2(BE)"
+    parts.append(f"{_hhmm(t1)}碰L1→{aim1}")
+    if t2 is not None:
+        if band == "strong":
+            act2 = "靜態抱L3,可放L4"
+        elif band == "weak":
+            act2 = "守L2/快收"
+        elif t2 < _GATE_1045:
+            act2 = "trail博L3"
+        else:
+            act2 = "守L2"
+        parts.append(f"{_hhmm(t2)}碰L2→{act2}")
+    if t3 is not None:
+        parts.append(f"{_hhmm(t3)}碰L3→" + ("寬trail博L4" if band == "strong" else "trail收割"))
+    return f"{side}({bl})：" + "；".join(parts)
+
+
 def _touch_hint(t) -> dict | None:
     """t = datetime.time(L1 首次觸及) → {time, target, cont, action}；未觸及回 None。
 
