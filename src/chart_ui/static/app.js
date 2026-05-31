@@ -103,23 +103,25 @@ function drawTradeMarkers(item) {
   }
 }
 
-// 覆盤 overlay：daystats 的關卡線 + 觸及 marker + 09:30/10:45 時間線。
-// 不自行 clearMarkers（由呼叫端 maybeDrawReview 清）；intraday 才畫。
+// 覆盤 overlay：只畫「當天最先出現 L1 的方向」之觸及 marker + 09:30/10:45 時間線。
+// 關卡水平線已移除(太雜)。不自行 clearMarkers（由呼叫端 maybeDrawReview 清）；intraday 才畫。
 function drawReviewOverlay(d) {
   if (state.tf === '1d' || !chartState.candle) return;
-  if (!d || (!d.bull && !d.bear)) return;
-  const line = (o, color) => chartState.candle.createPriceLine({
-    price: +o.price, color, lineStyle: o.today ? 0 : 2, lineWidth: 1,
-    axisLabelVisible: true, title: o.label || '',
-  });
-  for (const o of d.bull || []) markerState.priceLines.push(line(o, o.today ? '#888' : '#e0623d'));
-  for (const o of d.bear || []) markerState.priceLines.push(line(o, o.today ? '#888' : '#3d9e6a'));
+  if (!d || !d.touches) return;
+  const tch = d.touches;
+  const l1 = (arr) => (arr || []).find((t) => t.level === 'L1');
+  const bL1 = l1(tch.bull), sL1 = l1(tch.bear);
+  // 取最先碰 L1 的方向；都沒碰則不畫觸及 marker（只留時間線）
+  let side = null;
+  if (bL1 && sL1) side = bL1.minute <= sL1.minute ? 'bull' : 'bear';
+  else if (bL1) side = 'bull';
+  else if (sL1) side = 'bear';
   const tm = [];
-  for (const t of (d.touches && d.touches.bull) || []) tm.push({
+  if (side === 'bull') for (const t of tch.bull) tm.push({
     time: nearestBarTime(localToEpoch(`${d.date} ${t.time}:00`)), position: 'belowBar',
     shape: 'circle', color: '#e0623d', text: `多${t.level} ${t.time}`,
   });
-  for (const t of (d.touches && d.touches.bear) || []) tm.push({
+  if (side === 'bear') for (const t of tch.bear) tm.push({
     time: nearestBarTime(localToEpoch(`${d.date} ${t.time}:00`)), position: 'aboveBar',
     shape: 'circle', color: '#3d9e6a', text: `空${t.level} ${t.time}`,
   });
