@@ -103,6 +103,50 @@ function drawTradeMarkers(item) {
   }
 }
 
+// 覆盤 overlay：daystats 的關卡線 + 觸及 marker + 09:30/10:45 時間線。
+// 不自行 clearMarkers（由呼叫端 maybeDrawReview 清）；intraday 才畫。
+function drawReviewOverlay(d) {
+  if (state.tf === '1d' || !chartState.candle) return;
+  if (!d || (!d.bull && !d.bear)) return;
+  const line = (o, color) => chartState.candle.createPriceLine({
+    price: +o.price, color, lineStyle: o.today ? 0 : 2, lineWidth: 1,
+    axisLabelVisible: true, title: o.label || '',
+  });
+  for (const o of d.bull || []) markerState.priceLines.push(line(o, o.today ? '#888' : '#e0623d'));
+  for (const o of d.bear || []) markerState.priceLines.push(line(o, o.today ? '#888' : '#3d9e6a'));
+  const tm = [];
+  for (const t of (d.touches && d.touches.bull) || []) tm.push({
+    time: nearestBarTime(localToEpoch(`${d.date} ${t.time}:00`)), position: 'belowBar',
+    shape: 'circle', color: '#e0623d', text: `多${t.level} ${t.time}`,
+  });
+  for (const t of (d.touches && d.touches.bear) || []) tm.push({
+    time: nearestBarTime(localToEpoch(`${d.date} ${t.time}:00`)), position: 'aboveBar',
+    shape: 'circle', color: '#3d9e6a', text: `空${t.level} ${t.time}`,
+  });
+  for (const hm of ['09:30', '10:45']) tm.push({
+    time: nearestBarTime(localToEpoch(`${d.date} ${hm}:00`)), position: 'aboveBar',
+    shape: 'arrowDown', color: '#888', text: hm,
+  });
+  if (tm.length) {
+    tm.sort((a, b) => a.time - b.time);
+    markerState.handle = markerState.handle
+      ? (markerState.handle.setMarkers(tm), markerState.handle)
+      : LightweightCharts.createSeriesMarkers(chartState.candle, tm);
+  }
+}
+
+// 在 bars 與 daystats 都就緒、且非回測交易項時，畫覆盤 overlay。
+function maybeDrawReview() {
+  const it = window._pendingItem;
+  const hasTrade = it && (it.side || it.entry != null || it.exit_time != null
+    || (it.levels && it.levels.length));
+  if (hasTrade) return;                                  // 交易日交給 drawTradeMarkers
+  if (!chartState.bars || !chartState.bars.length) return;
+  if (!window._dayStats) return;
+  clearMarkers();
+  drawReviewOverlay(window._dayStats);
+}
+
 function pad2(n) { return String(n).padStart(2, '0'); }
 
 function applyMaVisibility() {
@@ -540,10 +584,13 @@ function renderSidebar() {
 async function renderDayStats(date) {
   const el = document.getElementById('rail');
   if (!el) return;
+  window._dayStats = null;
   if (!date) { el.innerHTML = ''; return; }
   let d;
   try { d = await fetchJSON(`/api/daystats?date=${encodeURIComponent(date)}`); }
   catch (_) { el.innerHTML = '<div class="sec sec-title">統計載入失敗</div>'; return; }
+  window._dayStats = d;
+  maybeDrawReview();
   const r = (x) => (x == null ? '—' : Math.round(x).toLocaleString());
   const ar = d.avg_range_20 || {};
   const t = d.today;
@@ -675,7 +722,7 @@ async function selectItem(i) {
   document.querySelector('.list-row.active')?.scrollIntoView({ block: 'nearest' });
 }
 
-window._afterKline = () => { drawTradeMarkers(window._pendingItem); };
+window._afterKline = () => { drawTradeMarkers(window._pendingItem); maybeDrawReview(); };
 
 async function loadList(listId) {
   state.list = await fetchJSON(`/api/lists/${encodeURIComponent(listId)}`);
