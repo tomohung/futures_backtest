@@ -339,6 +339,43 @@ def _level1_signals(conn, sel: date, r1: float | None, r2: float | None) -> dict
     }
 
 
+def _collect_touches(conn, sel, levels: list[tuple[str, float]]) -> dict:
+    """各階(label, 距離) 多/空首次觸及。回傳 {bull:[{level,price,time,minute}], bear:[...]}。
+
+    多方(上擺)從盤中低點往上、空方(下擺)從盤中高點往下，距離達到即記首觸（與 _level1_signals 同義）。
+    price = 多方 run_low+距離 / 空方 run_high−距離（投射價）。
+    """
+    rows = conn.execute(
+        "SELECT CAST(timestamp AS TIME) t, high, low FROM ohlcv_1m "
+        "WHERE symbol = ? AND CAST(timestamp AS DATE) = ? "
+        "AND CAST(timestamp AS TIME) BETWEEN TIME '08:45:00' AND TIME '13:45:00' ORDER BY timestamp",
+        [SYMBOL, sel],
+    ).fetchall()
+    out = {"bull": [], "bear": []}
+    if not rows:
+        return out
+    run_lo, run_hi = float("inf"), float("-inf")
+    up_max = dn_max = 0.0
+    done_b, done_s = set(), set()
+    for t, h, l in rows:
+        h, l = float(h), float(l)
+        run_lo, run_hi = min(run_lo, l), max(run_hi, h)
+        up_max, dn_max = max(up_max, h - run_lo), max(dn_max, run_hi - l)
+        m = t.hour * 60 + t.minute
+        for label, dist in levels:
+            if label not in done_b and up_max >= dist:
+                done_b.add(label)
+                out["bull"].append({"level": label, "price": round(run_lo + dist),
+                                    "time": t.strftime("%H:%M"), "minute": m})
+            if label not in done_s and dn_max >= dist:
+                done_s.add(label)
+                out["bear"].append({"level": label, "price": round(run_hi - dist),
+                                    "time": t.strftime("%H:%M"), "minute": m})
+    out["bull"].sort(key=lambda x: x["minute"])
+    out["bear"].sort(key=lambda x: x["minute"])
+    return out
+
+
 def _stats(vals: list[float]) -> dict | None:
     if not vals:
         return None
@@ -370,6 +407,27 @@ def compute_daystats(*, date_str: str, db_path: Path | None = None) -> dict:
             _r1 = LVL_QUANTILES[0][2] * ema20  # L1 振幅距離
             _r2 = LVL_QUANTILES[1][2] * ema20  # L2 振幅距離
             level1 = _level1_signals(conn, sel, _r1, _r2)
+
+        # 觸及（到 L3）+ DCI(收盤/事後) + 建議出場法
+        touches = {"bull": [], "bear": []}
+        dci = None
+        exit_advice = None
+        if ema20:
+            _lv = [("L1", LVL_QUANTILES[0][2] * ema20),
+                   ("L2", LVL_QUANTILES[1][2] * ema20),
+                   ("L3", LVL_QUANTILES[2][2] * ema20)]
+            touches = _collect_touches(conn, sel, _lv)
+            from src.chart_ui.services.dci_daily import compute_daily_dci
+            dci = compute_daily_dci(conn, sel)
+            if dci:
+                dci["hindsight"] = True
+                dci["w_proxy"] = True
+            _bmin = {t["level"]: t["minute"] for t in touches["bull"]}
+            _smin = {t["level"]: t["minute"] for t in touches["bear"]}
+            _bl = dci["regime_long"] if dci else "mid"
+            _bs = dci["regime_short"] if dci else "mid"
+            exit_advice = {"bull": _exit_advice(_bmin, _bl, "多"),
+                           "bear": _exit_advice(_smin, _bs, "空")}
 
     # 夜盤波動分級：重用 morning briefing 的 NVF（norm = 夜振 / EMA20 + 4 級分類）。
     # _compute_night_vol_filter 連自己的預設 DB；chart-ui 一律走預設 DB，故一致。
@@ -447,4 +505,7 @@ def compute_daystats(*, date_str: str, db_path: Path | None = None) -> dict:
         "level1": level1,
         "bull": bull,
         "bear": bear,
+        "touches": touches,
+        "dci": dci,
+        "exit_advice": exit_advice,
     }
