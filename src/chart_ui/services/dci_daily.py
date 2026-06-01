@@ -19,11 +19,55 @@ _WS = (0.30, 0.30, 0.40)   # short
 
 
 def _band_long(c: float) -> str:
-    return "strong" if c >= 0.30 else "weak" if c <= -0.10 else "mid"
+    return "strong" if c >= 0.20 else "weak" if c <= -0.10 else "mid"
 
 
 def _band_short(c: float) -> str:
     return "strong" if c <= -0.20 else "weak" if c >= 0.10 else "mid"
+
+
+def _sign(x: float) -> int:
+    return 1 if x > 0 else -1 if x < 0 else 0
+
+
+def _strength_norm(rows: list[dict] | None) -> float | None:
+    """每檔兩票：sign(last-prev)、sign(last-open)；回 sum/有效票數，無有效票回 None。"""
+    total = 0
+    n = 0
+    for r in rows or []:
+        last, prev, op = r.get("last"), r.get("prev"), r.get("open")
+        if last is not None and prev is not None:
+            total += _sign(last - prev); n += 1
+        if last is not None and op is not None:
+            total += _sign(last - op); n += 1
+    return total / n if n else None
+
+
+def _rows(conn, sel: date, *, symbols: list[str] | None) -> list[dict]:
+    """取當日個股 (last=close, prev=close-change, open) 列。
+    symbols 指定 → 權值清單；否則取成交值前 20。"""
+    if symbols is not None:
+        ph = ",".join(["?"] * len(symbols))
+        sql = (
+            "SELECT close, change, open FROM stock_day "
+            f"WHERE market='TWSE' AND trade_date = ? AND symbol IN ({ph}) "
+            "AND close IS NOT NULL"
+        )
+        params = [sel, *symbols]
+    else:
+        sql = (
+            "SELECT close, change, open FROM stock_day "
+            "WHERE market='TWSE' AND trade_date = ? AND close IS NOT NULL "
+            "AND value IS NOT NULL ORDER BY value DESC LIMIT 20"
+        )
+        params = [sel]
+    out = []
+    for close, change, op in conn.execute(sql, params).fetchall():
+        last = float(close)
+        prev = last - float(change) if change is not None else None
+        out.append({"last": last, "prev": prev,
+                    "open": float(op) if op is not None else None})
+    return out
 
 
 def compute_daily_dci(conn, sel: date) -> dict | None:
@@ -36,22 +80,10 @@ def compute_daily_dci(conn, sel: date) -> dict | None:
         return None
     B = (b[0] - b[1]) / b[2]
 
-    ph = ",".join(["?"] * len(TOP_WEIGHT_SYMBOLS))
-    w = conn.execute(
-        f"SELECT SUM(SIGN(change)*value)/NULLIF(SUM(value),0) FROM stock_day "
-        f"WHERE market='TWSE' AND trade_date = ? AND symbol IN ({ph}) "
-        f"AND change IS NOT NULL AND value IS NOT NULL",
-        [sel, *TOP_WEIGHT_SYMBOLS],
-    ).fetchone()
-    h = conn.execute(
-        "SELECT SUM(SIGN(change)*value)/NULLIF(SUM(value),0) FROM ("
-        "  SELECT change, value FROM stock_day WHERE market='TWSE' AND trade_date = ? "
-        "  AND change IS NOT NULL AND value IS NOT NULL ORDER BY value DESC LIMIT 20)",
-        [sel],
-    ).fetchone()
-    if w is None or w[0] is None or h is None or h[0] is None:
+    W = _strength_norm(_rows(conn, sel, symbols=TOP_WEIGHT_SYMBOLS))
+    H = _strength_norm(_rows(conn, sel, symbols=None))
+    if W is None or H is None:
         return None
-    W, H = float(w[0]), float(h[0])
 
     dl = _WL[0] * W + _WL[1] * H + _WL[2] * B
     ds = _WS[0] * W + _WS[1] * H + _WS[2] * B
