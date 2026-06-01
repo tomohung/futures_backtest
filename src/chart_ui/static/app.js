@@ -24,7 +24,18 @@ const MA_DEFS = [
 
 // 獨立指標（與 6 均線群組分開、各自開關、預設關）
 const IND_5MA = { color: '#ffeb3b' };    // 1分K 5MA（黃）
-const IND_KAMA = { color: '#ff4081' };   // Kaufman 自適應均線（粉）
+const IND_VWAP = { color: '#00bcd4' };   // VWAP 成交量加權均價（青）
+const PIVOT_LEN = 5;                     // pivot high/low 左右窗格根數
+const PIVOT_LEGEND_COLOR = '#ff9800';    // legend 開關代表色（橘）
+const PIVOT_HIGH_COLOR = '#ff7043';      // pivot high marker（橘紅，畫在上方）
+const PIVOT_LOW_COLOR = '#42a5f5';       // pivot low marker（藍，畫在下方）
+// EstRisk：移植 close_risk_lines.pine。risk/safe 來自後端 /api/risklevels（全歷史 EMA20 日盤
+// 高低範圍，risk=ema/4、safe=risk/5），每個交易日一組值；純 legend 數值（同 pine 的
+// display.status_line），不在圖上畫線。EMA 必須用全歷史算，故不在前端（只載入數日視窗）計算。
+const RISK_COLORS = { upR: '#ef4444', safeHi: '#ffeb3b', safeLo: '#ff9800', dnR: '#22c55e' };
+// 點 PL/PH → 由該點延伸 safe 停損線到觸及的 K 並標出場。沿用覆盤多空配色（多橘紅/空綠）。
+const EXIT_PL_COLOR = '#e0623d';   // PL 多單停損延伸線 + 出場 marker
+const EXIT_PH_COLOR = '#3d9e6a';   // PH 空單停損延伸線 + 出場 marker
 
 const state = {
   tf: localStorage.getItem('cu.tf') || '1m',
@@ -34,7 +45,9 @@ const state = {
   // 6 條均線各自開關（預設全關）；存成 '000000' 字串（key 改版以強制重置成關）
   maOn: (localStorage.getItem('cu.maOn2') || '000000').padEnd(6, '0').slice(0, 6).split('').map((c) => c === '1'),
   ind5ma: localStorage.getItem('cu.ind5ma') === '1',     // 獨立 1分K 5MA（預設關）
-  indKama: localStorage.getItem('cu.indKama') === '1',   // 獨立 KAMA（預設關）
+  indVwap: localStorage.getItem('cu.indVwap') === '1',   // 獨立 VWAP（預設關）
+  indPivot: localStorage.getItem('cu.indPivot') === '1', // pivot high/low（預設關）
+  indRisk: localStorage.getItem('cu.indRisk') !== '0',   // EstRisk 風險/安全價位（預設開）
   centerDate: null,           // 'YYYY-MM-DD'
   list: null,                 // 目前清單 payload
   listId: null,
@@ -153,7 +166,7 @@ function pad2(n) { return String(n).padStart(2, '0'); }
 function applyMaVisibility() {
   if (chartState.maSeries) chartState.maSeries.forEach((s, k) => s.applyOptions({ visible: state.maOn[k] }));
   if (chartState.ind5maSeries) chartState.ind5maSeries.applyOptions({ visible: state.ind5ma });
-  if (chartState.indKamaSeries) chartState.indKamaSeries.applyOptions({ visible: state.indKama });
+  if (chartState.indVwapSeries) chartState.indVwapSeries.applyOptions({ visible: state.indVwap });
 }
 function saveMaOn() {
   localStorage.setItem('cu.maOn2', state.maOn.map((b) => (b ? '1' : '0')).join(''));
@@ -171,23 +184,127 @@ function sma(values, period) {
   return out;
 }
 
-// KAMA（Kaufman 自適應均線）；標準參數 ER=10/fast=2/slow=30。不足 erP 前段為 null。
-function kama(values, erP = 10, fast = 2, slow = 30) {
-  const out = new Array(values.length).fill(null);
-  if (values.length <= erP) return out;
-  const fsc = 2 / (fast + 1), ssc = 2 / (slow + 1);
-  let prev = values[erP];
-  out[erP] = prev;
-  for (let i = erP + 1; i < values.length; i++) {
-    const change = Math.abs(values[i] - values[i - erP]);
-    let vol = 0;
-    for (let j = i - erP + 1; j <= i; j++) vol += Math.abs(values[j] - values[j - 1]);
-    const er = vol ? change / vol : 0;
-    const sc = (er * (fsc - ssc) + ssc) ** 2;
-    prev = prev + sc * (values[i] - prev);
-    out[i] = prev;
+// VWAP（成交量加權均價）；每個交易日（日期變更）重置。典型價 = (H+L+C)/3。
+function vwap(bars) {
+  const out = new Array(bars.length).fill(null);
+  let curDay = null, cumPV = 0, cumV = 0;
+  for (let i = 0; i < bars.length; i++) {
+    const b = bars[i];
+    const day = typeof b.time === 'string'
+      ? b.time
+      : new Date(b.time * 1000).toISOString().slice(0, 10);
+    if (day !== curDay) { curDay = day; cumPV = 0; cumV = 0; }
+    const tp = (b.high + b.low + b.close) / 3;
+    const v = b.volume || 0;
+    cumPV += tp * v;
+    cumV += v;
+    out[i] = cumV > 0 ? cumPV / cumV : tp;
   }
   return out;
+}
+
+// Pivot high/low：以左右各 len 根為窗格。某根 high 嚴格大於兩側所有 high → pivot high；
+// low 嚴格小於兩側所有 low → pivot low（與兩側相等即不成立，避免平台重複標記）。
+// 歷史重播下可直接看完整資料判斷，不需等右側確認；marker 畫在 pivot 當根。
+function computePivotMarkers(bars, len) {
+  const marks = [];
+  for (let i = len; i < bars.length - len; i++) {
+    const h = bars[i].high, l = bars[i].low;
+    let isHigh = true, isLow = true;
+    for (let j = i - len; j <= i + len; j++) {
+      if (j === i) continue;
+      if (bars[j].high >= h) isHigh = false;
+      if (bars[j].low <= l) isLow = false;
+    }
+    if (isHigh) marks.push({ time: bars[i].time, position: 'aboveBar', shape: 'arrowDown', color: PIVOT_HIGH_COLOR, text: 'PH' });
+    if (isLow) marks.push({ time: bars[i].time, position: 'belowBar', shape: 'arrowUp', color: PIVOT_LOW_COLOR, text: 'PL' });
+  }
+  return marks;   // i 遞增 → time 已遞增；同一根不可能同時為高低點
+}
+
+// 套用 pivot marker（獨立於進出場/覆盤 marker handle）；關閉時清空。
+function applyPivotMarkers() {
+  if (!chartState.candle) return;
+  const marks = state.indPivot ? (chartState.pivotMarks || []) : [];
+  chartState.pivotMarkersHandle = chartState.pivotMarkersHandle
+    ? (chartState.pivotMarkersHandle.setMarkers(marks), chartState.pivotMarkersHandle)
+    : LightweightCharts.createSeriesMarkers(chartState.candle, marks);
+}
+
+// EstRisk：每根 K 對應其交易日的 {risk, safe}，由後端 riskMap（date→{risk,safe}）查表。
+// intraday 用 K 的日期；tf==='1d' 時 b.time 本身即 'YYYY-MM-DD'。查不到（資料不足/首 20 日）→ null。
+function computeRiskSafe(bars) {
+  const map = chartState.riskMap || {};
+  const daily = state.tf === '1d';
+  return bars.map((b) => map[daily ? b.time : epochDate(b.time)] || null);
+}
+
+// 取某根 K 所屬交易日的 safe（停損緩衝）；查無 → null。
+function barSafe(b) {
+  const map = chartState.riskMap || {};
+  const date = typeof b.time === 'string' ? b.time : epochDate(b.time);
+  const e = map[date];
+  return e ? e.safe : null;
+}
+
+// 清除點 PL/PH 延伸出的停損線與出場 marker。
+function clearExitOverlay() {
+  if (chartState.exitSeries) chartState.exitSeries.setData([]);
+  if (chartState.exitMarkersHandle) chartState.exitMarkersHandle.setMarkers([]);
+  chartState.exitAnchor = null;
+}
+
+// 從 anchor（被點的 pivot bar）延伸停損線：PL → low−safe 往右、第一根 low≤level 出場；
+// PH → high+safe 往右、第一根 high≥level 出場。出場價 = level（水平線價）。沒觸及則延到最後一根。
+function drawExitFromPivot(i, side) {
+  const bars = chartState.bars || [];
+  const anchor = bars[i];
+  if (!anchor) return;
+  const safe = barSafe(anchor);
+  if (safe == null) return;                       // 該日無 safe → 不動作
+  const isPL = side === 'pl';
+  const level = isPL ? anchor.low - safe : anchor.high + safe;
+  let j = -1;
+  for (let k = i + 1; k < bars.length; k++) {
+    if (isPL ? bars[k].low <= level : bars[k].high >= level) { j = k; break; }
+  }
+  const end = j >= 0 ? j : bars.length - 1;
+  const seg = [];
+  for (let k = i; k <= end; k++) seg.push({ time: bars[k].time, value: level });
+  const color = isPL ? EXIT_PL_COLOR : EXIT_PH_COLOR;
+  chartState.exitSeries.applyOptions({ color });
+  chartState.exitSeries.setData(seg);
+  const marks = j >= 0 ? [{
+    time: bars[j].time, position: isPL ? 'belowBar' : 'aboveBar',
+    shape: isPL ? 'arrowDown' : 'arrowUp', color, text: `出 ${Math.round(level)}`,
+  }] : [];
+  chartState.exitMarkersHandle = chartState.exitMarkersHandle
+    ? (chartState.exitMarkersHandle.setMarkers(marks), chartState.exitMarkersHandle)
+    : LightweightCharts.createSeriesMarkers(chartState.candle, marks);
+  chartState.exitAnchor = { i, side };
+}
+
+// 點擊主圖：命中 Pivot 指標的 PL/PH（需 Pivot 開啟）→ 畫停損延伸線。再點同一點同側 → 清除。
+function onChartClick(param) {
+  if (!param || param.time == null || !state.indPivot) return;
+  const bars = chartState.bars || [];
+  const i = bars.findIndex((b) => b.time === param.time);
+  if (i < 0) return;
+  const marks = (chartState.pivotMarks || []).filter((m) => m.time === param.time);
+  if (!marks.length) return;
+  let side;
+  if (marks.length === 1) {
+    side = marks[0].text === 'PL' ? 'pl' : 'ph';
+  } else {                                         // 同根同時 PH+PL（罕見）→ 依點擊高度判定
+    const py = param.point ? chartState.candle.coordinateToPrice(param.point.y) : null;
+    const mid = (bars[i].high + bars[i].low) / 2;
+    side = (py != null && py < mid) ? 'pl' : 'ph';
+  }
+  if (chartState.exitAnchor && chartState.exitAnchor.i === i && chartState.exitAnchor.side === side) {
+    clearExitOverlay();                            // toggle off
+    return;
+  }
+  drawExitFromPivot(i, side);
 }
 
 // 把 'YYYY-MM-DD HH:MM:SS' 當 UTC 算 epoch 秒（與後端 _to_epoch 一致）。
@@ -195,6 +312,11 @@ function localToEpoch(s) {
   const m = s.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
   if (!m) return null;
   return Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6] || 0) / 1000);
+}
+// epoch 秒 → 'YYYY-MM-DD'（UTC，與 bar.time 編碼一致），供 riskMap 依交易日查表。
+function epochDate(t) {
+  const d = new Date(t * 1000);
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
 }
 function dateWeekday(dateStr) {
   const m = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/);
@@ -252,7 +374,14 @@ function initChart() {
     priceFormat: { type: 'price', precision: 0, minMove: 1 },
   });
   chartState.ind5maSeries = chart.addSeries(LightweightCharts.LineSeries, _indOpts(IND_5MA.color));
-  chartState.indKamaSeries = chart.addSeries(LightweightCharts.LineSeries, _indOpts(IND_KAMA.color));
+  chartState.indVwapSeries = chart.addSeries(LightweightCharts.LineSeries, _indOpts(IND_VWAP.color));
+  // 點 PL/PH 延伸的停損線（虛線、主圖右軸）；資料只在 anchor→觸及那段，平時為空。
+  chartState.exitSeries = chart.addSeries(LightweightCharts.LineSeries, {
+    color: EXIT_PL_COLOR, lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed,
+    priceScaleId: 'right', priceLineVisible: false, lastValueVisible: false,
+    crosshairMarkerVisible: false,
+    priceFormat: { type: 'price', precision: 0, minMove: 1 },
+  });
   applyMaVisibility();
   chartState.volume = chart.addSeries(
     LightweightCharts.HistogramSeries,
@@ -291,6 +420,7 @@ function initChart() {
   chartState.bb.createPriceLine({ price: 0, color: BB_REF_COLOR, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '0' });
   chart.priceScale('bb').applyOptions({ scaleMargins: { top: 0.15, bottom: 0.15 } });
   chart.subscribeCrosshairMove((param) => updateLegend(param));
+  chart.subscribeClick((param) => onChartClick(param));
   const wrap = document.querySelector('.chart-wrap');
   if (wrap) new ResizeObserver(() => {
     positionPaneLegend(document.getElementById('vol-legend'), 1);
@@ -349,9 +479,25 @@ function updateLegend(param) {
         : `<span class="ind-toggle ma-off" data-toggle="${key}">${name}</span>`;
     };
     const ind5 = indTog(state.ind5ma, '5ma', '5MA', IND_5MA.color, chartState.ind5maArr);
-    const indK = indTog(state.indKama, 'kama', 'KAMA', IND_KAMA.color, chartState.indKamaArr);
+    const indV = indTog(state.indVwap, 'vwap', 'VWAP', IND_VWAP.color, chartState.indVwapArr);
+    const indPiv = indTog(state.indPivot, 'pivot', `Pivot${PIVOT_LEN}`, PIVOT_LEGEND_COLOR, null);
+    // EstRisk：開啟時顯示四個值（收+R / 高+S / 低−S / 收−R），各自上色；無完成日 → —
+    const rs = chartState.riskArr ? chartState.riskArr[idx] : null;
+    const C = RISK_COLORS;
+    let indRisk;
+    if (!state.indRisk) {
+      indRisk = `<span class="ind-toggle ma-off" data-toggle="risk">Risk</span>`;
+    } else if (rs) {
+      indRisk = `<span class="ind-toggle" data-toggle="risk" style="color:${C.upR}">Risk</span>`
+        + ` <span style="color:${C.upR}">收+R ${r(b.close + rs.risk)}</span>`
+        + ` · <span style="color:${C.safeHi}">高+S ${r(b.high + rs.safe)}</span>`
+        + ` · <span style="color:${C.safeLo}">低−S ${r(b.low - rs.safe)}</span>`
+        + ` · <span style="color:${C.dnR}">收−R ${r(b.close - rs.risk)}</span>`;
+    } else {
+      indRisk = `<span class="ind-toggle" data-toggle="risk" style="color:${C.upR}">Risk</span> <span class="muted">—</span>`;
+    }
     const maLine = `${master}　${perMa}`;
-    const indLine = `${ind5}<br>${indK}`;   // 5MA / KAMA 各自獨立一行
+    const indLine = `${ind5}<br>${indV}<br>${indPiv}<br>${indRisk}`;   // 5MA / VWAP / Pivot / Risk 各自獨立一行
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
@@ -460,12 +606,18 @@ async function loadKline(centerEpochToFocus) {
       bars.flatMap((b, i) => (arr[i] != null ? [{ time: b.time, value: arr[i] }] : [])),
     );
   });
-  // 獨立 5MA / KAMA
+  // 獨立 5MA / VWAP
   const _toData = (arr) => bars.flatMap((b, i) => (arr[i] != null ? [{ time: b.time, value: arr[i] }] : []));
   chartState.ind5maArr = sma(closes, 5);
-  chartState.indKamaArr = kama(closes);
+  chartState.indVwapArr = vwap(bars);
   chartState.ind5maSeries.setData(_toData(chartState.ind5maArr));
-  chartState.indKamaSeries.setData(_toData(chartState.indKamaArr));
+  chartState.indVwapSeries.setData(_toData(chartState.indVwapArr));
+  // Pivot high/low（左右各 PIVOT_LEN 根）
+  chartState.pivotMarks = computePivotMarkers(bars, PIVOT_LEN);
+  applyPivotMarkers();
+  // EstRisk 風險/安全價位（legend 數值，每根 K 的 {risk, safe}）
+  chartState.riskArr = computeRiskSafe(bars);
+  clearExitOverlay();                            // 換日/換 tf → anchor index 失效，清掉停損延伸線
   // 量能 MA(20) 與 1.5× 門檻（滑動視窗，前 19 根不足 → null）
   const volMa = [];
   let run = 0;
@@ -595,10 +747,19 @@ function wireIndicatorToggles() {
         localStorage.setItem('cu.ind5ma', state.ind5ma ? '1' : '0');
         applyMaVisibility();
         updateLegend(null);
-      } else if (which === 'kama') {
-        state.indKama = !state.indKama;
-        localStorage.setItem('cu.indKama', state.indKama ? '1' : '0');
+      } else if (which === 'vwap') {
+        state.indVwap = !state.indVwap;
+        localStorage.setItem('cu.indVwap', state.indVwap ? '1' : '0');
         applyMaVisibility();
+        updateLegend(null);
+      } else if (which === 'pivot') {
+        state.indPivot = !state.indPivot;
+        localStorage.setItem('cu.indPivot', state.indPivot ? '1' : '0');
+        applyPivotMarkers();
+        updateLegend(null);
+      } else if (which === 'risk') {
+        state.indRisk = !state.indRisk;
+        localStorage.setItem('cu.indRisk', state.indRisk ? '1' : '0');
         updateLegend(null);
       }
     });
@@ -610,6 +771,8 @@ async function main() {
   wireToolbar();
   wireIndicatorToggles();
   setTitle();
+  // EstRisk 風險/安全價位對照表（全歷史 EMA20，後端算）；失敗則留空 → legend 顯示 —。
+  try { chartState.riskMap = await fetchJSON('/api/risklevels'); } catch (_) { chartState.riskMap = {}; }
   if (window._initLists) await window._initLists();    // Task 10 提供
 }
 
