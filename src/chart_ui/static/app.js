@@ -12,6 +12,8 @@ const BB_LEN = 15;
 const BB_MULT = 2;
 const BB_COLOR = '#c678dd';
 const BB_REF_COLOR = '#888';
+// 主圖布林通道（同 15,2）：只畫上下兩條帶、不畫中線；可開關，預設關。
+const BB_BAND_COLOR = '#c678dd';
 // 主圖 6 條均線（SMA(close)），週期/顏色仿 screener-ui。
 const MA_DEFS = [
   { p: 5, color: '#ff9800' },
@@ -61,6 +63,7 @@ const state = {
   maOn: (localStorage.getItem('cu.maOn2') || '000000').padEnd(6, '0').slice(0, 6).split('').map((c) => c === '1'),
   ind5ma: localStorage.getItem('cu.ind5ma') === '1',     // 獨立 1分K 5MA（預設關）
   indVwap: localStorage.getItem('cu.indVwap') === '1',   // 獨立 VWAP（預設關）
+  indBB: localStorage.getItem('cu.indBB') === '1',       // 主圖布林通道上下帶（預設關）
   indPivot: localStorage.getItem('cu.indPivot') === '1', // pivot high/low（預設關）
   indOrb: localStorage.getItem('cu.indOrb') === '1',     // ORB 開盤區間突破（預設關）
   indTouch: localStorage.getItem('cu.indTouch') !== '0', // 關卡觸及標示（預設開）
@@ -197,6 +200,8 @@ function applyMaVisibility() {
   if (chartState.maSeries) chartState.maSeries.forEach((s, k) => s.applyOptions({ visible: state.maOn[k] }));
   if (chartState.ind5maSeries) chartState.ind5maSeries.applyOptions({ visible: state.ind5ma });
   if (chartState.indVwapSeries) chartState.indVwapSeries.applyOptions({ visible: state.indVwap });
+  if (chartState.bbUpperSeries) chartState.bbUpperSeries.applyOptions({ visible: state.indBB });
+  if (chartState.bbLowerSeries) chartState.bbLowerSeries.applyOptions({ visible: state.indBB });
 }
 function saveMaOn() {
   localStorage.setItem('cu.maOn2', state.maOn.map((b) => (b ? '1' : '0')).join(''));
@@ -468,6 +473,14 @@ function initChart() {
   });
   chartState.ind5maSeries = chart.addSeries(LightweightCharts.LineSeries, _indOpts(IND_5MA.color));
   chartState.indVwapSeries = chart.addSeries(LightweightCharts.LineSeries, _indOpts(IND_VWAP.color));
+  // 布林通道上下帶（主圖右軸；只有兩條，無中線）
+  const _bbBandOpts = {
+    color: BB_BAND_COLOR, lineWidth: 1, priceScaleId: 'right',
+    priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    priceFormat: { type: 'price', precision: 0, minMove: 1 },
+  };
+  chartState.bbUpperSeries = chart.addSeries(LightweightCharts.LineSeries, _bbBandOpts);
+  chartState.bbLowerSeries = chart.addSeries(LightweightCharts.LineSeries, _bbBandOpts);
   // 點 PL/PH 延伸的停損線（虛線、主圖右軸）；資料只在 anchor→觸及那段，平時為空。
   chartState.exitSeries = chart.addSeries(LightweightCharts.LineSeries, {
     color: EXIT_PL_COLOR, lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed,
@@ -573,6 +586,13 @@ function updateLegend(param) {
     };
     const ind5 = indTog(state.ind5ma, '5ma', '5MA', IND_5MA.color, chartState.ind5maArr);
     const indV = indTog(state.indVwap, 'vwap', 'VWAP', IND_VWAP.color, chartState.indVwapArr);
+    // 布林通道：開啟時顯示 hover 那根的上/下帶值
+    const bbU = chartState.bbUpArr ? chartState.bbUpArr[idx] : null;
+    const bbL = chartState.bbLoArr ? chartState.bbLoArr[idx] : null;
+    const indBB = state.indBB
+      ? `<span class="ind-toggle" data-toggle="bbband" style="color:${BB_BAND_COLOR}">BB(${BB_LEN},${BB_MULT})</span>`
+        + (bbU != null ? ` 上 ${r(bbU)} · 下 ${r(bbL)}` : ' <span class="muted">—</span>')
+      : `<span class="ind-toggle ma-off" data-toggle="bbband">BB(${BB_LEN},${BB_MULT})</span>`;
     const indPiv = indTog(state.indPivot, 'pivot', `Pivot${PIVOT_LEN}`, PIVOT_LEGEND_COLOR, null);
     // ORB：開啟時顯示 hover 那根所屬交易日的區間高/低
     const orbDk = typeof b.time === 'string' ? null : dayKey(b.time);
@@ -609,7 +629,7 @@ function updateLegend(param) {
       ? `<span class="ind-toggle" data-toggle="touch" style="color:${TOUCH_BULL_COLOR}">關卡觸及${nTouch ? ` ${nTouch}` : ''}</span>`
       : `<span class="ind-toggle ma-off" data-toggle="touch">關卡觸及</span>`;
     const maLine = `${master}　${perMa}`;
-    const indLine = `${ind5}<br>${indV}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}`;   // 5MA / VWAP / Pivot / ORB / 關卡觸及 / Risk 各自獨立一行
+    const indLine = `${ind5}<br>${indV}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}`;   // 5MA / VWAP / BB / Pivot / ORB / 關卡觸及 / Risk 各自獨立一行
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
@@ -856,7 +876,8 @@ async function loadKline(centerEpochToFocus) {
     bars.flatMap((b, i) => (volMa[i] != null ? [{ time: b.time, value: volMa[i] * VOL_MA_MULT }] : [])),
   );
   // BB %B（length 15, mult 2，population stdev）；突破 1 / 跌破 0 標記每段第一筆。
-  const bbArr = [];
+  // 同一輪順便算主圖布林上下帶（bbUpArr/bbLoArr）。
+  const bbArr = [], bbUpArr = [], bbLoArr = [];
   let bs = 0, bs2 = 0;
   for (let i = 0; i < bars.length; i++) {
     const c = bars[i].close;
@@ -866,11 +887,16 @@ async function loadKline(centerEpochToFocus) {
       const mean = bs / BB_LEN;
       const sd = Math.sqrt(Math.max(0, bs2 / BB_LEN - mean * mean));
       const up = mean + BB_MULT * sd, lo = mean - BB_MULT * sd;
+      bbUpArr[i] = up; bbLoArr[i] = lo;
       bbArr[i] = up > lo ? (c - lo) / (up - lo) : null;
-    } else bbArr[i] = null;
+    } else { bbUpArr[i] = null; bbLoArr[i] = null; bbArr[i] = null; }
   }
   chartState.bbArr = bbArr;
+  chartState.bbUpArr = bbUpArr;
+  chartState.bbLoArr = bbLoArr;
   chartState.bb.setData(bars.flatMap((b, i) => (bbArr[i] != null ? [{ time: b.time, value: bbArr[i] }] : [])));
+  chartState.bbUpperSeries.setData(bars.flatMap((b, i) => (bbUpArr[i] != null ? [{ time: b.time, value: bbUpArr[i] }] : [])));
+  chartState.bbLowerSeries.setData(bars.flatMap((b, i) => (bbLoArr[i] != null ? [{ time: b.time, value: bbLoArr[i] }] : [])));
   const bbMarks = [];
   for (let i = 0; i < bars.length; i++) {
     const v = bbArr[i];
@@ -968,6 +994,11 @@ function wireIndicatorToggles() {
       } else if (which === 'vwap') {
         state.indVwap = !state.indVwap;
         localStorage.setItem('cu.indVwap', state.indVwap ? '1' : '0');
+        applyMaVisibility();
+        updateLegend(null);
+      } else if (which === 'bbband') {
+        state.indBB = !state.indBB;
+        localStorage.setItem('cu.indBB', state.indBB ? '1' : '0');
         applyMaVisibility();
         updateLegend(null);
       } else if (which === 'pivot') {
