@@ -212,19 +212,23 @@ def main() -> None:
         ingested = get_ingested_zips(conn)
 
         all_zips = find_all_zips()
-        print(f"找到 {len(all_zips)} 個 zip 檔")
+        # 已匯入者（在 ingested）不再 parse，只有待匯入清單會真的開檔解析。
+        to_process = [
+            p for p in all_zips
+            if date_from_zip(p) is not None and p.name not in ingested
+        ]
+        skipped = len(all_zips) - len(to_process)
+        print(
+            f"找到 {len(all_zips)} 個 zip 檔，待匯入 {len(to_process)} 個"
+            f"（跳過 {skipped} 個已處理）",
+            flush=True,
+        )
 
         new_rows = 0
-        skipped = 0
+        parsed = 0
 
-        for zip_path in all_zips:
+        for i, zip_path in enumerate(to_process, 1):
             file_date = date_from_zip(zip_path)
-            if file_date is None:
-                continue
-            if zip_path.name in ingested:
-                skipped += 1
-                continue
-
             df = parse_zip(zip_path)
             if df.empty:
                 # 無效 zip / 非交易日 stub：不記入 ingested_zips，
@@ -237,6 +241,15 @@ def main() -> None:
                 [zip_path.name, file_date, len(df)],
             )
             new_rows += len(df)
+            parsed += 1
+            # 每 50 檔（或最後一檔）回報一次，避免長時間無輸出像當機；
+            # flush 讓 subprocess（morning_briefing）管線下的 stdout 即時顯示。
+            if parsed % 50 == 0 or i == len(to_process):
+                print(
+                    f"  匯入進度 {i}/{len(to_process)}"
+                    f"（最新 {file_date}，累計 {new_rows:,} 列）",
+                    flush=True,
+                )
 
         # 統計
         stats = conn.execute("""
