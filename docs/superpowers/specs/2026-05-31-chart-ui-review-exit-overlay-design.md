@@ -32,7 +32,7 @@
   - `H` = `stock_day` 當日成交值前 20 大，`Σ sign(change)·value / Σ value`
   - `W` = `stock_day` 中**固定權值清單**（模組常數 `TOP_WEIGHT_SYMBOLS`，~20 檔台股權值股）內，`Σ sign(change)·value / Σ value`
 - 公式（同 `dci_spec.md`）：`dci_long = 0.40W+0.35H+0.25B`、`dci_short = 0.30W+0.30H+0.40B`
-- regime 分帶（起始門檻，同 spec）：long 強≥+0.3/弱≤−0.1；short 強空≤−0.2/弱≥+0.1
+- regime 分帶（起始門檻，同 spec）：long 強≥+0.2/弱≤−0.1；short 強空≤−0.2/弱≥+0.1
 - 缺資料（無 breadth / 清單股不足）→ 回 `None`
 
 **`daystats.compute_daystats()` 擴充 payload**
