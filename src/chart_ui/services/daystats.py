@@ -426,7 +426,8 @@ def compute_daystats(*, date_str: str, db_path: Path | None = None) -> dict:
         if ema20:
             _lv = [("L1", LVL_QUANTILES[0][2] * ema20),
                    ("L2", LVL_QUANTILES[1][2] * ema20),
-                   ("L3", LVL_QUANTILES[2][2] * ema20)]
+                   ("L3", LVL_QUANTILES[2][2] * ema20),
+                   ("L4", LVL_QUANTILES[3][2] * ema20)]  # 顯示每一個關卡的觸及（含 L4）
             touches = _collect_touches(conn, sel, _lv)
             from src.chart_ui.services.dci_daily import compute_daily_dci
             dci = compute_daily_dci(conn, sel)

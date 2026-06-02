@@ -29,6 +29,21 @@ const PIVOT_LEN = 5;                     // pivot high/low 左右窗格根數
 const PIVOT_LEGEND_COLOR = '#ff9800';    // legend 開關代表色（橘）
 const PIVOT_HIGH_COLOR = '#ff7043';      // pivot high marker（橘紅，畫在上方）
 const PIVOT_LOW_COLOR = '#42a5f5';       // pivot low marker（藍，畫在下方）
+// ORB（開盤區間突破）：每交易日 08:45–08:57 為區間，08:58–09:15 收盤嚴格突破標記。
+// 上、下各取窗內第一根突破；區間高低各畫一條水平線（延伸到 09:15）。
+const ORB_RANGE_START = 525;   // 08:45（一日內分鐘數）
+const ORB_RANGE_END = 537;     // 08:57（含）
+const ORB_BREAK_START = 538;   // 08:58
+const ORB_BREAK_END = 555;     // 09:15（含）
+const ORB_HIGH_COLOR = '#ef4444';   // 區間高（紅，台灣慣例）
+const ORB_LOW_COLOR = '#22c55e';    // 區間低（綠）
+const ORB_LEGEND_COLOR = '#d4a574'; // legend 開關代表色
+// 關卡觸及標示（從覆盤 overlay 抽出的獨立指標）：選定日多/空各階首觸。用自訂 primitive 畫
+// 圓點+階數文字（v5 marker 無 offset，故自繪以拉開與 K 棒的距離）。
+const TOUCH_BULL_COLOR = '#e0623d'; // 多方觸及（橘紅，畫下方）
+const TOUCH_BEAR_COLOR = '#3d9e6a'; // 空方觸及（綠，畫上方）
+const TOUCH_GAP = 14;               // 文字距圓點（關卡價）的像素間距（CSS px，往外側拉開）
+const TOUCH_RADIUS = 4;             // 圓點半徑（CSS px）
 // EstRisk：移植 close_risk_lines.pine。risk/safe 來自後端 /api/risklevels（全歷史 EMA20 日盤
 // 高低範圍，risk=ema/4、safe=risk/5），每個交易日一組值；純 legend 數值（同 pine 的
 // display.status_line），不在圖上畫線。EMA 必須用全歷史算，故不在前端（只載入數日視窗）計算。
@@ -47,6 +62,8 @@ const state = {
   ind5ma: localStorage.getItem('cu.ind5ma') === '1',     // 獨立 1分K 5MA（預設關）
   indVwap: localStorage.getItem('cu.indVwap') === '1',   // 獨立 VWAP（預設關）
   indPivot: localStorage.getItem('cu.indPivot') === '1', // pivot high/low（預設關）
+  indOrb: localStorage.getItem('cu.indOrb') === '1',     // ORB 開盤區間突破（預設關）
+  indTouch: localStorage.getItem('cu.indTouch') !== '0', // 關卡觸及標示（預設開）
   indRisk: localStorage.getItem('cu.indRisk') !== '0',   // EstRisk 風險/安全價位（預設開）
   centerDate: null,           // 'YYYY-MM-DD'
   list: null,                 // 目前清單 payload
@@ -81,6 +98,7 @@ function nearestBarTime(targetEpoch) {
 function drawTradeMarkers(item) {
   clearMarkers();
   if (!item || state.tf === '1d') return;            // 進出場 marker 僅 intraday
+  if (state.list && state.list.entry_marker === false) return;  // 清單關閉 generic「進」箭頭（如 ORB，指標自帶標記）
   // 『所有交易日』項目只有 time、無交易資訊 → 不畫 marker。
   const hasTrade = item.side || item.entry != null || item.exit_time != null
     || (item.levels && item.levels.length);
@@ -122,21 +140,12 @@ function drawTradeMarkers(item) {
   }
 }
 
-// 覆盤 overlay：多、空兩個方向的觸及 marker 都畫 + 09:30/10:45 時間線。
-// 關卡水平線已移除(太雜)。不自行 clearMarkers（由呼叫端 maybeDrawReview 清）；intraday 才畫。
+// 覆盤 overlay：09:30/10:45 時間線（關卡觸及標示已抽成獨立指標 applyTouchMarkers）。
+// 不自行 clearMarkers（由呼叫端 maybeDrawReview 清）；intraday 才畫。
 function drawReviewOverlay(d) {
   if (state.tf === '1d' || !chartState.candle) return;
-  if (!d || !d.touches) return;
-  const tch = d.touches;
+  if (!d) return;
   const tm = [];
-  for (const t of (tch.bull || [])) tm.push({
-    time: nearestBarTime(localToEpoch(`${d.date} ${t.time}:00`)), position: 'belowBar',
-    shape: 'circle', color: '#e0623d', text: `多${t.level} ${t.time}`,
-  });
-  for (const t of (tch.bear || [])) tm.push({
-    time: nearestBarTime(localToEpoch(`${d.date} ${t.time}:00`)), position: 'aboveBar',
-    shape: 'circle', color: '#3d9e6a', text: `空${t.level} ${t.time}`,
-  });
   for (const hm of ['09:30', '10:45']) tm.push({
     time: nearestBarTime(localToEpoch(`${d.date} ${hm}:00`)), position: 'aboveBar',
     shape: 'arrowDown', color: '#888', text: hm,
@@ -147,6 +156,27 @@ function drawReviewOverlay(d) {
       ? (markerState.handle.setMarkers(tm), markerState.handle)
       : LightweightCharts.createSeriesMarkers(chartState.candle, tm);
   }
+}
+
+// 關卡觸及標示（獨立指標，預設開）：選定日(window._dayStats)多/空各階首觸。顯示每一個有觸及
+// 的關卡（L1–L4）。anchor.price = 該階關卡投射價（t.price）→ touchLinesPrimitive 把圓點畫在
+// 關卡價上，階數文字往外側（多往上/空往下）拉開 TOUCH_GAP。需 bars 與 _dayStats 都就緒。
+function applyTouchMarkers() {
+  const d = window._dayStats;
+  const bars = chartState.bars;
+  const anchors = [];
+  if (state.indTouch && state.tf !== '1d' && d && d.touches && bars && bars.length) {
+    for (const t of (d.touches.bull || [])) {
+      const bt = nearestBarTime(localToEpoch(`${d.date} ${t.time}:00`));
+      if (bt != null && t.price != null) anchors.push({ time: bt, price: t.price, side: 'bull', label: t.level });
+    }
+    for (const t of (d.touches.bear || [])) {
+      const bt = nearestBarTime(localToEpoch(`${d.date} ${t.time}:00`));
+      if (bt != null && t.price != null) anchors.push({ time: bt, price: t.price, side: 'bear', label: t.level });
+    }
+  }
+  chartState.touchAnchors = anchors;
+  if (touchReqUpdate) touchReqUpdate();
 }
 
 // 在 bars 與 daystats 都就緒、且非回測交易項時，畫覆盤 overlay。
@@ -228,6 +258,67 @@ function applyPivotMarkers() {
   const marks = state.indPivot ? (chartState.pivotMarks || []) : [];
   chartState.pivotMarkersHandle = chartState.pivotMarkersHandle
     ? (chartState.pivotMarkersHandle.setMarkers(marks), chartState.pivotMarkersHandle)
+    : LightweightCharts.createSeriesMarkers(chartState.candle, marks);
+}
+
+// ORB：每交易日 08:45–08:57 區間，08:58–09:15 收盤嚴格突破。上、下各取窗內第一根。
+// 回傳 windows（dayKey→{left,right,hi,lo}：區間高低 + 08:45–09:15 視窗左右界 bar time，供
+// 自訂 primitive 畫每日獨立水平線段）、markers（突破當根箭頭）。線段用 primitive 而非 LineSeries：
+// v5 LineSeries 會把 whitespace 直接連成斜線（不斷開），故改用 canvas 逐日畫。
+function computeOrb(bars) {
+  const n = bars.length;
+  const windows = {};
+  const markers = [];
+  let i = 0;
+  while (i < n) {
+    if (typeof bars[i].time === 'string') { i++; continue; }   // 日線無 intraday
+    const dk = dayKey(bars[i].time);
+    let j = i;
+    while (j < n && typeof bars[j].time !== 'string' && dayKey(bars[j].time) === dk) j++;
+    // [i, j) 為同一交易日；先求區間高低
+    let hi = -Infinity, lo = Infinity, hasRange = false;
+    for (let k = i; k < j; k++) {
+      const m = todMin(bars[k].time);
+      if (m >= ORB_RANGE_START && m <= ORB_RANGE_END) {
+        if (bars[k].high > hi) hi = bars[k].high;
+        if (bars[k].low < lo) lo = bars[k].low;
+        hasRange = true;
+      }
+    }
+    if (hasRange) {
+      let left = null, right = null;
+      let longDone = false, shortDone = false;
+      for (let k = i; k < j; k++) {
+        const m = todMin(bars[k].time);
+        if (m >= ORB_RANGE_START && m <= ORB_BREAK_END) {   // 線段視窗 08:45–09:15
+          if (left == null) left = bars[k].time;
+          right = bars[k].time;
+        }
+        if (m < ORB_BREAK_START || m > ORB_BREAK_END) continue;
+        const c = bars[k].close;
+        if (!longDone && c > hi) {                        // 標示進場價=突破當根收盤
+          markers.push({ time: bars[k].time, position: 'belowBar', shape: 'arrowUp', color: ORB_HIGH_COLOR, text: `多突破 ${Math.round(c)}` });
+          longDone = true;
+        }
+        if (!shortDone && c < lo) {
+          markers.push({ time: bars[k].time, position: 'aboveBar', shape: 'arrowDown', color: ORB_LOW_COLOR, text: `空突破 ${Math.round(c)}` });
+          shortDone = true;
+        }
+      }
+      windows[dk] = { left, right, hi, lo };
+    }
+    i = j;
+  }
+  markers.sort((a, b) => a.time - b.time);
+  return { windows, markers };
+}
+
+// 套用 ORB 突破 marker（獨立 handle）；關閉時清空。
+function applyOrbMarkers() {
+  if (!chartState.candle) return;
+  const marks = state.indOrb ? (chartState.orbMarks || []) : [];
+  chartState.orbMarkersHandle = chartState.orbMarkersHandle
+    ? (chartState.orbMarkersHandle.setMarkers(marks), chartState.orbMarkersHandle)
     : LightweightCharts.createSeriesMarkers(chartState.candle, marks);
 }
 
@@ -363,6 +454,8 @@ function initChart() {
     priceFormat: { type: 'price', precision: 0, minMove: 1 },   // 台指期為整數，y 軸不顯示小數
   });
   chartState.candle.attachPrimitive(sessionLinesPrimitive);   // 盤別分界垂直線
+  chartState.candle.attachPrimitive(orbLinesPrimitive);       // ORB 區間高/低水平線段
+  chartState.candle.attachPrimitive(touchLinesPrimitive);     // 關卡觸及圓點+階數
   chartState.maSeries = MA_DEFS.map((d) => chart.addSeries(LightweightCharts.LineSeries, {
     color: d.color, lineWidth: 1, priceScaleId: 'right',
     priceLineVisible: false, lastValueVisible: false,
@@ -481,6 +574,19 @@ function updateLegend(param) {
     const ind5 = indTog(state.ind5ma, '5ma', '5MA', IND_5MA.color, chartState.ind5maArr);
     const indV = indTog(state.indVwap, 'vwap', 'VWAP', IND_VWAP.color, chartState.indVwapArr);
     const indPiv = indTog(state.indPivot, 'pivot', `Pivot${PIVOT_LEN}`, PIVOT_LEGEND_COLOR, null);
+    // ORB：開啟時顯示 hover 那根所屬交易日的區間高/低
+    const orbDk = typeof b.time === 'string' ? null : dayKey(b.time);
+    const orbRange = orbDk != null && chartState.orbWindows ? chartState.orbWindows[orbDk] : null;
+    let indOrb;
+    if (!state.indOrb) {
+      indOrb = `<span class="ind-toggle ma-off" data-toggle="orb">ORB</span>`;
+    } else if (orbRange) {
+      indOrb = `<span class="ind-toggle" data-toggle="orb" style="color:${ORB_LEGEND_COLOR}">ORB</span>`
+        + ` <span style="color:${ORB_HIGH_COLOR}">高 ${r(orbRange.hi)}</span>`
+        + ` · <span style="color:${ORB_LOW_COLOR}">低 ${r(orbRange.lo)}</span>`;
+    } else {
+      indOrb = `<span class="ind-toggle" data-toggle="orb" style="color:${ORB_LEGEND_COLOR}">ORB</span> <span class="muted">—</span>`;
+    }
     // EstRisk：開啟時顯示四個值（收+R / 高+S / 低−S / 收−R），各自上色；無完成日 → —
     const rs = chartState.riskArr ? chartState.riskArr[idx] : null;
     const C = RISK_COLORS;
@@ -496,8 +602,14 @@ function updateLegend(param) {
     } else {
       indRisk = `<span class="ind-toggle" data-toggle="risk" style="color:${C.upR}">Risk</span> <span class="muted">—</span>`;
     }
+    // 關卡觸及：選定日 touches 的多/空觸及數（不隨 hover 變）
+    const tch = window._dayStats && window._dayStats.touches;
+    const nTouch = tch ? ((tch.bull || []).length + (tch.bear || []).length) : 0;
+    const indTouch = state.indTouch
+      ? `<span class="ind-toggle" data-toggle="touch" style="color:${TOUCH_BULL_COLOR}">關卡觸及${nTouch ? ` ${nTouch}` : ''}</span>`
+      : `<span class="ind-toggle ma-off" data-toggle="touch">關卡觸及</span>`;
     const maLine = `${master}　${perMa}`;
-    const indLine = `${ind5}<br>${indV}<br>${indPiv}<br>${indRisk}`;   // 5MA / VWAP / Pivot / Risk 各自獨立一行
+    const indLine = `${ind5}<br>${indV}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}`;   // 5MA / VWAP / Pivot / ORB / 關卡觸及 / Risk 各自獨立一行
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
@@ -532,6 +644,11 @@ function isDayTod(t) {                       // t = epoch 秒（intraday）
 function dayKey(t) {
   const d = new Date(t * 1000);
   return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+}
+// 一日內分鐘數（t = epoch 秒，intraday）；08:45 → 525。
+function todMin(t) {
+  const d = new Date(t * 1000);
+  return d.getUTCHours() * 60 + d.getUTCMinutes();
 }
 
 const _sessionRenderer = {
@@ -584,6 +701,101 @@ const sessionLinesPrimitive = {
   paneViews() { return [_sessionPaneView]; },
 };
 
+// === ORB 區間高/低水平線段（primitive；逐日畫，跨日不連線）===
+let orbReqUpdate = null;
+const _orbRenderer = {
+  draw(target) {
+    if (state.tf === '1d' || !state.indOrb) return;
+    const chart = chartState.chart;
+    const series = chartState.candle;
+    const windows = chartState.orbWindows;
+    if (!chart || !series || !windows) return;
+    const ts = chart.timeScale();
+    const half = (ts.options().barSpacing || 6) / 2;
+    target.useBitmapCoordinateSpace((scope) => {
+      const ctx = scope.context;
+      const hpr = scope.horizontalPixelRatio;
+      const vpr = scope.verticalPixelRatio;
+      ctx.save();
+      ctx.lineWidth = Math.max(1, Math.floor(hpr));
+      for (const dk in windows) {
+        const w = windows[dk];
+        if (w.left == null || w.right == null) continue;
+        const xL = ts.timeToCoordinate(w.left);
+        const xR = ts.timeToCoordinate(w.right);
+        if (xL == null || xR == null) continue;
+        const x1 = (xL - half) * hpr;
+        const x2 = (xR + half) * hpr;
+        const seg = (price, color) => {
+          const y = series.priceToCoordinate(price);
+          if (y == null) return;
+          const py = Math.round(y * vpr);
+          ctx.strokeStyle = color;
+          ctx.beginPath();
+          ctx.moveTo(x1, py);
+          ctx.lineTo(x2, py);
+          ctx.stroke();
+        };
+        seg(w.hi, ORB_HIGH_COLOR);
+        seg(w.lo, ORB_LOW_COLOR);
+      }
+      ctx.restore();
+    });
+  },
+};
+const _orbPaneView = { renderer() { return _orbRenderer; }, zOrder() { return 'top'; } };
+const orbLinesPrimitive = {
+  attached(p) { orbReqUpdate = p.requestUpdate; },
+  detached() { orbReqUpdate = null; },
+  updateAllViews() {},
+  paneViews() { return [_orbPaneView]; },
+};
+
+// === 關卡觸及圓點+階數（primitive；自繪以拉開文字與 K 棒的距離）===
+let touchReqUpdate = null;
+const _touchRenderer = {
+  draw(target) {
+    if (state.tf === '1d' || !state.indTouch) return;
+    const chart = chartState.chart;
+    const series = chartState.candle;
+    const anchors = chartState.touchAnchors;
+    if (!chart || !series || !anchors || !anchors.length) return;
+    const ts = chart.timeScale();
+    target.useBitmapCoordinateSpace((scope) => {
+      const ctx = scope.context;
+      const hpr = scope.horizontalPixelRatio;
+      const vpr = scope.verticalPixelRatio;
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = `${Math.round(11 * vpr)}px -apple-system, sans-serif`;
+      for (const a of anchors) {
+        const x = ts.timeToCoordinate(a.time);
+        const yLevel = series.priceToCoordinate(a.price);   // 圓點畫在關卡價上
+        if (x == null || yLevel == null) continue;
+        const dir = a.side === 'bull' ? -1 : 1;            // 外側方向：多在上(↑)、空在下(↓)
+        const cx = x * hpr;
+        const cy = yLevel * vpr;
+        const color = a.side === 'bull' ? TOUCH_BULL_COLOR : TOUCH_BEAR_COLOR;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(cx, cy, TOUCH_RADIUS * vpr, 0, Math.PI * 2);
+        ctx.fill();
+        // 文字往外側拉開：多→圓點上方、空→圓點下方
+        ctx.textBaseline = a.side === 'bull' ? 'bottom' : 'top';
+        ctx.fillText(a.label, cx, cy + dir * TOUCH_GAP * vpr);
+      }
+      ctx.restore();
+    });
+  },
+};
+const _touchPaneView = { renderer() { return _touchRenderer; }, zOrder() { return 'top'; } };
+const touchLinesPrimitive = {
+  attached(p) { touchReqUpdate = p.requestUpdate; },
+  detached() { touchReqUpdate = null; },
+  updateAllViews() {},
+  paneViews() { return [_touchPaneView]; },
+};
+
 function klineUrl() {
   const p = new URLSearchParams({ tf: state.tf, session: state.session, adjust: state.adjust });
   if (state.tf === '1d') return `/api/kline?${p}`;
@@ -615,6 +827,12 @@ async function loadKline(centerEpochToFocus) {
   // Pivot high/low（左右各 PIVOT_LEN 根）
   chartState.pivotMarks = computePivotMarkers(bars, PIVOT_LEN);
   applyPivotMarkers();
+  // ORB 開盤區間突破（每日區間高低線段由 orbLinesPrimitive 畫 + 突破箭頭 marker）
+  const orb = computeOrb(bars);
+  chartState.orbWindows = orb.windows;
+  chartState.orbMarks = orb.markers;
+  applyOrbMarkers();
+  if (orbReqUpdate) orbReqUpdate();
   // EstRisk 風險/安全價位（legend 數值，每根 K 的 {risk, safe}）
   chartState.riskArr = computeRiskSafe(bars);
   clearExitOverlay();                            // 換日/換 tf → anchor index 失效，清掉停損延伸線
@@ -757,6 +975,17 @@ function wireIndicatorToggles() {
         localStorage.setItem('cu.indPivot', state.indPivot ? '1' : '0');
         applyPivotMarkers();
         updateLegend(null);
+      } else if (which === 'orb') {
+        state.indOrb = !state.indOrb;
+        localStorage.setItem('cu.indOrb', state.indOrb ? '1' : '0');
+        applyOrbMarkers();
+        if (orbReqUpdate) orbReqUpdate();
+        updateLegend(null);
+      } else if (which === 'touch') {
+        state.indTouch = !state.indTouch;
+        localStorage.setItem('cu.indTouch', state.indTouch ? '1' : '0');
+        applyTouchMarkers();
+        updateLegend(null);
       } else if (which === 'risk') {
         state.indRisk = !state.indRisk;
         localStorage.setItem('cu.indRisk', state.indRisk ? '1' : '0');
@@ -811,6 +1040,7 @@ async function renderDayStats(date) {
   catch (_) { el.innerHTML = '<div class="sec sec-title">統計載入失敗</div>'; return; }
   window._dayStats = d;
   maybeDrawReview();
+  applyTouchMarkers();
   const r = (x) => (x == null ? '—' : Math.round(x).toLocaleString());
   const ar = d.avg_range_20 || {};
   const t = d.today;
@@ -942,7 +1172,7 @@ async function selectItem(i) {
   document.querySelector('.list-row.active')?.scrollIntoView({ block: 'nearest' });
 }
 
-window._afterKline = () => { drawTradeMarkers(window._pendingItem); maybeDrawReview(); };
+window._afterKline = () => { drawTradeMarkers(window._pendingItem); maybeDrawReview(); applyTouchMarkers(); };
 
 async function loadList(listId) {
   state.list = await fetchJSON(`/api/lists/${encodeURIComponent(listId)}`);
