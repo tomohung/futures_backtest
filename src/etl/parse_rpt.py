@@ -5,7 +5,20 @@ Step 1: 解析 rpt 檔 → ticks 表
 每個 zip 包含一個同名 .rpt（CSV），
 解析後過濾出 TX 台指期資料，寫入 DuckDB ticks 表。
 
-支援增量匯入：已存在的 trade_date 跳過。
+增量匯入以「逐 zip 檔名」追蹤（ingested_zips 表），每個 zip 只處理一次。
+
+為何不以 trade_date 判斷已匯入？
+期交所每個 Daily_D.zip 同時含多個 trade_date 的片段，而單一 trade_date 的資料又
+拆散在兩個檔：
+  - X 的日盤(08:45~13:45) + 凌晨(00:00~05:00) 在 Daily_X
+  - X 的晚盤(15:00~23:59) 在 Daily_(X+1)
+若以「trade_date 有無資料」判斷跳過，會出兩種錯：
+  (1) X 的晚盤先從 Daily_(X+1) 進庫 → X 被視為已匯入 → Daily_X(含日盤)被整個跳過，
+      日盤永遠補不到（原始 bug）。
+  (2) 颱風假等「有檔但永遠沒日盤」的日期，會被反覆處理 → 夜盤 tick 重複累積。
+改以 zip 檔名為單位追蹤，每檔恰好處理一次，可同時避免上述兩者。
+只有成功解析出資料的 zip 才記入 ingested_zips；無效/非交易日 stub 不記，
+待之後被換成真檔時仍會重試。
 """
 
 import argparse
@@ -13,7 +26,7 @@ import zipfile
 import io
 import re
 from pathlib import Path
-from datetime import date
+from datetime import date, timedelta
 
 import duckdb
 import pandas as pd
@@ -104,12 +117,18 @@ def init_db(conn: duckdb.DuckDBPyConnection) -> None:
             is_auction   BOOLEAN
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ingested_zips (
+            filename   VARCHAR PRIMARY KEY,
+            file_date  DATE,
+            n_rows     BIGINT
+        )
+    """)
 
 
-def get_imported_dates(conn: duckdb.DuckDBPyConnection) -> set:
-    rows = conn.execute(
-        "SELECT DISTINCT trade_date FROM ticks WHERE symbol = 'TX'"
-    ).fetchall()
+def get_ingested_zips(conn: duckdb.DuckDBPyConnection) -> set:
+    """回傳已成功匯入的 zip 檔名集合（每個 zip 只處理一次的依據）。"""
+    rows = conn.execute("SELECT filename FROM ingested_zips").fetchall()
     return {r[0] for r in rows}
 
 
@@ -123,8 +142,16 @@ def get_recent_zip_dates(n: int) -> set[date]:
 
 
 def find_all_zips() -> list[Path]:
-    zips = sorted(RAW_DIR.glob("**/Daily_*.zip"))
-    return zips
+    """回傳所有 zip 路徑，並以「檔名」去重。
+
+    年界檔（如 Daily_2025_12_31.zip）可能同時出現在相鄰兩個年份子目錄，
+    內容相同。以檔名去重，確保每個 zip 只被處理一次（避免重複插入 ticks，
+    也避免 ingested_zips 的主鍵衝突）。
+    """
+    seen: dict[str, Path] = {}
+    for p in sorted(RAW_DIR.glob("**/Daily_*.zip")):
+        seen.setdefault(p.name, p)
+    return list(seen.values())
 
 
 def date_from_zip(path: Path) -> date | None:
@@ -141,7 +168,12 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=2,
         metavar="N",
-        help="強制重新匯入磁碟上最新 N 個 zip 日期的資料（先刪後插，預設 2）",
+        help="重新匯入磁碟上最新 N 個 zip 的資料（含跨檔的晚盤，先刪後插，預設 2）",
+    )
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="清空 ticks 與 ingested_zips，從所有 zip 全量重建（修復歷史重複/缺漏）",
     )
     return parser.parse_args()
 
@@ -153,44 +185,58 @@ def main() -> None:
     with duckdb.connect(str(DB_PATH)) as conn:
         init_db(conn)
 
-        # 刪除最近 N 個 zip 日期的 ticks，強制重新匯入
-        reimport_dates = get_recent_zip_dates(args.reimport_recent)
-        if reimport_dates:
-            print(f"強制重新匯入最近 {len(reimport_dates)} 個日期：{sorted(reimport_dates)}")
-            for d in sorted(reimport_dates):
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM ticks WHERE trade_date = ?", [d]
+        if args.rebuild:
+            print("全量重建：清空 ticks 與 ingested_zips")
+            conn.execute("DELETE FROM ticks")
+            conn.execute("DELETE FROM ingested_zips")
+        elif args.reimport_recent > 0:
+            # 重新匯入最新 N 個 zip。trade_date X 的晚盤(15:00+)落在 Daily_(X+1)，
+            # 故除了刪 trade_date >= K，還要刪 K-1 的晚盤（它在 Daily_K 內），
+            # 才能在重處理 Daily_K 時乾淨還原、不重複。
+            recent = sorted(get_recent_zip_dates(args.reimport_recent))
+            if recent:
+                k = recent[0]
+                ndel = conn.execute(
+                    "SELECT COUNT(*) FROM ticks "
+                    "WHERE trade_date >= ? OR (trade_date = ? AND trade_time >= TIME '15:00:00')",
+                    [k, k - timedelta(days=1)],
                 ).fetchone()[0]
-                if count > 0:
-                    conn.execute("DELETE FROM ticks WHERE trade_date = ?", [d])
-                    print(f"  刪除 {d} 的 {count:,} 筆 ticks")
+                conn.execute(
+                    "DELETE FROM ticks "
+                    "WHERE trade_date >= ? OR (trade_date = ? AND trade_time >= TIME '15:00:00')",
+                    [k, k - timedelta(days=1)],
+                )
+                conn.execute("DELETE FROM ingested_zips WHERE file_date >= ?", [k])
+                print(f"重新匯入最新 {args.reimport_recent} 個 zip：刪除 trade_date >= {k} 的 {ndel:,} 筆")
 
-        imported_dates = get_imported_dates(conn)
+        ingested = get_ingested_zips(conn)
 
         all_zips = find_all_zips()
         print(f"找到 {len(all_zips)} 個 zip 檔")
 
         new_rows = 0
         skipped = 0
-        processed_dates: list[date] = []
 
         for zip_path in all_zips:
             file_date = date_from_zip(zip_path)
             if file_date is None:
                 continue
-            if file_date in imported_dates:
+            if zip_path.name in ingested:
                 skipped += 1
                 continue
 
             df = parse_zip(zip_path)
             if df.empty:
-                # 非交易日或無 TX 資料，標記已處理（不再重複嘗試）
-                # 用一筆 dummy 也不太好，直接跳過即可，下次仍會重試
+                # 無效 zip / 非交易日 stub：不記入 ingested_zips，
+                # 之後若被換成真檔仍會重試。
                 continue
 
             conn.execute("INSERT INTO ticks SELECT * FROM df")
+            conn.execute(
+                "INSERT OR IGNORE INTO ingested_zips VALUES (?, ?, ?)",
+                [zip_path.name, file_date, len(df)],
+            )
             new_rows += len(df)
-            processed_dates.extend(df["trade_date"].unique().tolist())
 
         # 統計
         stats = conn.execute("""
@@ -209,7 +255,7 @@ def main() -> None:
         """).fetchone()
 
         print(f"\n=== ticks 表統計（TX）===")
-        print(f"本次新增：{new_rows:,} 筆（跳過 {skipped} 個已匯入日期）")
+        print(f"本次新增：{new_rows:,} 筆（跳過 {skipped} 個已處理 zip）")
         print(f"總筆數：  {stats[0]:,}")
         print(f"日期範圍：{stats[1]} ~ {stats[2]}")
         print(f"交易日數：{stats[3]}")

@@ -89,6 +89,17 @@ def _is_known_non_trading(target_date: date, trust_marker_days: int = 7) -> bool
     return target_date < cutoff
 
 
+def _should_persist_marker(target_date: date) -> bool:
+    """是否可安全地把「非交易日」結果寫成永久 marker。
+
+    只有「過去的日期」(target_date < 今天) 才寫——此時若它是交易日，期交所檔案
+    必然已公布；回傳非 zip 即可確定為休市。對「今天/未來」回傳非 zip 多半只是
+    資料尚未公布（例如早上 6 點跑、當天還沒開盤），絕不可寫 marker，否則會留下
+    0-byte 殘檔，永久擋住當天真實資料的下載。
+    """
+    return target_date < taiwan_today()
+
+
 # ---------------------------------------------------------------------------
 # Core download logic
 # ---------------------------------------------------------------------------
@@ -129,9 +140,10 @@ def download_one(target_date: date, delay: float = 1.0, force: bool = False) -> 
             content: bytes = resp.read()
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            marker = _marker_path(target_date)
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.touch()
+            if _should_persist_marker(target_date):
+                marker = _marker_path(target_date)
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.touch()
             return "non_trading"
         print(f"  [error] HTTP {e.code} for {target_date}")
         return "error"
@@ -141,10 +153,11 @@ def download_one(target_date: date, delay: float = 1.0, force: bool = False) -> 
 
     # magic-byte check: real zip starts with PK\x03\x04
     if content[:4] != ZIP_MAGIC:
-        # Cache the result so future runs skip this date without HTTP
-        marker = _marker_path(target_date)
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.touch()
+        # 只對「過去」的日期寫永久 marker；今天/未來只是資料未公布，不可寫
+        if _should_persist_marker(target_date):
+            marker = _marker_path(target_date)
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.touch()
         return "non_trading"
 
     # atomic write: .tmp → rename
