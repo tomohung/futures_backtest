@@ -2,7 +2,8 @@
 research/active/H095-reach-ladder-exit/dci_spec.md。
 
 W 用固定權值清單(無真實市值,以成交值近似權重)、H 用當日成交值前20、B 用漲跌家數。
-盤中即時版需另接盤中三序列；此處僅供 chart-ui 覆盤標「事後」。
+B/H 取「上市+上櫃(TWSE+TPEX)」全市場，與即時下單軟體一致；W 仍只取上市權值股
+(權值清單寫死、待改月更官方比重表)。盤中即時版需另接盤中三序列；此處僅供 chart-ui 覆盤標「事後」。
 """
 from __future__ import annotations
 
@@ -45,7 +46,7 @@ def _strength_norm(rows: list[dict] | None) -> float | None:
 
 def _rows(conn, sel: date, *, symbols: list[str] | None) -> list[dict]:
     """取當日個股 (last=close, prev=close-change, open) 列。
-    symbols 指定 → 權值清單；否則取成交值前 20。"""
+    symbols 指定 → 權值清單(僅上市)；否則取全市場(上市+上櫃)成交值前 20。"""
     if symbols is not None:
         ph = ",".join(["?"] * len(symbols))
         sql = (
@@ -57,7 +58,7 @@ def _rows(conn, sel: date, *, symbols: list[str] | None) -> list[dict]:
     else:
         sql = (
             "SELECT close, change, open FROM stock_day "
-            "WHERE market='TWSE' AND trade_date = ? AND close IS NOT NULL "
+            "WHERE trade_date = ? AND close IS NOT NULL "
             "AND value IS NOT NULL ORDER BY value DESC LIMIT 20"
         )
         params = [sel]
@@ -73,8 +74,8 @@ def _rows(conn, sel: date, *, symbols: list[str] | None) -> list[dict]:
 def compute_daily_dci(conn, sel: date) -> dict | None:
     """回傳 {W,H,B,dci_long,dci_short,regime_long,regime_short} 或 None（資料不足）。"""
     b = conn.execute(
-        "SELECT up_count, down_count, listed_count FROM market_breadth "
-        "WHERE market='TWSE' AND trade_date = ?", [sel]
+        "SELECT sum(up_count), sum(down_count), sum(listed_count) FROM market_breadth "
+        "WHERE trade_date = ?", [sel]
     ).fetchone()
     if not b or not b[2]:
         return None
