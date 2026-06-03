@@ -87,6 +87,7 @@ function clearMarkers() {
   if (markerState.handle) { try { markerState.handle.setMarkers([]); } catch (_) {} }
   for (const pl of markerState.priceLines) { try { chartState.candle.removePriceLine(pl); } catch (_) {} }
   markerState.priceLines = [];
+  if (chartState.reviewDate) { chartState.reviewDate = null; if (reviewReqUpdate) reviewReqUpdate(); }  // 覆盤時間線跟著清
 }
 
 // 把目標 epoch 對齊到最近的 bar time（marker/priceline 需落在資料點上）。
@@ -147,22 +148,14 @@ function drawTradeMarkers(item) {
   }
 }
 
-// 覆盤 overlay：09:30/10:45 時間線（關卡觸及標示已抽成獨立指標 applyTouchMarkers）。
+// 覆盤 overlay：09:30/10:45/11:30 時間線（垂直虛線，由 reviewLinesPrimitive 自繪）。
+// 關卡觸及標示已抽成獨立指標 applyTouchMarkers。
 // 不自行 clearMarkers（由呼叫端 maybeDrawReview 清）；intraday 才畫。
 function drawReviewOverlay(d) {
   if (state.tf === '1d' || !chartState.candle) return;
   if (!d) return;
-  const tm = [];
-  for (const hm of ['09:30', '10:45']) tm.push({
-    time: nearestBarTime(localToEpoch(`${d.date} ${hm}:00`)), position: 'aboveBar',
-    shape: 'arrowDown', color: '#888', text: hm,
-  });
-  if (tm.length) {
-    tm.sort((a, b) => a.time - b.time);
-    markerState.handle = markerState.handle
-      ? (markerState.handle.setMarkers(tm), markerState.handle)
-      : LightweightCharts.createSeriesMarkers(chartState.candle, tm);
-  }
+  chartState.reviewDate = d.date;                  // 'YYYY-MM-DD'；reviewLinesPrimitive 據此畫線
+  if (reviewReqUpdate) reviewReqUpdate();
 }
 
 // 關卡觸及標示（獨立指標，預設開）：選定日(window._dayStats)多/空各階首觸。顯示每一個有觸及
@@ -281,8 +274,9 @@ function applyPrevVwapLines() {
   mk(chartState.prevVwapClose2, PREV_VWAP.prev2, '前VWAP');
 }
 
-// Pivot high/low：以左右各 len 根為窗格。某根 high 嚴格大於兩側所有 high → pivot high；
-// low 嚴格小於兩側所有 low → pivot low（與兩側相等即不成立，避免平台重複標記）。
+// Pivot high/low：以左右各 len 根為窗格。比較採不對稱平手規則 → 平台（等高/等低）取「最後一根」：
+//   pivot high：左側須嚴格較低（>），右側允許相等（>=）→ 等高平台只有最後一根成立。
+//   pivot low ：左側須嚴格較高（<），右側允許相等（<=）→ 等低平台只有最後一根成立。
 // 歷史重播下可直接看完整資料判斷，不需等右側確認；marker 畫在 pivot 當根。
 function computePivotMarkers(bars, len) {
   const marks = [];
@@ -291,8 +285,9 @@ function computePivotMarkers(bars, len) {
     let isHigh = true, isLow = true;
     for (let j = i - len; j <= i + len; j++) {
       if (j === i) continue;
-      if (bars[j].high >= h) isHigh = false;
-      if (bars[j].low <= l) isLow = false;
+      const left = j < i;
+      if (left ? bars[j].high > h : bars[j].high >= h) isHigh = false;
+      if (left ? bars[j].low < l : bars[j].low <= l) isLow = false;
     }
     if (isHigh) marks.push({ time: bars[i].time, position: 'aboveBar', shape: 'arrowDown', color: PIVOT_HIGH_COLOR, text: 'PH' });
     if (isLow) marks.push({ time: bars[i].time, position: 'belowBar', shape: 'arrowUp', color: PIVOT_LOW_COLOR, text: 'PL' });
@@ -502,6 +497,7 @@ function initChart() {
     priceFormat: { type: 'price', precision: 0, minMove: 1 },   // 台指期為整數，y 軸不顯示小數
   });
   chartState.candle.attachPrimitive(sessionLinesPrimitive);   // 盤別分界垂直線
+  chartState.candle.attachPrimitive(reviewLinesPrimitive);    // 覆盤時間線 09:30/10:45/11:30
   chartState.candle.attachPrimitive(orbLinesPrimitive);       // ORB 區間高/低水平線段
   chartState.candle.attachPrimitive(touchLinesPrimitive);     // 關卡觸及圓點+階數
   chartState.maSeries = MA_DEFS.map((d) => chart.addSeries(LightweightCharts.LineSeries, {
@@ -769,6 +765,64 @@ const sessionLinesPrimitive = {
   detached() { sessionReqUpdate = null; },
   updateAllViews() {},
   paneViews() { return [_sessionPaneView]; },
+};
+
+// === 覆盤時間線（09:30 / 10:45 / 11:30 同色垂直虛線；僅覆盤日、無交易時畫）===
+let reviewReqUpdate = null;
+const REVIEW_COLOR = '#888';
+const REVIEW_TIMES = [[570, '09:30'], [645, '10:45'], [690, '11:30']];   // 分鐘 → 標籤
+const _reviewRenderer = {
+  draw(target) {
+    if (state.tf === '1d') return;
+    const chart = chartState.chart;
+    const bars = chartState.bars || [];
+    const rd = chartState.reviewDate;                  // 'YYYY-MM-DD' 或 null
+    if (!chart || !bars.length || !rd) return;
+    const rdKey = Number(rd.slice(0, 4) + rd.slice(5, 7) + rd.slice(8, 10));
+    const ts = chart.timeScale();
+    const logical = ts.getVisibleLogicalRange();
+    if (!logical) return;
+    const lo = Math.max(0, Math.floor(logical.from));
+    const hi = Math.min(bars.length - 1, Math.ceil(logical.to));
+    target.useBitmapCoordinateSpace((scope) => {
+      const ctx = scope.context;
+      const hpr = scope.horizontalPixelRatio;
+      const vpr = scope.verticalPixelRatio;
+      const h = scope.bitmapSize.height;
+      ctx.save();
+      ctx.lineWidth = Math.max(1, Math.floor(hpr));
+      ctx.setLineDash([5 * hpr, 4 * hpr]);
+      ctx.strokeStyle = REVIEW_COLOR;
+      ctx.fillStyle = REVIEW_COLOR;
+      ctx.font = `${Math.round(11 * vpr)}px sans-serif`;
+      ctx.textBaseline = 'top';
+      for (let i = lo; i <= hi; i++) {
+        const t = bars[i].time;
+        if (dayKey(t) !== rdKey) continue;
+        const m = todMin(t);
+        const lbl = REVIEW_TIMES.find((r) => r[0] === m);
+        if (!lbl) continue;
+        const x = ts.timeToCoordinate(t);
+        if (x == null) continue;
+        const px = Math.round(x * hpr);
+        ctx.beginPath();
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, h);
+        ctx.stroke();
+        ctx.setLineDash([]);                           // 標籤文字不沿用虛線
+        ctx.fillText(lbl[1], px + 3 * hpr, 3 * vpr);
+        ctx.setLineDash([5 * hpr, 4 * hpr]);
+      }
+      ctx.restore();
+    });
+  },
+};
+const _reviewPaneView = { renderer() { return _reviewRenderer; }, zOrder() { return 'top'; } };
+const reviewLinesPrimitive = {
+  attached(p) { reviewReqUpdate = p.requestUpdate; },
+  detached() { reviewReqUpdate = null; },
+  updateAllViews() {},
+  paneViews() { return [_reviewPaneView]; },
 };
 
 // === ORB 區間高/低水平線段（primitive；逐日畫，跨日不連線）===
