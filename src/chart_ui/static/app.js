@@ -27,6 +27,9 @@ const MA_DEFS = [
 // 獨立指標（與 6 均線群組分開、各自開關、預設關）
 const IND_5MA = { color: '#ffeb3b' };    // 1分K 5MA（黃）
 const IND_VWAP = { color: '#00bcd4' };   // VWAP 成交量加權均價（青）
+// 昨日 / 前日「日盤 VWAP 收盤值」水平線：標在今日行情上，看今日開盤是否落在此區間。皆虛線。
+// 同色系（黃），用透明度表達新舊：愈舊愈淡 → 昨日(近)較實、前日(舊)較透；深色底下也讓較近的較顯眼。
+const PREV_VWAP = { prev1: 'rgba(255, 209, 64, 0.95)', prev2: 'rgba(255, 209, 64, 0.42)' };  // 昨日 / 前日
 const PIVOT_LEN = 5;                     // pivot high/low 左右窗格根數
 const PIVOT_LEGEND_COLOR = '#ff9800';    // legend 開關代表色（橘）
 const PIVOT_HIGH_COLOR = '#ff7043';      // pivot high marker（橘紅，畫在上方）
@@ -63,6 +66,7 @@ const state = {
   maOn: (localStorage.getItem('cu.maOn2') || '000000').padEnd(6, '0').slice(0, 6).split('').map((c) => c === '1'),
   ind5ma: localStorage.getItem('cu.ind5ma') === '1',     // 獨立 1分K 5MA（預設關）
   indVwap: localStorage.getItem('cu.indVwap') === '1',   // 獨立 VWAP（預設關）
+  indPrevVwap: localStorage.getItem('cu.indPrevVwap') !== '0', // 昨/前日 日盤 VWAP 收盤水平線（預設開）
   indBB: localStorage.getItem('cu.indBB') === '1',       // 主圖布林通道上下帶（預設關）
   indPivot: localStorage.getItem('cu.indPivot') === '1', // pivot high/low（預設關）
   indOrb: localStorage.getItem('cu.indOrb') === '1',     // ORB 開盤區間突破（預設關）
@@ -236,6 +240,45 @@ function vwap(bars) {
     out[i] = cumV > 0 ? cumPV / cumV : tp;
   }
   return out;
+}
+
+// 各交易日「日盤 VWAP 收盤值」：只累積日盤(08:45–13:45) typical price×量，回傳 date→當日最終 VWAP。
+// 與主圖 VWAP 同義，但獨立於 session 模式（full 盤也只取日盤段），供畫昨/前日水平線。
+function dayVwapCloses(bars) {
+  const out = {};
+  const acc = {};
+  for (const b of bars) {
+    if (typeof b.time === 'string') continue;     // 日線無 intraday
+    if (!isDayTod(b.time)) continue;              // 只取日盤段
+    const d = epochDate(b.time);
+    const a = acc[d] || (acc[d] = { pv: 0, v: 0 });
+    const tp = (b.high + b.low + b.close) / 3;
+    const vol = b.volume || 0;
+    a.pv += tp * vol;
+    a.v += vol;
+    out[d] = a.v > 0 ? a.pv / a.v : tp;
+  }
+  return out;
+}
+
+// 畫昨日(prev1,暗黃)/前日(prev2,淡黃)的日盤 VWAP 收盤虛線（createPriceLine，全寬+右軸標籤）。
+// 值由 loadKline 算好存 chartState.prevVwapClose1/2；關閉或日線時只清除不畫。
+function applyPrevVwapLines() {
+  if (!chartState.candle) return;
+  for (const pl of chartState.prevVwapLines || []) {
+    try { chartState.candle.removePriceLine(pl); } catch (_) {}
+  }
+  chartState.prevVwapLines = [];
+  if (!state.indPrevVwap || state.tf === '1d') return;
+  const mk = (price, color, title) => {
+    if (price == null) return;
+    chartState.prevVwapLines.push(chartState.candle.createPriceLine({
+      price, color, lineStyle: LightweightCharts.LineStyle.Dashed, lineWidth: 1,
+      axisLabelVisible: true, title,
+    }));
+  };
+  mk(chartState.prevVwapClose1, PREV_VWAP.prev1, '昨VWAP');
+  mk(chartState.prevVwapClose2, PREV_VWAP.prev2, '前VWAP');
 }
 
 // Pivot high/low：以左右各 len 根為窗格。某根 high 嚴格大於兩側所有 high → pivot high；
@@ -586,6 +629,13 @@ function updateLegend(param) {
     };
     const ind5 = indTog(state.ind5ma, '5ma', '5MA', IND_5MA.color, chartState.ind5maArr);
     const indV = indTog(state.indVwap, 'vwap', 'VWAP', IND_VWAP.color, chartState.indVwapArr);
+    // 昨/前日 日盤 VWAP 收盤（值固定、非隨 hover；無前一日資料 → —）
+    const pvw = !state.indPrevVwap
+      ? `<span class="ind-toggle ma-off" data-toggle="pvwap">昨/前VWAP</span>`
+      : `<span class="ind-toggle" data-toggle="pvwap" style="color:${PREV_VWAP.prev1}">昨VWAP`
+        + `${chartState.prevVwapClose1 != null ? ' ' + r(chartState.prevVwapClose1) : ' —'}</span>`
+        + ` · <span style="color:${PREV_VWAP.prev2}">前VWAP`
+        + `${chartState.prevVwapClose2 != null ? ' ' + r(chartState.prevVwapClose2) : ' —'}</span>`;
     // 布林通道：開啟時顯示 hover 那根的上/下帶值
     const bbU = chartState.bbUpArr ? chartState.bbUpArr[idx] : null;
     const bbL = chartState.bbLoArr ? chartState.bbLoArr[idx] : null;
@@ -629,7 +679,7 @@ function updateLegend(param) {
       ? `<span class="ind-toggle" data-toggle="touch" style="color:${TOUCH_BULL_COLOR}">關卡觸及${nTouch ? ` ${nTouch}` : ''}</span>`
       : `<span class="ind-toggle ma-off" data-toggle="touch">關卡觸及</span>`;
     const maLine = `${master}　${perMa}`;
-    const indLine = `${ind5}<br>${indV}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}`;   // 5MA / VWAP / BB / Pivot / ORB / 關卡觸及 / Risk 各自獨立一行
+    const indLine = `${ind5}<br>${indV}<br>${pvw}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}`;   // 5MA / VWAP / 昨前VWAP / BB / Pivot / ORB / 關卡觸及 / Risk 各自獨立一行
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
@@ -844,6 +894,12 @@ async function loadKline(centerEpochToFocus) {
   chartState.indVwapArr = vwap(bars);
   chartState.ind5maSeries.setData(_toData(chartState.ind5maArr));
   chartState.indVwapSeries.setData(_toData(chartState.indVwapArr));
+  // 昨/前日 日盤 VWAP 收盤水平線（相對 centerDate 的前兩個交易日，皆取自已載入的 bars）
+  const _vwClose = dayVwapCloses(bars);
+  const _vwDates = Object.keys(_vwClose).filter((d) => d < state.centerDate).sort();
+  chartState.prevVwapClose1 = _vwDates.length ? _vwClose[_vwDates[_vwDates.length - 1]] : null;
+  chartState.prevVwapClose2 = _vwDates.length > 1 ? _vwClose[_vwDates[_vwDates.length - 2]] : null;
+  applyPrevVwapLines();
   // Pivot high/low（左右各 PIVOT_LEN 根）
   chartState.pivotMarks = computePivotMarkers(bars, PIVOT_LEN);
   applyPivotMarkers();
@@ -995,6 +1051,11 @@ function wireIndicatorToggles() {
         state.indVwap = !state.indVwap;
         localStorage.setItem('cu.indVwap', state.indVwap ? '1' : '0');
         applyMaVisibility();
+        updateLegend(null);
+      } else if (which === 'pvwap') {
+        state.indPrevVwap = !state.indPrevVwap;
+        localStorage.setItem('cu.indPrevVwap', state.indPrevVwap ? '1' : '0');
+        applyPrevVwapLines();
         updateLegend(null);
       } else if (which === 'bbband') {
         state.indBB = !state.indBB;
