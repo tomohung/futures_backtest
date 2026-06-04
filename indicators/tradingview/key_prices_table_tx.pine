@@ -6,24 +6,30 @@
 //
 // 演算法（對齊 src/chart_ui/services/daystats.py）：
 //   ema20      = 前 20 個交易日「日盤振幅(high-low)」的因果式 EMA(adjust=False)
-//   四階距離   = c × ema20，c = 0.385 / 0.497 / 0.711 / 0.977
-//                達到率(碰到機率) = 90% / 75% / 50% / 25%
+//   五階距離   = c × ema20，c = 0.385 / 0.497 / 0.711 / 0.977 / 1.225
+//                達到率(碰到機率) = 90% / 75% / 50% / 25% / 12.5%
+//                (L5=1.225 出自 H095 pooled 分位，延伸長尾關卡)
 //   多方關卡   = 今低 + 距（由今低往上投射預估高）→ 紅色
 //   空方關卡   = 今高 - 距（由今高往下投射預估低）→ 綠色
 //   今高/今低  = 盤中即時高低，高亮白字
-//   每組(多/空)各 5 列，依價格由高到低排序。
+//   每組(多/空)各 6 列(L1~L5 + 今高/低)，依價格由高到低排序。
 //
 //   續航提示（碰 L1 後依「首觸時間」查表決定瞄第幾階）：
 //     碰 L1 → 續 L2 / 續 L3 機率；碰 L2 後再更新一次續 L3。
 //     time 為當日分鐘數（08:45 = 525）；step function。
 //
 // 僅用日盤 08:45–13:45。延遲 1 天暖機，EMA 用前一日收盤後才更新（無 lookahead）。
+//
+// Alert：每階（多/空 × L1~L5，共 10 個）各有獨立 alertcondition，於 TradingView
+//   「建立警報」對話框的下拉選單逐一挑選；另有一個 alert() 動態訊息涵蓋「任一關卡觸及」
+//   （建警報時選「Any alert() function call」）。觸發定義＝方向性擺幅 ≥ d_i（與觸及面板同義），
+//   每階每日只在首觸那根 true，建議用「once per bar」。
 // ============================================================
 //@version=6
 indicator(
     title   = "Key Prices TX (關卡價表)",
     overlay = true,
-    max_lines_count = 20,
+    max_lines_count = 200,
     max_labels_count = 20
 )
 
@@ -42,16 +48,18 @@ show_bull    = input.bool(true,  "多方關卡線（紅）", group=GRP_VIZ)
 show_bear    = input.bool(true,  "空方關卡線（綠）", group=GRP_VIZ)
 show_lbl     = input.bool(true,  "線旁標示 L1~L4", group=GRP_VIZ)
 show_hint    = input.bool(true,  "顯示續航提示", group=GRP_VIZ)
-tbl_pos_in   = input.string("top_right", "表格位置",
+show_vlines  = input.bool(true,  "時間直線 9:30/10:45/11:30（灰）", group=GRP_VIZ)
+tbl_pos_in   = input.string("middle_right", "表格位置",
                  options=["top_right", "middle_right", "bottom_right", "top_left", "bottom_left"],
                  group=GRP_VIZ)
-txt_size_in  = input.string("normal", "字體大小", options=["tiny","small","normal","large"], group=GRP_VIZ)
+txt_size_in  = input.string("small", "字體大小", options=["tiny","small","normal","large"], group=GRP_VIZ)
 
 // 四階係數（c × ema20）
 c1 = input.float(0.385, "L1 係數 (90%)", step=0.001, group=GRP_CALC)
 c2 = input.float(0.497, "L2 係數 (75%)", step=0.001, group=GRP_CALC)
 c3 = input.float(0.711, "L3 係數 (50%)", step=0.001, group=GRP_CALC)
 c4 = input.float(0.977, "L4 係數 (25%)", step=0.001, group=GRP_CALC)
+c5 = input.float(1.225, "L5 係數 (12.5%)", step=0.001, group=GRP_CALC)
 
 // 配色（台灣慣例：多/漲=紅，空/跌=綠）
 col_bull   = color.new(#ef4444, 0)   // 多方 紅
@@ -108,17 +116,20 @@ d1 = ema_range * c1
 d2 = ema_range * c2
 d3 = ema_range * c3
 d4 = ema_range * c4
+d5 = ema_range * c5
 
 // 多方關卡（今低 + 距）
 m1 = sess_low + d1
 m2 = sess_low + d2
 m3 = sess_low + d3
 m4 = sess_low + d4
+m5 = sess_low + d5
 // 空方關卡（今高 - 距）
 s1 = sess_high - d1
 s2 = sess_high - d2
 s3 = sess_high - d3
 s4 = sess_high - d4
+s5 = sess_high - d5
 
 // ============================================================
 // 觸及追蹤（多方上擺 up_max / 空方下擺 dn_max，首觸時間記分鐘）
@@ -156,6 +167,84 @@ if in_session
             sL1_min := _t
         if na(sL2_min) and dn_max >= d2
             sL2_min := _t
+
+// ============================================================
+// 各關卡首觸 pulse（供 alert）
+//   與上方觸及追蹤同義：方向性擺幅(多 up_max / 空 dn_max) ≥ d_i 即「觸及」。
+//   每階每日只在「首觸的那一根」為 true，其餘 false → 適合設「once per bar」alert。
+// ============================================================
+var bool bt1 = false
+var bool bt2 = false
+var bool bt3 = false
+var bool bt4 = false
+var bool bt5 = false
+var bool st1 = false
+var bool st2 = false
+var bool st3 = false
+var bool st4 = false
+var bool st5 = false
+if entering_session
+    bt1 := false
+    bt2 := false
+    bt3 := false
+    bt4 := false
+    bt5 := false
+    st1 := false
+    st2 := false
+    st3 := false
+    st4 := false
+    st5 := false
+
+touch_ok = ready and in_session and not na(up_max) and not na(dn_max)
+bp1 = touch_ok and not bt1 and up_max >= d1
+bp2 = touch_ok and not bt2 and up_max >= d2
+bp3 = touch_ok and not bt3 and up_max >= d3
+bp4 = touch_ok and not bt4 and up_max >= d4
+bp5 = touch_ok and not bt5 and up_max >= d5
+sp1 = touch_ok and not st1 and dn_max >= d1
+sp2 = touch_ok and not st2 and dn_max >= d2
+sp3 = touch_ok and not st3 and dn_max >= d3
+sp4 = touch_ok and not st4 and dn_max >= d4
+sp5 = touch_ok and not st5 and dn_max >= d5
+if bp1
+    bt1 := true
+if bp2
+    bt2 := true
+if bp3
+    bt3 := true
+if bp4
+    bt4 := true
+if bp5
+    bt5 := true
+if sp1
+    st1 := true
+if sp2
+    st2 := true
+if sp3
+    st3 := true
+if sp4
+    st4 := true
+if sp5
+    st5 := true
+
+// 每階獨立 alertcondition（建警報時於下拉選單逐一挑選；{{close}} 為觸發當下價格）
+alertcondition(bp1, "多方觸及 L1 (90%)",   "TX 多方觸及 L1 (90%地板)  close={{close}}")
+alertcondition(bp2, "多方觸及 L2 (75%)",   "TX 多方觸及 L2 (75%)  close={{close}}")
+alertcondition(bp3, "多方觸及 L3 (50%)",   "TX 多方觸及 L3 (50%)  close={{close}}")
+alertcondition(bp4, "多方觸及 L4 (25%)",   "TX 多方觸及 L4 (25%)  close={{close}}")
+alertcondition(bp5, "多方觸及 L5 (12.5%)", "TX 多方觸及 L5 (12.5% 長尾)  close={{close}}")
+alertcondition(sp1, "空方觸及 L1 (90%)",   "TX 空方觸及 L1 (90%地板)  close={{close}}")
+alertcondition(sp2, "空方觸及 L2 (75%)",   "TX 空方觸及 L2 (75%)  close={{close}}")
+alertcondition(sp3, "空方觸及 L3 (50%)",   "TX 空方觸及 L3 (50%)  close={{close}}")
+alertcondition(sp4, "空方觸及 L4 (25%)",   "TX 空方觸及 L4 (25%)  close={{close}}")
+alertcondition(sp5, "空方觸及 L5 (12.5%)", "TX 空方觸及 L5 (12.5% 長尾)  close={{close}}")
+
+// 任一關卡觸及（單一 alert 涵蓋全部；用 alert() 動態訊息）
+any_touch = bp1 or bp2 or bp3 or bp4 or bp5 or sp1 or sp2 or sp3 or sp4 or sp5
+if any_touch
+    _side = (bp1 or bp2 or bp3 or bp4 or bp5) ? "多方" : "空方"
+    _lvl = (bp1 or sp1) ? "L1(90%)" : (bp2 or sp2) ? "L2(75%)" : (bp3 or sp3) ? "L3(50%)" : (bp4 or sp4) ? "L4(25%)" : "L5(12.5%)"
+    alert("TX " + _side + " 觸及 " + _lvl + "  價=" + str.tostring(close), alert.freq_once_per_bar)
 
 // ============================================================
 // 續航機率查表（step function；time = 分鐘數，08:45 = 525）
@@ -269,19 +358,23 @@ var line lnM1 = line.new(na, na, na, na)
 var line lnM2 = line.new(na, na, na, na)
 var line lnM3 = line.new(na, na, na, na)
 var line lnM4 = line.new(na, na, na, na)
+var line lnM5 = line.new(na, na, na, na)
 var line lnS1 = line.new(na, na, na, na)
 var line lnS2 = line.new(na, na, na, na)
 var line lnS3 = line.new(na, na, na, na)
 var line lnS4 = line.new(na, na, na, na)
+var line lnS5 = line.new(na, na, na, na)
 
 var label lbM1 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
 var label lbM2 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
 var label lbM3 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
 var label lbM4 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbM5 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
 var label lbS1 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
 var label lbS2 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
 var label lbS3 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
 var label lbS4 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbS5 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
 
 // ---- 多方關卡線 ----
 if show_bull and ready
@@ -289,19 +382,23 @@ if show_bull and ready
     f_line(lnM2, m2, color.new(col_bull, 20), line.style_dashed)
     f_line(lnM3, m3, color.new(col_bull, 35), line.style_dashed)
     f_line(lnM4, m4, color.new(col_bull, 50), line.style_dotted)
+    f_line(lnM5, m5, color.new(col_bull, 65), line.style_dotted)
     f_lbl(lbM1, m1, "L1", col_bull)
     f_lbl(lbM2, m2, "L2", col_bull)
     f_lbl(lbM3, m3, "L3", col_bull)
     f_lbl(lbM4, m4, "L4", col_bull)
+    f_lbl(lbM5, m5, "L5", col_bull)
 else
     f_hide(lnM1)
     f_hide(lnM2)
     f_hide(lnM3)
     f_hide(lnM4)
+    f_hide(lnM5)
     f_hide_lbl(lbM1)
     f_hide_lbl(lbM2)
     f_hide_lbl(lbM3)
     f_hide_lbl(lbM4)
+    f_hide_lbl(lbM5)
 
 // ---- 空方關卡線 ----
 if show_bear and ready
@@ -309,19 +406,57 @@ if show_bear and ready
     f_line(lnS2, s2, color.new(col_bear, 20), line.style_dashed)
     f_line(lnS3, s3, color.new(col_bear, 35), line.style_dashed)
     f_line(lnS4, s4, color.new(col_bear, 50), line.style_dotted)
+    f_line(lnS5, s5, color.new(col_bear, 65), line.style_dotted)
     f_lbl(lbS1, s1, "L1", col_bear)
     f_lbl(lbS2, s2, "L2", col_bear)
     f_lbl(lbS3, s3, "L3", col_bear)
     f_lbl(lbS4, s4, "L4", col_bear)
+    f_lbl(lbS5, s5, "L5", col_bear)
 else
     f_hide(lnS1)
     f_hide(lnS2)
     f_hide(lnS3)
     f_hide(lnS4)
+    f_hide(lnS5)
     f_hide_lbl(lbS1)
     f_hide_lbl(lbS2)
     f_hide_lbl(lbS3)
     f_hide_lbl(lbS4)
+    f_hide_lbl(lbS5)
+
+// ============================================================
+// 時間直線（9:30 / 10:45 / 11:30，灰色垂直虛線）
+//   首次跨越各時刻時畫一條 extend.both 垂直線；以 rolling buffer
+//   控制總數，避免擠掉上方 8 條關卡價 var 線（auto-prune 依建立順序）。
+// ============================================================
+col_vline   = color.new(#888888, 25)
+var line[] vlines = array.new<line>()
+int VLINE_MAX = 120   // 約 40 天 × 3 條
+
+f_vline(_b) =>
+    ln = line.new(bar_index, low, bar_index, high, extend = extend.both,
+         color = col_vline, style = line.style_dashed, width = 1)
+    array.push(vlines, ln)
+    if array.size(vlines) > VLINE_MAX
+        line.delete(array.shift(vlines))
+
+var bool v930  = false
+var bool v1045 = false
+var bool v1130 = false
+if entering_session
+    v930  := false
+    v1045 := false
+    v1130 := false
+if show_vlines and in_session
+    if not v930 and _t >= 570        // 09:30
+        f_vline(true)
+        v930 := true
+    if not v1045 and _t >= 645       // 10:45
+        f_vline(true)
+        v1045 := true
+    if not v1130 and _t >= 690       // 11:30
+        f_vline(true)
+        v1130 := true
 
 // ============================================================
 // 表格
@@ -348,7 +483,7 @@ f_size(s) =>
         r := size.large
     r
 
-var table tbl = table.new(position.top_right, 2, 15,
+var table tbl = table.new(position.top_right, 2, 17,
      border_width = 1, border_color = col_border, frame_width = 1, frame_color = col_border)
 
 // 一列關卡（label, price, 文字色, 是否高亮）
@@ -362,7 +497,7 @@ f_row(t, ridx, lbl, px, txtcol, hl) =>
          text_halign = text.align_right, bgcolor = bg, text_size = f_size(txt_size_in))
 
 if barstate.islast and show_table
-    table.clear(tbl, 0, 0, 1, 14)
+    table.clear(tbl, 0, 0, 1, 16)
     if ready
         table.set_position(tbl, f_pos(tbl_pos_in))
         floor90 = math.round(d1)
@@ -376,37 +511,37 @@ if barstate.islast and show_table
         table.cell(tbl, 1, 1, str.format("{0,number,#}", floor90), text_color = col_muted,
              text_halign = text.align_right, bgcolor = col_panel, text_size = f_size(txt_size_in))
 
-        // ---- 多方組（多1-4 + 今高），依價格降序 ----
-        bull_px  = array.from(m1, m2, m3, m4, sess_high)
-        bull_lbl = array.from("多1·90%", "多2·75%", "多3·50%", "多4·25%", "今高")
-        bull_hi  = array.from(false, false, false, false, true)
+        // ---- 多方組（多1-5 + 今高），依價格降序 ----
+        bull_px  = array.from(m1, m2, m3, m4, m5, sess_high)
+        bull_lbl = array.from("多1·90%", "多2·75%", "多3·50%", "多4·25%", "多5·12.5%", "今高")
+        bull_hi  = array.from(false, false, false, false, false, true)
         bidx = array.sort_indices(bull_px, order.descending)
-        for i = 0 to 4
+        for i = 0 to 5
             k = array.get(bidx, i)
             f_row(tbl, 2 + i, array.get(bull_lbl, k), array.get(bull_px, k), col_bull, array.get(bull_hi, k))
 
         // ---- 分隔列 ----
-        table.cell(tbl, 0, 7, "──────", text_color = col_border, text_halign = text.align_left,
+        table.cell(tbl, 0, 8, "──────", text_color = col_border, text_halign = text.align_left,
              bgcolor = col_panel, text_size = f_size(txt_size_in))
-        table.cell(tbl, 1, 7, "", bgcolor = col_panel)
+        table.cell(tbl, 1, 8, "", bgcolor = col_panel)
 
-        // ---- 空方組（空1-4 + 今低），依價格降序 ----
-        bear_px  = array.from(s1, s2, s3, s4, sess_low)
-        bear_lbl = array.from("空1·90%", "空2·75%", "空3·50%", "空4·25%", "今低")
-        bear_hi  = array.from(false, false, false, false, true)
+        // ---- 空方組（空1-5 + 今低），依價格降序 ----
+        bear_px  = array.from(s1, s2, s3, s4, s5, sess_low)
+        bear_lbl = array.from("空1·90%", "空2·75%", "空3·50%", "空4·25%", "空5·12.5%", "今低")
+        bear_hi  = array.from(false, false, false, false, false, true)
         sidx = array.sort_indices(bear_px, order.descending)
-        for i = 0 to 4
+        for i = 0 to 5
             k = array.get(sidx, i)
-            f_row(tbl, 8 + i, array.get(bear_lbl, k), array.get(bear_px, k), col_bear, array.get(bear_hi, k))
+            f_row(tbl, 9 + i, array.get(bear_lbl, k), array.get(bear_px, k), col_bear, array.get(bear_hi, k))
 
         // ---- 續航提示 ----
         if show_hint
-            table.cell(tbl, 0, 13, f_hint("多", bL1_min, bL2_min), text_color = col_bull,
+            table.cell(tbl, 0, 15, f_hint("多", bL1_min, bL2_min), text_color = col_bull,
                  text_halign = text.align_left, bgcolor = col_panel, text_size = f_size(txt_size_in))
-            table.cell(tbl, 1, 13, "", bgcolor = col_panel)
-            table.cell(tbl, 0, 14, f_hint("空", sL1_min, sL2_min), text_color = col_bear,
+            table.cell(tbl, 1, 15, "", bgcolor = col_panel)
+            table.cell(tbl, 0, 16, f_hint("空", sL1_min, sL2_min), text_color = col_bear,
                  text_halign = text.align_left, bgcolor = col_panel, text_size = f_size(txt_size_in))
-            table.cell(tbl, 1, 14, "", bgcolor = col_panel)
+            table.cell(tbl, 1, 16, "", bgcolor = col_panel)
     else
         table.set_position(tbl, f_pos(tbl_pos_in))
         table.cell(tbl, 0, 0, "關卡價", text_color = col_text, bgcolor = col_today,

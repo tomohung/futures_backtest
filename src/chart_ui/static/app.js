@@ -159,7 +159,7 @@ function drawReviewOverlay(d) {
 }
 
 // 關卡觸及標示（獨立指標，預設開）：選定日(window._dayStats)多/空各階首觸。顯示每一個有觸及
-// 的關卡（L1–L4）。anchor.price = 該階關卡投射價（t.price）→ touchLinesPrimitive 把圓點畫在
+// 的關卡（L1–L5）。anchor.price = 該階關卡投射價（t.price）→ touchLinesPrimitive 把圓點畫在
 // 關卡價上，階數文字往外側（多往上/空往下）拉開 TOUCH_GAP。需 bars 與 _dayStats 都就緒。
 function applyTouchMarkers() {
   const d = window._dayStats;

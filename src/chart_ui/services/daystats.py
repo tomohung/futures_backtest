@@ -31,6 +31,7 @@ LVL_QUANTILES = [
     ("2", "75%", 0.497),
     ("3", "50%", 0.711),
     ("4", "25%", 0.977),
+    ("5", "12.5%", 1.225),  # H095 pooled 分位，延伸長尾關卡
 ]
 # 量能整排上調（覆盤用當日實際收盤量, hindsight）：bump = NVOL_W_SURP×(量比−1)×EMA20。
 # 僅資訊顯示(整排平移幾十點)，不套用到關卡本身。
@@ -427,7 +428,8 @@ def compute_daystats(*, date_str: str, db_path: Path | None = None) -> dict:
             _lv = [("L1", LVL_QUANTILES[0][2] * ema20),
                    ("L2", LVL_QUANTILES[1][2] * ema20),
                    ("L3", LVL_QUANTILES[2][2] * ema20),
-                   ("L4", LVL_QUANTILES[3][2] * ema20)]  # 顯示每一個關卡的觸及（含 L4）
+                   ("L4", LVL_QUANTILES[3][2] * ema20),
+                   ("L5", LVL_QUANTILES[4][2] * ema20)]  # 顯示每一個關卡的觸及（含 L4/L5）
             touches = _collect_touches(conn, sel, _lv)
             from src.chart_ui.services.dci_daily import compute_daily_dci
             dci = compute_daily_dci(conn, sel)
@@ -474,7 +476,7 @@ def compute_daystats(*, date_str: str, db_path: Path | None = None) -> dict:
         hi, lo = today
         today_out = {"high": round(hi), "low": round(lo), "range": round(hi - lo)}
 
-    # 關卡價 = 達到率百分位階梯（多1=90%地板 … 多4=25%）。每階振幅 = c×EMA20（單參數, H097）。
+    # 關卡價 = 達到率百分位階梯（多1=90%地板 … 多4=25% … 多5=12.5%）。每階振幅 = c×EMA20（單參數, H097；L5 為 H095 pooled 分位）。
     # 多方由今低往上投射(預估高)、空方由今高往下投射(預估低)。
     # 量能上調(事後)：用當日實際收盤量算 bump，整排平移幾十點，僅在副標題顯示、不套用。
     bull = bear = est_range = None
