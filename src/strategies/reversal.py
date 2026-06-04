@@ -84,6 +84,11 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
     exhaust_fraction: float = 0.5      # moved >= fraction of EstRange → opposing side exhausted, relax CCD
     signal_skip:      int   = 0        # skip first N triggers before entering
     sat_pullback_fraction: float = 0.5 # near-SatZone latch resets after pullback >= fraction * EmaHL
+    dir_mode:         str   = "base"   # direction filter source (H101 experiment):
+                                       #   "base" 5m120MA day-session slope (live)
+                                       #   "A"    5m240MA continuous (day+night) slope
+                                       #   "B"    1H MACD(12/26/9) line vs signal, continuous
+                                       #   "C"    A and B must agree (else no direction)
 
     def init(self):
         self._prev_date   = None
@@ -111,6 +116,42 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
         self._trail_stop  = None
         self._low_buf     = deque(maxlen=11)   # pivotlow(5,5)
         self._high_buf    = deque(maxlen=11)   # pivothigh(5,5)
+
+    def _direction(self):
+        """Return +1 bullish / -1 bearish / 0 no-direction / None not-warmed.
+
+        dir_mode selects the source. "base"/"A"/"B" always resolve to ±1
+        (tie → bearish, identical to the original `ma5m > ma5m_prev`).
+        "C" returns 0 when A and B disagree (skip the day's entries).
+        """
+        def slope(cur, prev):
+            if np.isnan(cur) or np.isnan(prev):
+                return None
+            return 1 if cur > prev else -1
+
+        mode = self.dir_mode
+        if mode == "base":
+            return slope(float(self.data.MA5m_120[-1]),
+                         float(self.data.MA5m_120_Prev[-1]))
+        if mode == "A":
+            return slope(float(self.data.MA5m_240[-1]),
+                         float(self.data.MA5m_240_Prev[-1]))
+        if mode == "B":
+            macd = float(self.data.MACD_1h[-1])
+            sig  = float(self.data.Signal_1h[-1])
+            if np.isnan(macd) or np.isnan(sig):
+                return None
+            return 1 if macd > sig else -1
+        if mode == "C":
+            a = slope(float(self.data.MA5m_240[-1]),
+                      float(self.data.MA5m_240_Prev[-1]))
+            macd = float(self.data.MACD_1h[-1])
+            sig  = float(self.data.Signal_1h[-1])
+            b = None if (np.isnan(macd) or np.isnan(sig)) else (1 if macd > sig else -1)
+            if a is None or b is None:
+                return None
+            return a if a == b else 0
+        raise ValueError(f"unknown dir_mode: {mode!r}")
 
     def next(self):
         cur_ts   = self.data.index[-1]
@@ -204,8 +245,6 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
 
         # ── Read indicators (needed for setup + trigger) ─────────────────
         ema_hl     = float(self.data.EmaHL[-1])
-        ma5m       = float(self.data.MA5m_120[-1])
-        ma5m_prev  = float(self.data.MA5m_120_Prev[-1])
         bb_upper   = float(self.data.BB_Upper[-1])
         bb_lower   = float(self.data.BB_Lower[-1])
         vol        = float(self.data.Volume[-1])
@@ -214,17 +253,23 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
         ma5        = float(self.data.MA5_1m[-1])
 
         if any(np.isnan(v) for v in
-               [ema_hl, ma5m, ma5m_prev, bb_upper, bb_lower, vol_ma, ma5]):
+               [ema_hl, bb_upper, bb_lower, vol_ma, ma5]):
             return
+
+        # Direction filter (dir_mode selects the source; H101 experiment)
+        bull = self._direction()
+        if bull is None:        # indicator not warmed up / NaN
+            return
+        if bull == 0:           # C-mode: A and B disagree → no direction this bar
+            return              # (don't consume _bc_inside; wait for agreement)
 
         sl = ema_hl * self.sl_ema_fraction
 
         vol_ok = vol > self.vol_ratio * vol_ma
 
-        # Direction: 5m 120MA direction (no slope threshold)
-        bullish = ma5m > ma5m_prev
+        bullish = bull > 0
 
-        # Resolve BC inside zone: direction follows MA
+        # Resolve BC inside zone: direction follows the filter
         if getattr(self, '_bc_inside', False):
             self._bc_inside = False
             if bullish:
