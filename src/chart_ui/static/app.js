@@ -14,6 +14,12 @@ const BB_COLOR = '#c678dd';
 const BB_REF_COLOR = '#888';
 // 主圖布林通道（同 15,2）：只畫上下兩條帶、不畫中線；可開關，預設關。
 const BB_BAND_COLOR = '#c678dd';
+// MA Turn（移植 5-ma-turn-from-deduction.pine）：另開副圖，柱狀 = 現價 − 扣抵值（close − close[period]）。
+// 在固定較高週期 MATURN_TF 分上算（仿原 pine 的 request.security 5分）；過零 = 該週期 SMA 轉向，
+// 柱高 = 現價還要再移動多少均線才翻向。正值(均線上彎=偏多)台灣慣例 → 紅，負值(下彎) → 綠。
+const MATURN_TF = 5;            // 扣抵值計算週期（分鐘，固定較高週期）
+const MATURN_PERIOD = 120;     // SMA 期數（扣抵值 = period 個 bucket 前的收盤）
+const MATURN_ZERO_COLOR = '#888';
 // 主圖 6 條均線（SMA(close)），週期/顏色仿 screener-ui。
 const MA_DEFS = [
   { p: 5, color: '#ff9800' },
@@ -26,7 +32,10 @@ const MA_DEFS = [
 
 // 獨立指標（與 6 均線群組分開、各自開關、預設關）
 const IND_5MA = { color: '#ffeb3b' };    // 1分K 5MA（黃）
-const IND_VWAP = { color: '#00bcd4' };   // VWAP 成交量加權均價（青）
+const IND_VWAP = { color: '#ffd740' };   // VWAP 成交量加權均價（黃，虛線中斷線）
+// 600MA：MA Turn 副圖預判的那條均線本體（MATURN_TF×MATURN_PERIOD = 5×120 = 600 分）。
+// 用與副圖相同的 bucket 基準計算，故均線的轉向點恰對齊副圖柱狀過零。預設開。
+const IND_MA600 = { color: '#e040fb' };  // 600分MA（亮紫）
 // 昨日 / 前日「日盤 VWAP 收盤值」水平線：標在今日行情上，看今日開盤是否落在此區間。皆虛線。
 // 同色系（黃），用透明度表達新舊：愈舊愈淡 → 昨日(近)較實、前日(舊)較透；深色底下也讓較近的較顯眼。
 const PREV_VWAP = { prev1: 'rgba(255, 209, 64, 0.95)', prev2: 'rgba(255, 209, 64, 0.42)' };  // 昨日 / 前日
@@ -66,6 +75,7 @@ const state = {
   maOn: (localStorage.getItem('cu.maOn2') || '000000').padEnd(6, '0').slice(0, 6).split('').map((c) => c === '1'),
   ind5ma: localStorage.getItem('cu.ind5ma') === '1',     // 獨立 1分K 5MA（預設關）
   indVwap: localStorage.getItem('cu.indVwap') === '1',   // 獨立 VWAP（預設關）
+  indMa600: localStorage.getItem('cu.indMa600') !== '0', // 600分MA（對齊 MA Turn 副圖，預設開）
   indPrevVwap: localStorage.getItem('cu.indPrevVwap') !== '0', // 昨/前日 日盤 VWAP 收盤水平線（預設開）
   indBB: localStorage.getItem('cu.indBB') === '1',       // 主圖布林通道上下帶（預設關）
   indPivot: localStorage.getItem('cu.indPivot') === '1', // pivot high/low（預設關）
@@ -196,7 +206,8 @@ function pad2(n) { return String(n).padStart(2, '0'); }
 function applyMaVisibility() {
   if (chartState.maSeries) chartState.maSeries.forEach((s, k) => s.applyOptions({ visible: state.maOn[k] }));
   if (chartState.ind5maSeries) chartState.ind5maSeries.applyOptions({ visible: state.ind5ma });
-  if (chartState.indVwapSeries) chartState.indVwapSeries.applyOptions({ visible: state.indVwap });
+  (chartState.vwapSegs || []).forEach((s) => s.applyOptions({ visible: state.indVwap }));
+  if (chartState.indMa600Series) chartState.indMa600Series.applyOptions({ visible: state.indMa600 });
   if (chartState.bbUpperSeries) chartState.bbUpperSeries.applyOptions({ visible: state.indBB });
   if (chartState.bbLowerSeries) chartState.bbLowerSeries.applyOptions({ visible: state.indBB });
 }
@@ -252,6 +263,75 @@ function dayVwapCloses(bars) {
     out[d] = a.v > 0 ? a.pv / a.v : tp;
   }
   return out;
+}
+
+// VWAP 每日一條 series 的樣式（黃色虛線、主圖右軸）。LWC v5 單一 line series 無法在 whitespace
+// 斷線，故每個交易日各建一條 series 來達成「換日斷開」。
+function _vwapSegOpts() {
+  return {
+    color: IND_VWAP.color, lineWidth: 2, priceScaleId: 'right',
+    lineStyle: LightweightCharts.LineStyle.Dashed,
+    priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    priceFormat: { type: 'price', precision: 0, minMove: 1 },
+  };
+}
+
+// 依交易日把 VWAP 切段，每段建立獨立 LineSeries → 換日自然斷開。每次 loadKline 先清舊段再重建。
+function setVwapSegments(bars, arr) {
+  const chart = chartState.chart;
+  for (const s of chartState.vwapSegs || []) { try { chart.removeSeries(s); } catch (_) { /* noop */ } }
+  chartState.vwapSegs = [];
+  const groups = [];
+  let cur = null, curDay = null;
+  for (let i = 0; i < bars.length; i++) {
+    if (arr[i] == null) continue;
+    const b = bars[i];
+    const day = typeof b.time === 'string' ? b.time : dayKey(b.time);
+    if (day !== curDay) { curDay = day; cur = []; groups.push(cur); }
+    cur.push({ time: b.time, value: arr[i] });
+  }
+  for (const pts of groups) {
+    const s = chart.addSeries(LightweightCharts.LineSeries, _vwapSegOpts());
+    s.applyOptions({ visible: state.indVwap });
+    s.setData(pts);
+    chartState.vwapSegs.push(s);
+  }
+}
+
+// state.tf（'1m'..'60m'、'1d'）→ 分鐘數。
+function tfMinutes(tf) {
+  if (tf === '1d') return 1440;
+  const m = /^(\d+)m$/.exec(tf || '');
+  return m ? parseInt(m[1], 10) : 1;
+}
+
+// MA Turn 柱狀 + 對應 600分MA：在固定較高週期 bucketMin = max(MATURN_TF, 主圖週期) 上算，
+// 仿原 pine 的 request.security("5", …)。主圖週期 > 設定週期時退化為逐根 bucket。
+//   hist = 現價 − 扣抵值（period 個 bucket 前已收 bucket 的收盤）= 該週期 SMA 斜率 × period
+//   ma   = SMA(period)：發展中那根收盤(=現價) + 前 (period−1) 個已收 bucket 收盤，平均
+// 兩者同基準 → ma 的轉向點恰對齊 hist 過零。回傳 { hist, ma }（皆對齊顯示 K 的索引）。
+function maTurnCompute(bars, periodN) {
+  const bucketSec = Math.max(MATURN_TF, tfMinutes(state.tf)) * 60;
+  const keyOf = (b) => (typeof b.time === 'string' ? b.time : Math.floor(b.time / bucketSec));
+  const ordinal = new Map();     // bucket key → 出現順序
+  const finalClose = new Map();  // bucket key → 該 bucket 最後收盤
+  const order = [];
+  for (const b of bars) {
+    const k = keyOf(b);
+    if (!ordinal.has(k)) { ordinal.set(k, order.length); order.push(k); }
+    finalClose.set(k, b.close);
+  }
+  // 依序各 bucket 收盤的前綴和，供 SMA 區段求和
+  const pref = new Array(order.length + 1).fill(0);
+  for (let k = 0; k < order.length; k++) pref[k + 1] = pref[k] + finalClose.get(order[k]);
+  const hist = new Array(bars.length).fill(null);
+  const ma = new Array(bars.length).fill(null);
+  for (let i = 0; i < bars.length; i++) {
+    const g = ordinal.get(keyOf(bars[i]));
+    if (g - periodN >= 0) hist[i] = bars[i].close - finalClose.get(order[g - periodN]);
+    if (g - (periodN - 1) >= 0) ma[i] = (bars[i].close + (pref[g] - pref[g - (periodN - 1)])) / periodN;
+  }
+  return { hist, ma };
 }
 
 // 畫昨日(prev1,暗黃)/前日(prev2,淡黃)的日盤 VWAP 收盤虛線（createPriceLine，全寬+右軸標籤）。
@@ -511,7 +591,10 @@ function initChart() {
     priceFormat: { type: 'price', precision: 0, minMove: 1 },
   });
   chartState.ind5maSeries = chart.addSeries(LightweightCharts.LineSeries, _indOpts(IND_5MA.color));
-  chartState.indVwapSeries = chart.addSeries(LightweightCharts.LineSeries, _indOpts(IND_VWAP.color));
+  // VWAP：黃色虛線、每交易日斷開。LWC v5 單一 line series 在 whitespace 不會斷，故改「每日一條
+  // series」(見 setVwapSegments)，在 loadKline 動態建立，存於 chartState.vwapSegs。
+  chartState.vwapSegs = [];
+  chartState.indMa600Series = chart.addSeries(LightweightCharts.LineSeries, _indOpts(IND_MA600.color));
   // 布林通道上下帶（主圖右軸；只有兩條，無中線）
   const _bbBandOpts = {
     color: BB_BAND_COLOR, lineWidth: 1, priceScaleId: 'right',
@@ -564,12 +647,23 @@ function initChart() {
   chartState.bb.createPriceLine({ price: 1, color: BB_REF_COLOR, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '1' });
   chartState.bb.createPriceLine({ price: 0, color: BB_REF_COLOR, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '0' });
   chart.priceScale('bb').applyOptions({ scaleMargins: { top: 0.15, bottom: 0.15 } });
+  // MA Turn 副圖（pane 3）：現價 − 扣抵值柱狀，過零 = MATURN_TF 分 SMA(period) 轉向。0 軸虛線。
+  chartState.maTurn = chart.addSeries(
+    LightweightCharts.HistogramSeries,
+    { priceScaleId: 'maturn', priceLineVisible: false, lastValueVisible: false,
+      priceFormat: { type: 'price', precision: 0, minMove: 1 } },
+    3,
+  );
+  chartState.maTurn.createPriceLine({ price: 0, color: MATURN_ZERO_COLOR, lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false });
+  chart.priceScale('maturn').applyOptions({ scaleMargins: { top: 0.2, bottom: 0.1 } });
   chart.subscribeCrosshairMove((param) => updateLegend(param));
   chart.subscribeClick((param) => onChartClick(param));
   const wrap = document.querySelector('.chart-wrap');
   if (wrap) new ResizeObserver(() => {
     positionPaneLegend(document.getElementById('vol-legend'), 1);
     positionPaneLegend(document.getElementById('bb-legend'), 2);
+    positionPaneLegend(document.getElementById('maturn-legend'), 3);
   }).observe(wrap);
 }
 
@@ -590,8 +684,9 @@ function updateLegend(param) {
   const main = document.getElementById('legend');
   const vol = document.getElementById('vol-legend');
   const bb = document.getElementById('bb-legend');
+  const maturn = document.getElementById('maturn-legend');
   const bars = chartState.bars || [];
-  if (!bars.length) { for (const e of [main, vol, bb]) if (e) e.innerHTML = ''; return; }
+  if (!bars.length) { for (const e of [main, vol, bb, maturn]) if (e) e.innerHTML = ''; return; }
   let idx = param && param.time != null ? bars.findIndex((b) => b.time === param.time) : -1;
   if (idx < 0) idx = bars.length - 1;
   const b = bars[idx];
@@ -625,6 +720,7 @@ function updateLegend(param) {
     };
     const ind5 = indTog(state.ind5ma, '5ma', '5MA', IND_5MA.color, chartState.ind5maArr);
     const indV = indTog(state.indVwap, 'vwap', 'VWAP', IND_VWAP.color, chartState.indVwapArr);
+    const indMa600 = indTog(state.indMa600, 'ma600', '600MA', IND_MA600.color, chartState.ma600Arr);
     // 昨/前日 日盤 VWAP 收盤（值固定、非隨 hover；無前一日資料 → —）
     const pvw = !state.indPrevVwap
       ? `<span class="ind-toggle ma-off" data-toggle="pvwap">昨/前VWAP</span>`
@@ -675,7 +771,7 @@ function updateLegend(param) {
       ? `<span class="ind-toggle" data-toggle="touch" style="color:${TOUCH_BULL_COLOR}">關卡觸及${nTouch ? ` ${nTouch}` : ''}</span>`
       : `<span class="ind-toggle ma-off" data-toggle="touch">關卡觸及</span>`;
     const maLine = `${master}　${perMa}`;
-    const indLine = `${ind5}<br>${indV}<br>${pvw}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}`;   // 5MA / VWAP / 昨前VWAP / BB / Pivot / ORB / 關卡觸及 / Risk 各自獨立一行
+    const indLine = `${ind5}　${indMa600}<br>${indV}<br>${pvw}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}`;   // 5MA+600MA / VWAP / 昨前VWAP / BB / Pivot / ORB / 關卡觸及 / Risk 各自獨立一行
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
@@ -698,6 +794,14 @@ function updateLegend(param) {
     const v = chartState.bbArr ? chartState.bbArr[idx] : null;
     const cls = v == null ? 'muted' : (v > 1 ? 'up' : (v < 0 ? 'down' : ''));
     bb.innerHTML = `<span style="color:${BB_COLOR}">%B(${BB_LEN},${BB_MULT})</span> <span class="${cls}">${v == null ? '-' : v.toFixed(2)}</span>`;
+  }
+  if (maturn) {
+    positionPaneLegend(maturn, 3);
+    const mv = chartState.maTurnArr ? chartState.maTurnArr[idx] : null;
+    const cls = mv == null ? 'muted' : (mv >= 0 ? 'up' : 'down');
+    const arrow = mv == null ? '' : (mv >= 0 ? ' ↑' : ' ↓');
+    maturn.innerHTML = `<span class="muted">MA Turn(${MATURN_TF}分,${MATURN_PERIOD})</span> `
+      + `<span class="${cls}">${mv == null ? '—' : (mv >= 0 ? '+' : '') + r(mv) + arrow}</span>`;
   }
 }
 
@@ -947,7 +1051,7 @@ async function loadKline(centerEpochToFocus) {
   chartState.ind5maArr = sma(closes, 5);
   chartState.indVwapArr = vwap(bars);
   chartState.ind5maSeries.setData(_toData(chartState.ind5maArr));
-  chartState.indVwapSeries.setData(_toData(chartState.indVwapArr));
+  setVwapSegments(bars, chartState.indVwapArr);   // 每日一條 series → 換日斷開
   // 昨/前日 日盤 VWAP 收盤水平線（相對 centerDate 的前兩個交易日，皆取自已載入的 bars）
   const _vwClose = dayVwapCloses(bars);
   const _vwDates = Object.keys(_vwClose).filter((d) => d < state.centerDate).sort();
@@ -1018,6 +1122,14 @@ async function loadKline(centerEpochToFocus) {
   chartState.bbMarkersHandle = chartState.bbMarkersHandle
     ? (chartState.bbMarkersHandle.setMarkers(bbMarks), chartState.bbMarkersHandle)
     : LightweightCharts.createSeriesMarkers(chartState.bb, bbMarks);
+  // MA Turn 柱狀（現價 − 扣抵值）：正(上彎)紅、負(下彎)綠；同基準的 600分MA 畫主圖。
+  const { hist: maTurnArr, ma: ma600Arr } = maTurnCompute(bars, MATURN_PERIOD);
+  chartState.maTurnArr = maTurnArr;
+  chartState.ma600Arr = ma600Arr;
+  chartState.maTurn.setData(bars.flatMap((b, i) => (maTurnArr[i] != null
+    ? [{ time: b.time, value: maTurnArr[i], color: maTurnArr[i] >= 0 ? COLORS.up : COLORS.down }]
+    : [])));
+  chartState.indMa600Series.setData(_toData(ma600Arr));
   focusTime(centerEpochToFocus);
   if (window._afterKline) window._afterKline();        // Task 10 掛 marker
   if (sessionReqUpdate) sessionReqUpdate();            // 觸發盤別分界線重畫
@@ -1104,6 +1216,11 @@ function wireIndicatorToggles() {
       } else if (which === 'vwap') {
         state.indVwap = !state.indVwap;
         localStorage.setItem('cu.indVwap', state.indVwap ? '1' : '0');
+        applyMaVisibility();
+        updateLegend(null);
+      } else if (which === 'ma600') {
+        state.indMa600 = !state.indMa600;
+        localStorage.setItem('cu.indMa600', state.indMa600 ? '1' : '0');
         applyMaVisibility();
         updateLegend(null);
       } else if (which === 'pvwap') {
