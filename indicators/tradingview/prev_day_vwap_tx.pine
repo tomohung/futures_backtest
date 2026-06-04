@@ -1,0 +1,129 @@
+// ============================================================
+// Prev-Day VWAP TX — 昨/前日 日盤 VWAP 收盤水平線 + 本日 VWAP
+//
+// 在每個交易日上，標出「昨日 / 前日」的『日盤 VWAP 收盤值』兩條水平
+// 虛線，並畫出「本日」逐步累積的日盤 VWAP 曲線。
+// 用來看每天開盤是否落在過去兩日 VWAP 構成的區間，以及當日 VWAP 走勢。
+//
+// 日盤 VWAP 定義（對齊 chart-ui dayVwapCloses）：
+//   typical price = (H + L + C) / 3
+//   VWAP = Σ(tp × volume) / Σ(volume)，每個交易日重置，
+//   且「只累積日盤段 08:45–13:45」（夜盤不計）。
+//   當日最後一根日盤 K 的 VWAP = 該日「日盤 VWAP 收盤值」。
+//
+// 繪製：
+//   昨VWAP（暗黃虛線）── 前一個交易日的日盤 VWAP 收盤，每天一段
+//   前VWAP（淡黃虛線）── 再前一個交易日的日盤 VWAP 收盤，每天一段
+//   本日VWAP（青實線）── 當日日盤逐步累積的 VWAP 曲線
+//   數值 Label 只標在最近一個交易日。
+// ============================================================
+//@version=6
+indicator(
+    title      = "Prev-Day VWAP TX (昨/前/本日 日盤 VWAP)",
+    shorttitle = "PrevVWAP TX",
+    overlay    = true,
+    max_lines_count  = 500,
+    max_labels_count = 20
+)
+
+// ============================================================
+// Inputs
+// ============================================================
+var string GRP_VIZ = "顯示"
+
+day_start  = input.int(525, "日盤起（分鐘）", minval=0, maxval=1439,
+                       tooltip="525 = 08:45", group=GRP_VIZ)
+day_end    = input.int(825, "日盤迄（分鐘）", minval=0, maxval=1439,
+                       tooltip="825 = 13:45（含）", group=GRP_VIZ)
+col_prev1  = input.color(#FFD140,             "昨VWAP 顏色", group=GRP_VIZ)
+col_prev2  = input.color(color.new(#FFD140, 58), "前VWAP 顏色", group=GRP_VIZ)
+col_own    = input.color(#FFEB3B,             "本日VWAP 顏色", group=GRP_VIZ)
+show_prev  = input.bool(true, "昨/前日 VWAP 水平線", group=GRP_VIZ)
+show_own   = input.bool(true, "本日 VWAP 曲線", group=GRP_VIZ)
+show_label = input.bool(true, "右側數值 Label（僅最近一日）", group=GRP_VIZ)
+
+// ============================================================
+// Time Window (Asia/Taipei = UTC+8)
+// ============================================================
+_h = hour(time,   "Asia/Taipei")
+_m = minute(time, "Asia/Taipei")
+_t = _h * 60 + _m
+
+in_session = _t >= day_start and _t <= day_end   // 08:45 ~ 13:45（含）
+
+// Detect first in-session bar of a new calendar day（夜盤不影響）
+var int prev_session_day = -1
+_cur_day = dayofmonth(time, "Asia/Taipei")
+entering_session = in_session and _cur_day != prev_session_day
+
+// ============================================================
+// Day-session VWAP（只在日盤段累積）
+// ============================================================
+var float cumPV      = 0.0    // Σ tp×vol（當日）
+var float cumV       = 0.0    // Σ vol（當日）
+var float day_vwap   = na     // 當日 running VWAP（日盤結束後持平至下一日 08:45）
+var float prev1      = na     // 昨日 日盤 VWAP 收盤（當日內固定）
+var float prev2      = na     // 前日 日盤 VWAP 收盤（當日內固定）
+var int   day_left_t  = na    // 當日第一根 bar 時間（虛線左端）
+var int   day_right_t = na    // 當日最後一根日盤 bar 時間（虛線右端）
+
+if entering_session
+    // 跨入新交易日：上一個交易日（在 prev1/prev2 還是舊值時）已完整，
+    // 用它當下有效的 昨/前 值畫成永久水平虛線後，再往後遞延一格。
+    if show_prev and not na(day_left_t) and not na(day_right_t)
+        if not na(prev1)
+            line.new(day_left_t, prev1, day_right_t, prev1, xloc=xloc.bar_time,
+                     color=col_prev1, width=1, style=line.style_dashed)
+        if not na(prev2)
+            line.new(day_left_t, prev2, day_right_t, prev2, xloc=xloc.bar_time,
+                     color=col_prev2, width=1, style=line.style_dashed)
+    prev2            := prev1
+    prev1            := day_vwap     // 剛收完那一日日盤最後一根的 VWAP
+    prev_session_day := _cur_day
+    day_left_t       := time
+    cumPV            := 0.0
+    cumV             := 0.0
+
+if in_session
+    tp     = (high + low + close) / 3
+    cumPV += tp * volume
+    cumV  += volume
+    day_vwap   := cumV > 0 ? cumPV / cumV : tp
+    day_right_t := time
+
+// ============================================================
+// 本日 VWAP 曲線（每日獨立，非日盤段斷開）
+// ============================================================
+// style_linebr（中斷線）：na 處真正斷開、不跨日橋接；每日第一根塞 na 斷開
+plot(show_own and in_session and not entering_session ? day_vwap : na, "本日VWAP",
+     color=col_own, linewidth=2, style=plot.style_linebr)
+
+// ============================================================
+// 最近一個（在途）交易日的昨/前 水平虛線 + 數值 Label
+// 在途日尚未走到下一個 entering_session，需即時重畫到目前 bar。
+// ============================================================
+var line  ln1 = na
+var line  ln2 = na
+var label lb1 = na
+var label lb2 = na
+if barstate.islast
+    line.delete(ln1)
+    line.delete(ln2)
+    label.delete(lb1)
+    label.delete(lb2)
+    xl = na(day_left_t) ? time : day_left_t
+    xr = time + 3 * (time - time[1])     // 往右延伸一點
+    if show_prev and not na(prev1)
+        ln1 := line.new(xl, prev1, xr, prev1, xloc=xloc.bar_time,
+                        color=col_prev1, width=1, style=line.style_dashed)
+    if show_prev and not na(prev2)
+        ln2 := line.new(xl, prev2, xr, prev2, xloc=xloc.bar_time,
+                        color=col_prev2, width=1, style=line.style_dashed)
+    if show_label and show_prev and not na(prev1)
+        lb1 := label.new(bar_index, prev1, "昨VWAP " + str.tostring(prev1, "#"),
+                         style=label.style_label_left, color=color.new(col_prev1, 80),
+                         textcolor=col_prev1, size=size.small)
+    if show_label and show_prev and not na(prev2)
+        lb2 := label.new(bar_index, prev2, "前VWAP " + str.tostring(prev2, "#"),
+                         style=label.style_label_left, color=color.new(col_prev2, 80),
+                         textcolor=col_prev2, size=size.small)
