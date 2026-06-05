@@ -429,10 +429,20 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Parse TWSE/TPEX raw JSON into DuckDB")
     p.add_argument("--start", help="YYYY-MM-DD; default = no lower bound")
     p.add_argument("--end", help="YYYY-MM-DD; default = no upper bound")
+    p.add_argument("--rebuild", action="store_true",
+                   help="允許無範圍的全量重建（會 DELETE+INSERT 整張表）")
     args = p.parse_args()
 
     start = date.fromisoformat(args.start) if args.start else None
     end = date.fromisoformat(args.end) if args.end else None
+
+    # 全量保護閘：完全沒給範圍 = 會重灌所有日期，需顯式 --rebuild 才放行。
+    # （只給 --start 或只給 --end 仍算有範圍，照常執行。）
+    if start is None and end is None and not args.rebuild:
+        p.error(
+            "未指定 --start/--end 等於全量重建（會 DELETE+INSERT 所有日期）。\n"
+            "  補幾天請用 --start/--end；確定要全量重建請加 --rebuild。"
+        )
 
     breadth_rows: list[dict] = []
     stock_rows: list[dict] = []
@@ -467,8 +477,16 @@ def main() -> None:
     with duckdb.connect(str(DB_PATH)) as conn:
         conn.execute(SCHEMA_BREADTH)
         conn.execute(SCHEMA_STOCK)
-        write_breadth(conn, breadth_rows)
-        write_stocks(conn, day_market_pairs, stock_rows)
+        # 單一交易：DELETE 在 COMMIT 前不落地，COMMIT 只在 INSERT 全部成功後執行。
+        # 中途被 kill / 報錯 → 未提交交易自動丟棄，資料維持原狀，不會出現「刪完、灌一半」。
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            write_breadth(conn, breadth_rows)
+            write_stocks(conn, day_market_pairs, stock_rows)
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
         n_b = conn.execute("SELECT COUNT(*) FROM market_breadth").fetchone()[0]
         n_s = conn.execute("SELECT COUNT(*) FROM stock_day").fetchone()[0]
     print(f"DB now has: market_breadth={n_b}, stock_day={n_s}")
