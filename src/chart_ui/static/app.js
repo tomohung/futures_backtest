@@ -21,6 +21,7 @@ const MATURN_TF = 5;            // 扣抵值計算週期（分鐘，固定較高
 const MATURN_PERIOD = 120;     // SMA 期數（扣抵值 = period 個 bucket 前的收盤）
 const MATURN_ZERO_COLOR = '#888';
 const MACD_DEA_COLOR = '#6aa3ff';   // mini 1H MACD 的 DEA(訊號)線
+const MACD_MIN_BARS = 34;   // slow(26)+signal(9)-2 = 第一個有效 dea/hist index;不足則不畫 MACD
 // 主圖 6 條均線（SMA(close)），週期/顏色仿 screener-ui。
 const MA_DEFS = [
   { p: 5, color: '#ff9800' },
@@ -742,6 +743,49 @@ function initMiniChart() {
   chart.priceScale('macd').applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
 }
 
+// center 日期往前 days 個日曆天,回傳 'YYYY-MM-DD'(mini 圖的 from 起點)。
+function miniRangeFrom(centerDate, days) {
+  const d = new Date(centerDate + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+// 載入 mini 1H 圖:固定 tf=60m、session=full(含夜盤),adjust 跟主圖;
+// 區間 = [center-14 日曆天, center]。唯讀,失敗不影響主圖。
+async function loadMiniChart(centerDate, adjust) {
+  if (!miniChartState.chart || !centerDate) return;
+  const p = new URLSearchParams({
+    from: miniRangeFrom(centerDate, 14), to: centerDate,
+    tf: '60m', session: 'full', adjust,
+  });
+  let bars;
+  try {
+    bars = await fetchJSON(`/api/kline?${p}`);
+  } catch (e) {
+    console.warn('mini 圖載入失敗:', e);            // 維持上一次內容,不丟給主圖
+    return;
+  }
+  miniChartState.candle.setData(bars.map((b) => ({
+    time: b.time, open: b.open, high: b.high, low: b.low, close: b.close,
+  })));
+  if (bars.length >= MACD_MIN_BARS) {
+    const closes = bars.map((b) => b.close);
+    const { dif, dea, hist } = computeMACD(closes);
+    miniChartState.dif.setData(bars.flatMap((b, i) => (dif[i] != null ? [{ time: b.time, value: dif[i] }] : [])));
+    miniChartState.dea.setData(bars.flatMap((b, i) => (dea[i] != null ? [{ time: b.time, value: dea[i] }] : [])));
+    miniChartState.hist.setData(bars.flatMap((b, i) => (hist[i] != null
+      ? [{ time: b.time, value: hist[i], color: hist[i] >= 0 ? COLORS.up : COLORS.down }]
+      : [])));
+  } else {                                           // 資料不足以算 MACD → 留空,K 線照畫
+    miniChartState.dif.setData([]);
+    miniChartState.dea.setData([]);
+    miniChartState.hist.setData([]);
+  }
+  // 預設顯示最近約 60 根 1H K(含夜盤 ≈ 3 個交易日);右側留 2 根 padding。
+  const n = bars.length;
+  miniChartState.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 60), to: n - 1 + 2 });
+}
+
 // 把副圖 legend 對齊到對應 pane 頂端（同在 .chart-wrap 內，定位才不會被 canvas 蓋住）。
 function positionPaneLegend(el, paneIndex) {
   const wrap = document.querySelector('.chart-wrap');
@@ -1209,6 +1253,9 @@ async function loadKline(centerEpochToFocus) {
   if (window._afterKline) window._afterKline();        // Task 10 掛 marker
   if (sessionReqUpdate) sessionReqUpdate();            // 觸發盤別分界線重畫
   updateLegend(null);                                  // 預設顯示最新一根
+  // 左側 1H 參考圖(唯讀,固定含夜盤)。日線檢視也載入(顯示該日 1H 細節);
+  // session 切換時 mini 仍抓 full,等同 no-op,不值得加 guard。
+  loadMiniChart(state.centerDate, state.adjust);
 }
 
 // 將視窗置中到某 time（epoch 或 'YYYY-MM-DD'）；找不到就顯示尾段。
