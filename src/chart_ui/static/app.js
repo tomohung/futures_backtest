@@ -22,7 +22,7 @@ const MATURN_PERIOD = 120;     // SMA 期數（扣抵值 = period 個 bucket 前
 const MATURN_ZERO_COLOR = '#888';
 const MACD_DEA_COLOR = '#6aa3ff';   // mini 1H MACD 的 DEA(訊號)線
 const MACD_MIN_BARS = 34;   // slow(26)+signal(9)-2 = 第一個有效 dea/hist index;不足則不畫 MACD
-// 主圖 6 條均線（SMA(close)），週期/顏色仿 screener-ui。
+// 主圖 6 條均線（SMA(close)），週期/顏色仿 screener-ui。mini 1H 圖也共用此定義。
 const MA_DEFS = [
   { p: 5, color: '#ff9800' },
   { p: 10, color: '#4caf50' },
@@ -698,7 +698,7 @@ function initChart() {
 }
 
 // ── 左側 1H K + MACD 參考圖（唯讀,獨立 state,固定含夜盤）──────────────────
-const miniChartState = { chart: null, candle: null, hist: null, dif: null, dea: null };
+const miniChartState = { chart: null, candle: null, maSeries: null, hist: null, dif: null, dea: null };
 
 function initMiniChart() {
   const el = document.getElementById('mini-chart');
@@ -722,6 +722,12 @@ function initMiniChart() {
     priceLineVisible: false, lastValueVisible: false,
     priceFormat: { type: 'price', precision: 0, minMove: 1 },
   });
+  // 主 pane 6 條均線（沿用主圖 MA_DEFS 的週期/顏色,畫在 K 線之上,同右軸）
+  miniChartState.maSeries = MA_DEFS.map((d) => chart.addSeries(LightweightCharts.LineSeries, {
+    color: d.color, lineWidth: 1, priceScaleId: 'right',
+    priceLineVisible: false, lastValueVisible: false,
+    priceFormat: { type: 'price', precision: 0, minMove: 1 },
+  }));
   // MACD 副圖（pane 1）:柱(漲紅跌綠) + DIF + DEA
   miniChartState.hist = chart.addSeries(
     LightweightCharts.HistogramSeries,
@@ -768,8 +774,12 @@ async function loadMiniChart(centerDate, adjust) {
   miniChartState.candle.setData(bars.map((b) => ({
     time: b.time, open: b.open, high: b.high, low: b.low, close: b.close,
   })));
+  const closes = bars.map((b) => b.close);
+  MA_DEFS.forEach((d, k) => {
+    const arr = sma(closes, d.p);
+    miniChartState.maSeries[k].setData(bars.flatMap((b, i) => (arr[i] != null ? [{ time: b.time, value: arr[i] }] : [])));
+  });
   if (bars.length >= MACD_MIN_BARS) {
-    const closes = bars.map((b) => b.close);
     const { dif, dea, hist } = computeMACD(closes);
     miniChartState.dif.setData(bars.flatMap((b, i) => (dif[i] != null ? [{ time: b.time, value: dif[i] }] : [])));
     miniChartState.dea.setData(bars.flatMap((b, i) => (dea[i] != null ? [{ time: b.time, value: dea[i] }] : [])));
