@@ -698,7 +698,60 @@ function initChart() {
 }
 
 // ── 左側 1H K + MACD 參考圖（唯讀,獨立 state,固定含夜盤）──────────────────
-const miniChartState = { chart: null, candle: null, maSeries: null, hist: null, dif: null, dea: null };
+const miniChartState = { chart: null, candle: null, maSeries: null, hist: null, dif: null, dea: null, bars: [] };
+
+// === mini 圖盤別分界垂直虛線：日盤起點 08:45 + 夜盤起點 15:00 ===
+// 1H 全日盤 resample 後,日盤開盤那根落在 08:00 桶（含 08:45）,夜盤起點為 15:00 整點。
+// 線畫在該根左緣（x - half）,剛好落在盤別交界、不穿過 K 棒。
+let miniSessionReqUpdate = null;
+const MINI_DAY_OPEN_COLOR = '#4a80c0';    // 日盤起點 08:45
+const MINI_NIGHT_OPEN_COLOR = '#b08442';  // 夜盤起點 15:00
+const MINI_DAY_OPEN_TOD = 480;            // 08:00 桶（含 08:45 開盤的那根）
+const MINI_NIGHT_OPEN_TOD = 900;          // 15:00
+
+const _miniSessionRenderer = {
+  draw(target) {
+    const chart = miniChartState.chart;
+    const bars = miniChartState.bars || [];
+    if (!chart || !bars.length) return;
+    const ts = chart.timeScale();
+    const logical = ts.getVisibleLogicalRange();
+    if (!logical) return;
+    const half = (ts.options().barSpacing || 6) / 2;
+    const lo = Math.max(0, Math.floor(logical.from));
+    const hi = Math.min(bars.length - 1, Math.ceil(logical.to));
+    target.useBitmapCoordinateSpace((scope) => {
+      const ctx = scope.context;
+      const hpr = scope.horizontalPixelRatio;
+      const h = scope.bitmapSize.height;
+      ctx.save();
+      ctx.lineWidth = Math.max(1, Math.floor(hpr));
+      ctx.setLineDash([5 * hpr, 4 * hpr]);
+      for (let i = lo; i <= hi; i++) {
+        const tod = todMin(bars[i].time);
+        const color = tod === MINI_DAY_OPEN_TOD ? MINI_DAY_OPEN_COLOR
+          : tod === MINI_NIGHT_OPEN_TOD ? MINI_NIGHT_OPEN_COLOR : null;
+        if (!color) continue;
+        const x = ts.timeToCoordinate(bars[i].time);
+        if (x == null) continue;
+        const px = Math.round((x - half) * hpr);
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, h);
+        ctx.stroke();
+      }
+      ctx.restore();
+    });
+  },
+};
+const _miniSessionPaneView = { renderer() { return _miniSessionRenderer; }, zOrder() { return 'top'; } };
+const miniSessionLinesPrimitive = {
+  attached(p) { miniSessionReqUpdate = p.requestUpdate; },
+  detached() { miniSessionReqUpdate = null; },
+  updateAllViews() {},
+  paneViews() { return [_miniSessionPaneView]; },
+};
 
 function initMiniChart() {
   const el = document.getElementById('mini-chart');
@@ -722,6 +775,7 @@ function initMiniChart() {
     priceLineVisible: false, lastValueVisible: false,
     priceFormat: { type: 'price', precision: 0, minMove: 1 },
   });
+  miniChartState.candle.attachPrimitive(miniSessionLinesPrimitive);   // 日盤/夜盤起點分界線
   // 主 pane 6 條均線（沿用主圖 MA_DEFS 的週期/顏色,畫在 K 線之上,同右軸）
   miniChartState.maSeries = MA_DEFS.map((d) => chart.addSeries(LightweightCharts.LineSeries, {
     color: d.color, lineWidth: 1, priceScaleId: 'right',
@@ -771,6 +825,7 @@ async function loadMiniChart(centerDate, adjust) {
     console.warn('mini 圖載入失敗:', e);            // 維持上一次內容,不丟給主圖
     return;
   }
+  miniChartState.bars = bars;                       // 供 miniSessionLinesPrimitive 對位
   miniChartState.candle.setData(bars.map((b) => ({
     time: b.time, open: b.open, high: b.high, low: b.low, close: b.close,
   })));
@@ -794,6 +849,7 @@ async function loadMiniChart(centerDate, adjust) {
   // 預設顯示最近約 60 根 1H K(含夜盤 ≈ 3 個交易日);右側留 2 根 padding。
   const n = bars.length;
   miniChartState.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 60), to: n - 1 + 2 });
+  if (miniSessionReqUpdate) miniSessionReqUpdate();  // 重畫盤別分界線
 }
 
 // 把副圖 legend 對齊到對應 pane 頂端（同在 .chart-wrap 內，定位才不會被 canvas 蓋住）。
