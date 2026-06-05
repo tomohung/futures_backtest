@@ -227,6 +227,34 @@ function sma(values, period) {
   return out;
 }
 
+// EMA（指數移動平均）；以首值為種子,逐根遞推。values 皆為數字（無 null）。
+function ema(values, period) {
+  const out = [];
+  const k = 2 / (period + 1);
+  let prev = null;
+  for (let i = 0; i < values.length; i++) {
+    prev = prev == null ? values[i] : values[i] * k + prev * (1 - k);
+    out[i] = prev;
+  }
+  return out;
+}
+
+// MACD（標準 12/26/9）→ {dif, dea, hist} 三個與 closes 等長的陣列。
+// EMA 以首值為種子,前段為暖機期、值不可靠,故暖機期填 null（caller 以 flatMap 略過）:
+// dif 自 index slow-1 起有效;dea/hist 自 index slow+signal-2 起有效。
+function computeMACD(closes, fast = 12, slow = 26, signal = 9) {
+  const emaFast = ema(closes, fast);
+  const emaSlow = ema(closes, slow);
+  const difFull = closes.map((_, i) => emaFast[i] - emaSlow[i]);
+  const deaFull = ema(difFull, signal);
+  const difStart = slow - 1;
+  const deaStart = slow + signal - 2;
+  const dif = difFull.map((v, i) => (i >= difStart ? v : null));
+  const dea = deaFull.map((v, i) => (i >= deaStart ? v : null));
+  const hist = difFull.map((v, i) => (i >= deaStart ? v - deaFull[i] : null));
+  return { dif, dea, hist };
+}
+
 // VWAP（成交量加權均價）；每個交易日（日期變更）重置。典型價 = (H+L+C)/3。
 function vwap(bars) {
   const out = new Array(bars.length).fill(null);
