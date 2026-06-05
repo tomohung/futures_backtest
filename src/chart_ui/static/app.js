@@ -20,6 +20,7 @@ const BB_BAND_COLOR = '#c678dd';
 const MATURN_TF = 5;            // 扣抵值計算週期（分鐘，固定較高週期）
 const MATURN_PERIOD = 120;     // SMA 期數（扣抵值 = period 個 bucket 前的收盤）
 const MATURN_ZERO_COLOR = '#888';
+const MACD_DEA_COLOR = '#6aa3ff';   // mini 1H MACD 的 DEA(訊號)線
 // 主圖 6 條均線（SMA(close)），週期/顏色仿 screener-ui。
 const MA_DEFS = [
   { p: 5, color: '#ff9800' },
@@ -695,6 +696,52 @@ function initChart() {
   }).observe(wrap);
 }
 
+// ── 左側 1H K + MACD 參考圖（唯讀,獨立 state,固定含夜盤）──────────────────
+const miniChartState = { chart: null, candle: null, hist: null, dif: null, dea: null };
+
+function initMiniChart() {
+  const el = document.getElementById('mini-chart');
+  if (!el) return;
+  const chart = LightweightCharts.createChart(el, {
+    layout: { background: { color: '#0d0d0d' }, textColor: '#e0e0e0' },
+    grid: { vertLines: { color: '#1a1a1a' }, horzLines: { color: '#1a1a1a' } },
+    rightPriceScale: { borderColor: '#333' },
+    timeScale: { borderColor: '#333', timeVisible: true, secondsVisible: false },
+    localization: { timeFormatter: fmtAxisTime },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Hidden },
+    handleScroll: false,           // 唯讀:停用拖曳捲動
+    handleScale: false,            // 唯讀:停用縮放
+    autoSize: true,
+  });
+  miniChartState.chart = chart;
+  miniChartState.candle = chart.addSeries(LightweightCharts.CandlestickSeries, {
+    upColor: COLORS.up, downColor: COLORS.down,
+    borderUpColor: COLORS.up, borderDownColor: COLORS.down,
+    wickUpColor: COLORS.wick, wickDownColor: COLORS.wick,
+    priceLineVisible: false, lastValueVisible: false,
+    priceFormat: { type: 'price', precision: 0, minMove: 1 },
+  });
+  // MACD 副圖（pane 1）:柱(漲紅跌綠) + DIF + DEA
+  miniChartState.hist = chart.addSeries(
+    LightweightCharts.HistogramSeries,
+    { color: COLORS.up, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false },
+    1,
+  );
+  miniChartState.dif = chart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: COLORS.accent, lineWidth: 1, priceScaleId: 'macd',
+      priceLineVisible: false, lastValueVisible: false },
+    1,
+  );
+  miniChartState.dea = chart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: MACD_DEA_COLOR, lineWidth: 1, priceScaleId: 'macd',
+      priceLineVisible: false, lastValueVisible: false },
+    1,
+  );
+  chart.priceScale('macd').applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
+}
+
 // 把副圖 legend 對齊到對應 pane 頂端（同在 .chart-wrap 內，定位才不會被 canvas 蓋住）。
 function positionPaneLegend(el, paneIndex) {
   const wrap = document.querySelector('.chart-wrap');
@@ -1288,6 +1335,7 @@ function wireIndicatorToggles() {
 
 async function main() {
   initChart();
+  initMiniChart();
   wireToolbar();
   wireIndicatorToggles();
   setTitle();
