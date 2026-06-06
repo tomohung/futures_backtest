@@ -17,6 +17,9 @@
 //   續航提示（碰 L1 後依「首觸時間」查表決定瞄第幾階）：
 //     碰 L1 → 續 L2 / 續 L3 機率；碰 L2 後再更新一次續 L3。
 //     time 為當日分鐘數（08:45 = 525）；step function。
+//   第三欄「出場提示」：續航提示 + 狀態感知出場速記（碰 L3 後依「目前最高關卡」
+//     顯示該階出場分支規則）。Pine 無 DCI（TV 抓不到台股廣度），故只列分支不替你選；
+//     實際拆分依盤中即時 DCI。完整 DCI 出場階梯見 chart-ui 覆盤面板 / journal_checklist.md v5.4。
 //
 // 僅用日盤 08:45–13:45。延遲 1 天暖機，EMA 用前一日收盤後才更新（無 lookahead）。
 //
@@ -48,7 +51,7 @@ show_bull    = input.bool(true,  "多方關卡線（紅）", group=GRP_VIZ)
 show_bear    = input.bool(true,  "空方關卡線（綠）", group=GRP_VIZ)
 show_lbl     = input.bool(true,  "線旁標示 L1~L4", group=GRP_VIZ)
 show_hint    = input.bool(true,  "顯示續航提示", group=GRP_VIZ)
-show_vlines  = input.bool(true,  "時間直線 9:30/10:45/11:30（灰）", group=GRP_VIZ)
+show_vlines  = input.bool(true,  "時間直線 9:30/10:30/11:30（灰）", group=GRP_VIZ)
 tbl_pos_in   = input.string("middle_right", "表格位置",
                  options=["top_right", "middle_right", "bottom_right", "top_left", "bottom_left"],
                  group=GRP_VIZ)
@@ -62,7 +65,7 @@ c4 = input.float(0.977, "L4 係數 (25%)", step=0.001, group=GRP_CALC)
 c5 = input.float(1.225, "L5 係數 (12.5%)", step=0.001, group=GRP_CALC)
 
 // 配色（台灣慣例：多/漲=紅，空/跌=綠）
-col_bull   = color.new(#ef4444, 0)   // 多方 紅
+col_bull   = color.new(#ff5c5c, 0)   // 多方 紅（調亮，黑底更清楚）
 col_bear   = color.new(#22c55e, 0)   // 空方 綠
 col_muted  = color.new(#888888, 0)   // 標籤灰
 col_text   = color.new(#e0e0e0, 0)   // 今高/今低 白
@@ -309,27 +312,40 @@ f_contL3fromL2(mm) =>
         p := 79
     p
 
-// 多/空方續航提示字串
-f_hint(side_zh, l1m, l2m) =>
-    out = side_zh + "：未碰L1"
-    if not na(l1m)
+// 第三欄某一方的整段文字（續航提示 + 累積出場速記），回傳「每列一行」的字串陣列。
+//   為避免單格多行把該列撐高、撐歪價格階梯，這裡每行各佔一個 col2 列（單行），於表格端逐列寫入。
+//   出場速記累積顯示：已碰的 L3/L4/L5 各壓一行（碰 L5 必然已過 L3/L4，故三行皆在）。Pine 無
+//   DCI（TV 抓不到台股廣度），故只列分支不替你選；實際拆分依盤中即時 DCI。詳見 chart-ui 覆盤 / journal_checklist.md v5.4。
+f_side_lines(side_zh, is_long, l1m, l2m, h3, h4, h5) =>
+    a = array.new<string>()
+    // 續航提示（最多 2 行）
+    if na(l1m)
+        array.push(a, side_zh + " 未碰 L1")
+    else
         cc2 = f_contL2(l1m)
         cc3 = f_contL3(l1m)
-        // 碰 L1 → 決定瞄第幾階（L3 須早於 09:30=570）
-        if cc3 >= 50 and l1m < 570
-            out := side_zh + "：碰L1→瞄3階 " + str.tostring(cc3) + "%"
+        s1 = side_zh + " 碰L1→拿1階"
+        if cc3 >= 50 and l1m < 570       // L3 須早於 09:30=570
+            s1 := side_zh + " 碰L1→瞄3階 " + str.tostring(cc3) + "%"
         else if cc2 >= 50
-            out := side_zh + "：碰L1→瞄2階 " + str.tostring(cc2) + "%"
-        else
-            out := side_zh + "：碰L1→拿1階"
-        // 碰 L2 後重新評估續 L3
+            s1 := side_zh + " 碰L1→瞄2階 " + str.tostring(cc2) + "%"
+        array.push(a, s1)
         if not na(l2m)
             cc3b = f_contL3fromL2(l2m)
-            if cc3b >= 50
-                out := out + "｜碰L2→瞄3階 " + str.tostring(cc3b) + "%"
-            else
-                out := out + "｜碰L2→守2階 " + str.tostring(cc3b) + "%"
-    out
+            s2 = cc3b >= 50 ? "　碰L2→瞄3階 " + str.tostring(cc3b) + "%" : "　碰L2→守2階 " + str.tostring(cc3b) + "%"
+            array.push(a, s2)
+    // 出場速記（累積：已碰的 L3/L4/L5 各壓一行；多空不對稱，各關卡獨立判斷）
+    if h3 and is_long
+        array.push(a, "L3 依拆 <.2靜/.2-.4½/≥.4⅓")
+    else if h3
+        array.push(a, "L3 依拆 >-.2靜/≤-.2全口切Dow")
+    if h4 and is_long
+        array.push(a, "L4 再砍½ ≥.4⅓/.2-.4¼")
+    else if h4
+        array.push(a, "L4 分批 ≤-.2⅓/≤-.4¼/≤-.6⅕")
+    if h5
+        array.push(a, "L5 收緊 ①目標②反K③5MA清")
+    a
 
 // ============================================================
 // 主圖水平線（盤中即時更新）
@@ -425,7 +441,7 @@ else
     f_hide_lbl(lbS5)
 
 // ============================================================
-// 時間直線（9:30 / 10:45 / 11:30，灰色垂直虛線）
+// 時間直線（9:30 / 10:30 / 11:30，灰色垂直虛線）
 //   首次跨越各時刻時畫一條 extend.both 垂直線；以 rolling buffer
 //   控制總數，避免擠掉上方 8 條關卡價 var 線（auto-prune 依建立順序）。
 // ============================================================
@@ -441,19 +457,19 @@ f_vline(_b) =>
         line.delete(array.shift(vlines))
 
 var bool v930  = false
-var bool v1045 = false
+var bool v1030 = false
 var bool v1130 = false
 if entering_session
     v930  := false
-    v1045 := false
+    v1030 := false
     v1130 := false
 if show_vlines and in_session
     if not v930 and _t >= 570        // 09:30
         f_vline(true)
         v930 := true
-    if not v1045 and _t >= 645       // 10:45
+    if not v1030 and _t >= 630       // 10:30
         f_vline(true)
-        v1045 := true
+        v1030 := true
     if not v1130 and _t >= 690       // 11:30
         f_vline(true)
         v1130 := true
@@ -483,7 +499,7 @@ f_size(s) =>
         r := size.large
     r
 
-var table tbl = table.new(position.top_right, 2, 17,
+var table tbl = table.new(position.top_right, 3, 15,
      border_width = 1, border_color = col_border, frame_width = 1, frame_color = col_border)
 
 // 一列關卡（label, price, 文字色, 是否高亮）
@@ -497,7 +513,7 @@ f_row(t, ridx, lbl, px, txtcol, hl) =>
          text_halign = text.align_right, bgcolor = bg, text_size = f_size(txt_size_in))
 
 if barstate.islast and show_table
-    table.clear(tbl, 0, 0, 1, 16)
+    table.clear(tbl, 0, 0, 2, 14)
     if ready
         table.set_position(tbl, f_pos(tbl_pos_in))
         floor90 = math.round(d1)
@@ -534,14 +550,25 @@ if barstate.islast and show_table
             k = array.get(sidx, i)
             f_row(tbl, 9 + i, array.get(bear_lbl, k), array.get(bear_px, k), col_bear, array.get(bear_hi, k))
 
-        // ---- 續航提示 ----
+        // ---- 第三欄：出場提示（續航 + 狀態感知出場速記，自動換行逐列鋪設）----
+        //   多文字對齊多方組(row2-7)、空文字對齊空方組(row9-14)；每行各佔一列保持階梯對齊。
         if show_hint
-            table.cell(tbl, 0, 15, f_hint("多", bL1_min, bL2_min), text_color = col_bull,
-                 text_halign = text.align_left, bgcolor = col_panel, text_size = f_size(txt_size_in))
-            table.cell(tbl, 1, 15, "", bgcolor = col_panel)
-            table.cell(tbl, 0, 16, f_hint("空", sL1_min, sL2_min), text_color = col_bear,
-                 text_halign = text.align_left, bgcolor = col_panel, text_size = f_size(txt_size_in))
-            table.cell(tbl, 1, 16, "", bgcolor = col_panel)
+            table.cell(tbl, 2, 0, "出場提示", text_color = col_text, text_halign = text.align_left,
+                 bgcolor = col_today, text_size = f_size(txt_size_in))
+            table.cell(tbl, 2, 1, "", bgcolor = col_panel)
+            table.cell(tbl, 2, 8, "", bgcolor = col_panel)
+            // 多方 → row 2..7
+            blines = f_side_lines("多", true, bL1_min, bL2_min, bt3, bt4, bt5)
+            for i = 0 to 5
+                btxt = i < array.size(blines) ? array.get(blines, i) : ""
+                table.cell(tbl, 2, 2 + i, btxt, text_color = col_bull, text_halign = text.align_left,
+                     bgcolor = col_panel, text_size = f_size(txt_size_in))
+            // 空方 → row 9..14
+            slines = f_side_lines("空", false, sL1_min, sL2_min, st3, st4, st5)
+            for i = 0 to 5
+                stxt = i < array.size(slines) ? array.get(slines, i) : ""
+                table.cell(tbl, 2, 9 + i, stxt, text_color = col_bear, text_halign = text.align_left,
+                     bgcolor = col_panel, text_size = f_size(txt_size_in))
     else
         table.set_position(tbl, f_pos(tbl_pos_in))
         table.cell(tbl, 0, 0, "關卡價", text_color = col_text, bgcolor = col_today,
