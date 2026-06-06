@@ -19,7 +19,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
   display: flex; flex-direction: column; }
 .mini-title { color: var(--muted); font-size: 11px; letter-spacing: 0.05em;
   padding: 4px 10px; flex: 0 0 auto; border-bottom: 1px solid var(--border); }
-#mini-chart { flex: 1; min-height: 0; width: 100%; }
+#mini-chart, #mini-chart-d { flex: 1; min-height: 0; width: 100%; }
 .list-row { display: grid; grid-template-columns: 1fr auto auto; gap: 6px;
   padding: 5px 10px; border-bottom: 1px solid #1c1c1c; cursor: pointer; font-family: var(--mono); }
 .list-row:hover { background: #1e1e1e; }

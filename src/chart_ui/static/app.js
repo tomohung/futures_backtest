@@ -697,8 +697,10 @@ function initChart() {
   }).observe(wrap);
 }
 
-// ── 左側 1H K + MACD 參考圖（唯讀,獨立 state,固定含夜盤）──────────────────
-const miniChartState = { chart: null, candle: null, maSeries: null, hist: null, dif: null, dea: null, bars: [] };
+// ── 左側參考圖（唯讀,獨立 state）：1D 在上、1H 在下,共用 createMiniChart/drawMiniSeries ──
+const miniChartState = { chart: null, candle: null, maSeries: null, hist: null, dif: null, dea: null, bars: [] };  // 1H（含夜盤）
+const miniDayState   = { chart: null, candle: null, maSeries: null, hist: null, dif: null, dea: null, bars: [] };  // 1D（日線）
+const MINI_DAY_VISIBLE_BARS = 45;    // 日線預設顯示根數（約 9 週;側欄窄,根數多會太擠）
 
 // === mini 圖盤別分界垂直虛線：日盤起點 08:45 + 夜盤起點 15:00 ===
 // 1H 全日盤 resample 後,日盤開盤那根落在 08:00 桶（含 08:45）,夜盤起點為 15:00 整點。
@@ -753,9 +755,10 @@ const miniSessionLinesPrimitive = {
   paneViews() { return [_miniSessionPaneView]; },
 };
 
-function initMiniChart() {
-  const el = document.getElementById('mini-chart');
-  if (!el) return;
+// 共用：建立一張唯讀 mini 圖（candle + 6MA + MACD 雙 pane）。回傳 state 物件;el 不存在回 null。
+function createMiniChart(elId) {
+  const el = document.getElementById(elId);
+  if (!el) return null;
   const chart = LightweightCharts.createChart(el, {
     layout: { background: { color: '#0d0d0d' }, textColor: '#e0e0e0' },
     grid: { vertLines: { color: '#1a1a1a' }, horzLines: { color: '#1a1a1a' } },
@@ -767,40 +770,65 @@ function initMiniChart() {
     handleScale: false,            // 唯讀:停用縮放
     autoSize: true,
   });
-  miniChartState.chart = chart;
-  miniChartState.candle = chart.addSeries(LightweightCharts.CandlestickSeries, {
+  const st = { chart, candle: null, maSeries: null, hist: null, dif: null, dea: null, bars: [] };
+  st.candle = chart.addSeries(LightweightCharts.CandlestickSeries, {
     upColor: COLORS.up, downColor: COLORS.down,
     borderUpColor: COLORS.up, borderDownColor: COLORS.down,
     wickUpColor: COLORS.wick, wickDownColor: COLORS.wick,
     priceLineVisible: false, lastValueVisible: false,
     priceFormat: { type: 'price', precision: 0, minMove: 1 },
   });
-  miniChartState.candle.attachPrimitive(miniSessionLinesPrimitive);   // 日盤/夜盤起點分界線
   // 主 pane 6 條均線（沿用主圖 MA_DEFS 的週期/顏色,畫在 K 線之上,同右軸）
-  miniChartState.maSeries = MA_DEFS.map((d) => chart.addSeries(LightweightCharts.LineSeries, {
+  st.maSeries = MA_DEFS.map((d) => chart.addSeries(LightweightCharts.LineSeries, {
     color: d.color, lineWidth: 1, priceScaleId: 'right',
     priceLineVisible: false, lastValueVisible: false,
     priceFormat: { type: 'price', precision: 0, minMove: 1 },
   }));
   // MACD 副圖（pane 1）:柱(漲紅跌綠) + DIF + DEA
-  miniChartState.hist = chart.addSeries(
-    LightweightCharts.HistogramSeries,
-    { color: COLORS.up, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false },
-    1,
-  );
-  miniChartState.dif = chart.addSeries(
-    LightweightCharts.LineSeries,
-    { color: COLORS.accent, lineWidth: 1, priceScaleId: 'macd',
-      priceLineVisible: false, lastValueVisible: false },
-    1,
-  );
-  miniChartState.dea = chart.addSeries(
-    LightweightCharts.LineSeries,
-    { color: MACD_DEA_COLOR, lineWidth: 1, priceScaleId: 'macd',
-      priceLineVisible: false, lastValueVisible: false },
-    1,
-  );
+  st.hist = chart.addSeries(LightweightCharts.HistogramSeries,
+    { color: COLORS.up, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false }, 1);
+  st.dif = chart.addSeries(LightweightCharts.LineSeries,
+    { color: COLORS.accent, lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false }, 1);
+  st.dea = chart.addSeries(LightweightCharts.LineSeries,
+    { color: MACD_DEA_COLOR, lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false }, 1);
   chart.priceScale('macd').applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
+  return st;
+}
+
+// 共用：把 bars 畫到 mini 圖（candle + 6MA + MACD,沿用 warm-up null-skip）。
+function drawMiniSeries(st, bars) {
+  st.bars = bars;
+  st.candle.setData(bars.map((b) => ({
+    time: b.time, open: b.open, high: b.high, low: b.low, close: b.close,
+  })));
+  const closes = bars.map((b) => b.close);
+  MA_DEFS.forEach((d, k) => {
+    const arr = sma(closes, d.p);
+    st.maSeries[k].setData(bars.flatMap((b, i) => (arr[i] != null ? [{ time: b.time, value: arr[i] }] : [])));
+  });
+  if (bars.length >= MACD_MIN_BARS) {
+    const { dif, dea, hist } = computeMACD(closes);
+    st.dif.setData(bars.flatMap((b, i) => (dif[i] != null ? [{ time: b.time, value: dif[i] }] : [])));
+    st.dea.setData(bars.flatMap((b, i) => (dea[i] != null ? [{ time: b.time, value: dea[i] }] : [])));
+    st.hist.setData(bars.flatMap((b, i) => (hist[i] != null
+      ? [{ time: b.time, value: hist[i], color: hist[i] >= 0 ? COLORS.up : COLORS.down }]
+      : [])));
+  } else {                                           // 資料不足以算 MACD → 留空,K 線照畫
+    st.dif.setData([]);
+    st.dea.setData([]);
+    st.hist.setData([]);
+  }
+}
+
+// 建立 1D（上）+ 1H（下）兩張 mini 圖;只有 1H 掛盤別分界線（日線無盤中時段）。
+function initMiniCharts() {
+  const d = createMiniChart('mini-chart-d');
+  if (d) Object.assign(miniDayState, d);
+  const h = createMiniChart('mini-chart');
+  if (h) {
+    Object.assign(miniChartState, h);
+    miniChartState.candle.attachPrimitive(miniSessionLinesPrimitive);   // 日盤/夜盤起點分界線
+  }
 }
 
 // center 日期往前 days 個日曆天,回傳 'YYYY-MM-DD'(mini 圖的 from 起點)。
@@ -822,34 +850,35 @@ async function loadMiniChart(centerDate, adjust) {
   try {
     bars = await fetchJSON(`/api/kline?${p}`);
   } catch (e) {
-    console.warn('mini 圖載入失敗:', e);            // 維持上一次內容,不丟給主圖
+    console.warn('mini 1H 圖載入失敗:', e);          // 維持上一次內容,不丟給主圖
     return;
   }
-  miniChartState.bars = bars;                       // 供 miniSessionLinesPrimitive 對位
-  miniChartState.candle.setData(bars.map((b) => ({
-    time: b.time, open: b.open, high: b.high, low: b.low, close: b.close,
-  })));
-  const closes = bars.map((b) => b.close);
-  MA_DEFS.forEach((d, k) => {
-    const arr = sma(closes, d.p);
-    miniChartState.maSeries[k].setData(bars.flatMap((b, i) => (arr[i] != null ? [{ time: b.time, value: arr[i] }] : [])));
-  });
-  if (bars.length >= MACD_MIN_BARS) {
-    const { dif, dea, hist } = computeMACD(closes);
-    miniChartState.dif.setData(bars.flatMap((b, i) => (dif[i] != null ? [{ time: b.time, value: dif[i] }] : [])));
-    miniChartState.dea.setData(bars.flatMap((b, i) => (dea[i] != null ? [{ time: b.time, value: dea[i] }] : [])));
-    miniChartState.hist.setData(bars.flatMap((b, i) => (hist[i] != null
-      ? [{ time: b.time, value: hist[i], color: hist[i] >= 0 ? COLORS.up : COLORS.down }]
-      : [])));
-  } else {                                           // 資料不足以算 MACD → 留空,K 線照畫
-    miniChartState.dif.setData([]);
-    miniChartState.dea.setData([]);
-    miniChartState.hist.setData([]);
-  }
+  drawMiniSeries(miniChartState, bars);
   // 預設顯示最近約 60 根 1H K(含夜盤 ≈ 3 個交易日);右側留 2 根 padding。
   const n = bars.length;
   miniChartState.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 60), to: n - 1 + 2 });
   if (miniSessionReqUpdate) miniSessionReqUpdate();  // 重畫盤別分界線
+}
+
+// 載入 mini 1D 圖:tf=1d、session=full(含夜盤),adjust 跟主圖;後端回全歷史日線,
+// 畫全部後把視窗對齊到 centerDate、往前顯示 MINI_DAY_VISIBLE_BARS 根。唯讀,失敗不影響主圖。
+async function loadMiniDayChart(centerDate, adjust) {
+  if (!miniDayState.chart || !centerDate) return;
+  const p = new URLSearchParams({ tf: '1d', session: 'full', adjust });
+  let bars;
+  try {
+    bars = await fetchJSON(`/api/kline?${p}`);
+  } catch (e) {
+    console.warn('mini 1D 圖載入失敗:', e);
+    return;
+  }
+  drawMiniSeries(miniDayState, bars);
+  // 視窗對齊 centerDate（日線 time 為 'YYYY-MM-DD' 字串,可直接比較）。
+  let idx = bars.findIndex((b) => b.time >= centerDate);
+  if (idx < 0) idx = bars.length - 1;
+  miniDayState.chart.timeScale().setVisibleLogicalRange({
+    from: Math.max(0, idx - MINI_DAY_VISIBLE_BARS), to: idx + 2,
+  });
 }
 
 // 把副圖 legend 對齊到對應 pane 頂端（同在 .chart-wrap 內，定位才不會被 canvas 蓋住）。
@@ -1322,6 +1351,7 @@ async function loadKline(centerEpochToFocus) {
   // 左側 1H 參考圖(唯讀,固定含夜盤)。日線檢視也載入(顯示該日 1H 細節);
   // session 切換時 mini 仍抓 full,等同 no-op,不值得加 guard。
   loadMiniChart(state.centerDate, state.adjust);
+  loadMiniDayChart(state.centerDate, state.adjust);
 }
 
 // 將視窗置中到某 time（epoch 或 'YYYY-MM-DD'）；找不到就顯示尾段。
@@ -1448,7 +1478,7 @@ function wireIndicatorToggles() {
 
 async function main() {
   initChart();
-  initMiniChart();
+  initMiniCharts();
   wireToolbar();
   wireIndicatorToggles();
   setTitle();
