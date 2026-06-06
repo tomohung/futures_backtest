@@ -22,6 +22,17 @@ const MATURN_PERIOD = 120;     // SMA 期數（扣抵值 = period 個 bucket 前
 const MATURN_ZERO_COLOR = '#888';
 const MACD_DEA_COLOR = '#6aa3ff';   // mini 1H MACD 的 DEA(訊號)線
 const MACD_MIN_BARS = 34;   // slow(26)+signal(9)-2 = 第一個有效 dea/hist index;不足則不畫 MACD
+// MACD 柱 TradingView 式深淺：離零軸方向變大=飽和色,縮回零軸=淡色（漲紅跌綠）。
+// fade 用「偏白的亮色」而非降透明度——黑底上低透明度會變暗看不清,往白混才會變淡且清楚。
+const MACD_HIST_UP = COLORS.up;          // 正且增強 → 濃紅
+const MACD_HIST_UP_FADE = '#f7a8a8';     // 正但縮小 → 淡紅（亮）
+const MACD_HIST_DN = COLORS.down;        // 負且增強 → 濃綠
+const MACD_HIST_DN_FADE = '#c4f5d6';     // 負但縮小 → 淡綠（亮薄荷,與濃綠拉開明度）
+// cur=本根 hist,prev=前一根 hist（warm-up 為 null,視為增強）。
+function macdHistColor(cur, prev) {
+  if (cur >= 0) return (prev == null || cur >= prev) ? MACD_HIST_UP : MACD_HIST_UP_FADE;
+  return (prev == null || cur <= prev) ? MACD_HIST_DN : MACD_HIST_DN_FADE;
+}
 // 主圖 6 條均線（SMA(close)），週期/顏色仿 screener-ui。mini 1H 圖也共用此定義。
 const MA_DEFS = [
   { p: 5, color: '#ff9800' },
@@ -811,7 +822,7 @@ function drawMiniSeries(st, bars) {
     st.dif.setData(bars.flatMap((b, i) => (dif[i] != null ? [{ time: b.time, value: dif[i] }] : [])));
     st.dea.setData(bars.flatMap((b, i) => (dea[i] != null ? [{ time: b.time, value: dea[i] }] : [])));
     st.hist.setData(bars.flatMap((b, i) => (hist[i] != null
-      ? [{ time: b.time, value: hist[i], color: hist[i] >= 0 ? COLORS.up : COLORS.down }]
+      ? [{ time: b.time, value: hist[i], color: macdHistColor(hist[i], hist[i - 1]) }]
       : [])));
   } else {                                           // 資料不足以算 MACD → 留空,K 線照畫
     st.dif.setData([]);
