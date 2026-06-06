@@ -9,7 +9,7 @@
 
 出場框架（情境表，多方）：
   - 碰 L1(high≥base+L1d) → 停損移 BE（或 ⅔ 鎖）；早於 09:30 瞄 L3、否則瞄 L2
-  - 碰 L2 → 早於 10:45 啟動 ride trail 博 L3；否則守 L2(於 L2 了結)
+  - 碰 L2 → 早於 10:30 啟動 ride trail 博 L3；否則守 L2(於 L2 了結)
   - 瞄 L2 / 守 L2：靜態於 target 了結
   - 碰 L3 後：trail 繼續收割延伸（fixed 變體則於 L3 了結）
   - 13:45 EOD 平倉
@@ -27,7 +27,7 @@ import pandas as pd
 from src.backtest.runner import load_data_for_orb_est_hl
 
 C = {"L1": 0.385, "L2": 0.497, "L3": 0.711}
-GATE_0930, GATE_1045, EOD = 570, 645, 825   # 09:30, 10:45, 13:45 (分鐘)
+GATE_0930, GATE_1030, EOD = 570, 630, 825   # 09:30, 10:30, 13:45 (分鐘)
 OR_START, OR_END = 525, 537                 # 08:45, 08:57
 ENTRY_START, ENTRY_END = 538, 555           # 08:58, 09:15
 SL_FRAC = 0.25
@@ -101,7 +101,7 @@ def simulate(day, ei, base, emahl, ema20, trail_type, stop_policy):
             aim = "L3" if t < GATE_0930 else "L2"
         if reached1 and not reached2 and h[j] >= L2:
             reached2 = True
-            if t < GATE_1045:
+            if t < GATE_1030:
                 aim = "L3"
                 if trail_type != "fixed":
                     trail_on = True        # 啟動 ride trail

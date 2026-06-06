@@ -8,7 +8,7 @@
 規則對齊 exit_scenarios v5.2（多方）：
   - 進場：乾淨 EstHL long（沿用 phase2_path_backtest.build_entries）
   - 初始 SL = 進場價 − 0.25×EmaHL，**守到 L3 完全不動**（無 BE）
-  - 10:45 後仍未碰 L3 → 啟「時間停損」Dow trail
+  - 10:30 後仍未碰 L3 → 啟「時間停損」Dow trail
   - 碰 L3 → 啟 Dow trail（更高低點 ratchet）
   - 13:30 EOD 全平（保險閘）
   關卡 EMA-only：L1=.385 L2=.497 L3=.711 L4=.977 ×EMA20(日盤振幅, causal prior-day)。
@@ -32,7 +32,7 @@ from phase2_path_backtest import (  # noqa: E402
 )
 
 C = {"L1": 0.385, "L2": 0.497, "L3": 0.711, "L4": 0.977}
-GATE_1045 = 645   # 10:45
+GATE_1030 = 630   # 10:30
 EOD_MIN = 810     # 13:30 全平（v5.2 保險閘）
 SL_FRAC = 0.25
 
@@ -60,8 +60,8 @@ def simulate_rem(day, ei, base, emahl, ema20):
             exit_px = stop
             _reason = "trail" if trail_on else "stop"
             break
-        if (not reached3) and (not trail_on) and t >= GATE_1045:
-            trail_on = True                    # 10:45 時間停損
+        if (not reached3) and (not trail_on) and t >= GATE_1030:
+            trail_on = True                    # 10:30 時間停損
             if pl[j] > stop:
                 stop = pl[j]
         if not reached3 and h[j] >= L3:        # 碰 L3 → 啟 trail
