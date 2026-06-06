@@ -171,7 +171,7 @@ function drawTradeMarkers(item) {
   }
 }
 
-// 覆盤 overlay：09:30/10:45/11:30 時間線（垂直虛線，由 reviewLinesPrimitive 自繪）。
+// 覆盤 overlay：09:30/10:30/11:30 時間線（垂直虛線，由 reviewLinesPrimitive 自繪）。
 // 關卡觸及標示已抽成獨立指標 applyTouchMarkers。
 // 不自行 clearMarkers（由呼叫端 maybeDrawReview 清）；intraday 才畫。
 function drawReviewOverlay(d) {
@@ -618,7 +618,7 @@ function initChart() {
     priceFormat: { type: 'price', precision: 0, minMove: 1 },   // 台指期為整數，y 軸不顯示小數
   });
   chartState.candle.attachPrimitive(sessionLinesPrimitive);   // 盤別分界垂直線
-  chartState.candle.attachPrimitive(reviewLinesPrimitive);    // 覆盤時間線 09:30/10:45/11:30
+  chartState.candle.attachPrimitive(reviewLinesPrimitive);    // 覆盤時間線 09:30/10:30/11:30
   chartState.candle.attachPrimitive(orbLinesPrimitive);       // ORB 區間高/低水平線段
   chartState.candle.attachPrimitive(touchLinesPrimitive);     // 關卡觸及圓點+階數
   chartState.maSeries = MA_DEFS.map((d) => chart.addSeries(LightweightCharts.LineSeries, {
@@ -1096,10 +1096,10 @@ const sessionLinesPrimitive = {
   paneViews() { return [_sessionPaneView]; },
 };
 
-// === 覆盤時間線（09:30 / 10:45 / 11:30 同色垂直虛線；僅覆盤日、無交易時畫）===
+// === 覆盤時間線（09:30 / 10:30 / 11:30 同色垂直虛線；僅覆盤日、無交易時畫）===
 let reviewReqUpdate = null;
 const REVIEW_COLOR = '#888';
-const REVIEW_TIMES = [[570, '09:30'], [645, '10:45'], [690, '11:30']];   // 分鐘 → 標籤
+const REVIEW_TIMES = [[570, '09:30'], [630, '10:30'], [690, '11:30']];   // 分鐘 → 標籤
 const _reviewRenderer = {
   draw(target) {
     if (state.tf === '1d') return;
@@ -1641,9 +1641,23 @@ async function renderDayStats(date) {
       + `<div class="kv"><span class="k n">W權值* / H熱門 / B家數</span>`
       + `<span class="v n">${dci.W.toFixed(2)} / ${dci.H.toFixed(2)} / ${dci.B.toFixed(2)}</span></div>`;
     if (d.exit_advice) {
-      dciSec += `<div class="gap"></div>`
-        + `<div class="advice">${d.exit_advice.bull}</div>`
-        + `<div class="advice">${d.exit_advice.bear}</div>`;
+      const renderExit = (adv, sideZh, cls) => {
+        if (!adv) return '';
+        let h = `<div class="exit-head ${cls}">${sideZh}<span class="band">（${adv.band_label}）</span></div>`;
+        if (adv.note) return h + `<div class="exit-empty">${adv.note}</div>`;
+        for (const s of adv.steps) {
+          h += `<div class="exit-step"><span class="t">${s.t}</span>`
+            + `<span class="lv ${cls}">${s.level}</span>`
+            + `<span class="act">${s.action}</span></div>`;
+          if (s.branches) h += s.branches.map(b => `<div class="exit-br">${b}</div>`).join('');
+          if (s.note) h += `<div class="exit-note">${s.note}</div>`;
+        }
+        return h;
+      };
+      dciSec += `<div class="gap"></div><div class="exit-adv">`
+        + renderExit(d.exit_advice.bull, '多', 'up')
+        + renderExit(d.exit_advice.bear, '空', 'dn')
+        + `</div>`;
     }
     dciSec += `</div>`;
   }

@@ -238,7 +238,7 @@ def _cont_lookup(table, minute: int) -> int:
     return c
 
 
-_GATE_0930, _GATE_1045 = 570, 645
+_GATE_0930, _GATE_1030 = 570, 630
 _BAND_LABEL = {"strong": "強", "mid": "中", "weak": "弱"}
 
 
@@ -246,39 +246,69 @@ def _hhmm(minute: int) -> str:
     return f"{minute // 60:02d}:{minute % 60:02d}"
 
 
-def _exit_advice(touches: dict, band: str, side: str) -> str:
-    """依觸及時間 + 時間閘 + EOD regime 產生建議出場字串（覆盤用，事後 regime）。
+def _exit_advice(touches: dict, band: str, side: str) -> dict:
+    """依觸及時間 + 時間閘產生覆盤出場路線（事後，結構化供前端排版）。
 
-    停損鐵律：碰 L3 前一律守初始 SL（不移 BE、不啟 trail）；時間閘只升「目標」。
-    碰 L2 晚於 10:45（中）與碰 L3（中）採 scale-out 半收半跑。
-    詳見 research/active/H095-reach-ladder-exit/journal_checklist.md（v4）。
+    停損鐵律：碰 L3 前一律守初始 SL（不移 BE、不啟 trail）；時間閘（09:30/10:30）只升「目標」。
+    L1/L2 用 EOD regime band 給目標積極度；L3 起列出 DCI 分支提醒（規則速查，覆盤對照實盤用），
+    多空不對稱：多方 L3 拆 0.2/0.4、L4 砍½；空方 L3 強空全口切、L4 依強度分批出。
+    DCI 分支的實際選擇以盤中即時 DCI 為準（此處 DCI 為收盤事後值，故只列分支不替你選）。
+    詳見 research/active/H095-reach-ladder-exit/journal_checklist.md（v5.4）。
+
+    回傳 {band_label, steps:[{t, level, action, branches?, note?}], note?}。
     """
     bl = _BAND_LABEL.get(band, band)
     t1, t2, t3 = touches.get("L1"), touches.get("L2"), touches.get("L3")
+    t4, t5 = touches.get("L4"), touches.get("L5")
     if t1 is None:
-        return f"{side}({bl})：未碰 L1"
-    parts = []
-    aim1 = "瞄L3(守初SL)" if (band == "strong" or t1 < _GATE_0930) else "暫收L2(守初SL)"
-    parts.append(f"{_hhmm(t1)}碰L1→{aim1}")
+        return {"band_label": bl, "steps": [], "note": "未碰 L1"}
+    is_long = side == "多"
+    steps = []
+    # L1 閘（09:30）：目標預報，守初 SL
+    aim1 = "瞄 L3（守初SL）" if (band == "strong" or t1 < _GATE_0930) else "暫收 L2（守初SL）"
+    steps.append({"t": _hhmm(t1), "level": "L1", "action": aim1})
+    # L2 閘（10:30）：覆蓋 L1，仍守初 SL
     if t2 is not None:
         if band == "strong":
-            act2 = "靜態瞄L3,標記獵L4"
+            act2 = "靜態瞄 L3、標記獵 L4"
+            note2 = "晚碰上限 ~11:00–11:30" if t2 >= _GATE_1030 else None
         elif band == "weak":
-            act2 = "守L2/快收"
-        elif t2 < _GATE_1045:
-            act2 = "靜態瞄L3"
+            act2, note2 = "守 L2／快收", None
+        elif t2 < _GATE_1030:
+            act2, note2 = "靜態瞄 L3", None
         else:
-            act2 = "半收L2半瞄L3"
-        parts.append(f"{_hhmm(t2)}碰L2→{act2}")
+            act2, note2 = "半收 L2、半瞄 L3", None
+        steps.append({"t": _hhmm(t2), "level": "L2", "action": act2, "note": note2})
+    # L3：第一個動停損點，依 DCI 拆分（多空不對稱）+ 時間旁註
     if t3 is not None:
-        if band == "strong":
-            act3 = "寬trail博L4"
-        elif band == "weak":
-            act3 = "靜態拿L3"
+        if is_long:
+            branches = ["< 0.2　靜態拿 L3", "0.2 ~ 0.4　出 ½、留 ½ 切 Dow", "≥ 0.4　出 ⅓、留 ⅔ 切 Dow"]
         else:
-            act3 = "半Dow博L4半鎖L3"
-        parts.append(f"{_hhmm(t3)}碰L3→{act3}")
-    return f"{side}({bl})：" + "；".join(parts)
+            branches = ["> −0.2　靜態拿 L3", "≤ −0.2　全口切 Dow、延 L4 分批"]
+        if t3 < _GATE_0930:
+            note3 = "早碰／gap-and-go：偏積極，餘量多留"
+        elif t3 >= 690:  # 11:30
+            note3 = "晚碰 11:30+：長尾塌，可收乾淨（H099 觀察）"
+        else:
+            note3 = None
+        steps.append({"t": _hhmm(t3), "level": "L3", "action": "依 DCI 拆",
+                      "branches": branches, "note": note3})
+    # L4：罕見長尾，多方砍½(降變異)/空方依強度分批出(強→出少留多，抱肥尾)
+    if t4 is not None:
+        if is_long:
+            branches = ["≥ 0.4 路徑　出 ⅓、留 ⅓ 切 Dow", "0.2 ~ 0.4 路徑　出 ¼、留 ¼ 切 Dow"]
+            act4, note4 = "餘量再砍 ½", "餘量 Dow trail 博瘦尾"
+        else:
+            branches = ["≤ −0.2　出 ⅓", "≤ −0.4　出 ¼", "≤ −0.6　出 ⅕"]
+            act4, note4 = "依強度分批出（強→出少留多）", "餘量 Dow 博 L6／L7"
+        steps.append({"t": _hhmm(t4), "level": "L4", "action": act4,
+                      "branches": branches, "note": note4})
+    # L5：深長尾純收割，逐步收緊（口數不足直接用最緊那道）
+    if t5 is not None:
+        steps.append({"t": _hhmm(t5), "level": "L5", "action": "逐步收緊",
+                      "branches": ["① L5價／15分目標", "② 反向 K 收盤", "③ 5MA 站回 → 清"],
+                      "note": "口數不足直接用 ③"})
+    return {"band_label": bl, "steps": steps, "note": None}
 
 
 def _touch_hint(t) -> dict | None:
@@ -420,7 +450,7 @@ def compute_daystats(*, date_str: str, db_path: Path | None = None) -> dict:
             _r2 = LVL_QUANTILES[1][2] * ema20  # L2 振幅距離
             level1 = _level1_signals(conn, sel, _r1, _r2)
 
-        # 觸及（到 L3）+ DCI(收盤/事後) + 建議出場法
+        # 觸及（含 L4/L5）+ DCI(收盤/事後) + 出場路線
         touches = {"bull": [], "bear": []}
         dci = None
         exit_advice = None
