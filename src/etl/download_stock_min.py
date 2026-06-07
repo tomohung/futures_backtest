@@ -101,6 +101,9 @@ def normalize_kbar(df: pd.DataFrame, d: date) -> pd.DataFrame:
     out["minute"] = pd.to_datetime(out["minute"], format="%H:%M:%S").dt.time
     out["stock_id"] = out["stock_id"].astype(str)
     out["volume"] = out["volume"].fillna(0).astype("int64")
+    # FinMind 舊資料（如 2021 的 ETF）偶有同一分鐘重複 print（OHLC 同、volume 微差），
+    # 會違反 stock_min 的 PK。對 PK 去重，保留後到的 final print。
+    out = out.drop_duplicates(subset=["trade_date", "stock_id", "minute"], keep="last")
     return out[STOCK_MIN_COLS].reset_index(drop=True)
 
 

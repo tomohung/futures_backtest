@@ -93,6 +93,23 @@ def test_normalize_kbar_empty():
     assert len(out) == 0
 
 
+def test_normalize_kbar_dedups_pk():
+    # FinMind 舊資料同一分鐘重複 print（OHLC 同、volume 微差）→ 須對 PK 去重，避免 PK 衝突
+    raw = pd.DataFrame([
+        {"date": "2021-01-04", "minute": "09:00:00", "stock_id": "0050",
+         "open": 122.2, "high": 122.2, "low": 122.05, "close": 122.15, "volume": 227},
+        {"date": "2021-01-04", "minute": "09:00:00", "stock_id": "0050",
+         "open": 122.2, "high": 122.2, "low": 122.05, "close": 122.15, "volume": 229},
+        {"date": "2021-01-04", "minute": "09:01:00", "stock_id": "0050",
+         "open": 122.2, "high": 122.3, "low": 122.1, "close": 122.25, "volume": 50},
+    ])
+    out = mod.normalize_kbar(raw, date(2021, 1, 4))
+    assert len(out) == 2  # 去重後剩 09:00 + 09:01
+    nine = out[out["minute"] == time(9, 0, 0)]
+    assert len(nine) == 1
+    assert nine["volume"].iloc[0] == 229  # keep="last"
+
+
 def _sample_min_df(d):
     return pd.DataFrame([
         {"date": str(d), "minute": "09:00:00", "stock_id": "2330",
