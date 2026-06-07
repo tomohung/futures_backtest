@@ -200,21 +200,29 @@ def test_loader_builds_table(tmp_path):
         assert c.execute("SELECT COUNT(*) FROM stock_min").fetchone()[0] == 4
 
 
-def test_wait_for_budget_waits_then_proceeds(monkeypatch):
-    # 真實用量先不足、再恢復 → 應先等待再返回
-    usages = iter([5900, 5900, 1000])  # 前兩次剩 100<need+margin，第三次充足
-    monkeypatch.setattr(mod, "_api_usage", lambda: next(usages))
-    slept = {"n": 0}
-    monkeypatch.setattr(mod.time, "sleep", lambda s: slept.__setitem__("n", slept["n"] + 1))
-    mod.wait_for_budget(need=1000, poll_sec=1)
-    assert slept["n"] == 2  # 等了兩輪才夠
-
-
-def test_wait_for_budget_enough_no_wait(monkeypatch):
-    monkeypatch.setattr(mod, "_api_usage", lambda: 100)
+def test_throttle_persists_and_no_wait(tmp_path, monkeypatch):
+    # 未達上限不等待；視窗持久化、跨呼叫累計（模擬跨重啟）
+    monkeypatch.setattr(mod, "_THROTTLE_FILE", tmp_path / ".throttle.json")
     monkeypatch.setattr(mod.time, "sleep",
                         lambda s: (_ for _ in ()).throw(AssertionError("不該等待")))
-    mod.wait_for_budget(need=1000)  # 100 用量、剩 5900 足夠 → 不等
+    mod._throttle(1000, limit=5000)
+    mod._throttle(1000, limit=5000)
+    win = mod._load_window()
+    assert sum(c for _, c in win) == 2000  # 持久化累計
+
+
+def test_throttle_waits_when_over_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(mod, "_THROTTLE_FILE", tmp_path / ".throttle.json")
+    mod._save_window([[mod.time.time(), 4800]])  # 已用 4800
+    slept = {"n": 0}
+
+    def fake_sleep(s):
+        slept["n"] += 1
+        mod._save_window([])  # 模擬 1 小時後額度釋出
+
+    monkeypatch.setattr(mod.time, "sleep", fake_sleep)
+    mod._throttle(1000, limit=5000)  # 4800+1000>5000 → 等一次後釋出再放行
+    assert slept["n"] == 1
 
 
 def test_loader_idempotent(tmp_path):

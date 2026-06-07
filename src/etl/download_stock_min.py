@@ -21,6 +21,7 @@ token 取自 env FINMIND_API_KEY；用官方 SDK use_async 批多檔。
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import time
 from datetime import date
@@ -145,37 +146,38 @@ def download_day(d: date, universe: list[str], raw_dir: Path = RAW_DIR) -> tuple
 
 
 # FinMind Sponsor 限額 = 6000 requests/小時（一個 request = 一檔一天）。
-# 用「真實本小時用量」驅動節流（重啟/跨 process 都正確），不靠本地計數。
-LIMIT_HOUR = 6000
-USAGE_MARGIN = 300       # 保守邊際，避免邊界打到限額
-USER_INFO_URL = "https://api.web.finmindtrade.com/v2/user_info"
+# 自算滑動視窗節流；視窗持久化到檔案 → 重啟也正確累計（FinMind 的 user_count 欄位
+# 是延遲/快取值不可靠，故不用）。留 margin 給其它偶發消耗（如別專案的 FinMind 任務）。
+RATE_PER_HOUR = 5000
+
+_THROTTLE_FILE = RAW_DIR / ".throttle.json"
 
 
-def _api_usage() -> int:
-    """查 FinMind 本小時真實已用 request 數（user_info 的 user_count 即本時段用量）。
-
-    查不到時回 LIMIT_HOUR（保守＝視為已滿，會觸發等待），避免誤判而爆量。
-    """
-    import requests
+def _load_window() -> list[list[float]]:
     try:
-        j = requests.get(
-            USER_INFO_URL, params={"token": os.environ["FINMIND_API_KEY"]}, timeout=20
-        ).json()
-        return int(j.get("user_count", LIMIT_HOUR))
+        return json.loads(_THROTTLE_FILE.read_text())
     except Exception:
-        return LIMIT_HOUR
+        return []
 
 
-def wait_for_budget(need: int, poll_sec: int = 120) -> None:
-    """等到 FinMind 本小時真實剩餘額度 ≥ need + margin 才返回（滾動視窗會自然釋出）。"""
-    while True:
-        usage = _api_usage()
-        remaining = LIMIT_HOUR - usage
-        if remaining >= need + USAGE_MARGIN:
-            return
-        print(f"  ⏳ rate-limit 保護：真實已用 {usage}/{LIMIT_HOUR}，本日需 {need}，"
-              f"剩 {remaining} 不足，等 {poll_sec}s 後再查…", flush=True)
-        time.sleep(poll_sec)
+def _save_window(window: list[list[float]]) -> None:
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
+    _THROTTLE_FILE.write_text(json.dumps(window))
+
+
+def _throttle(need: int, limit: int = RATE_PER_HOUR) -> None:
+    """持久化滑動視窗：確保（含跨重啟）任一小時內發出的 request 數 ≤ limit。"""
+    window = [e for e in _load_window() if time.time() - e[0] <= 3600]
+    used = sum(c for _, c in window)
+    while window and used + need > limit:
+        wait = 3600 - (time.time() - window[0][0]) + 1
+        print(f"  ⏳ rate-limit 保護：近1小時已用 {used}/{limit}，本日需 {need}，"
+              f"等 {wait/60:.0f} 分鐘釋出…", flush=True)
+        time.sleep(min(max(wait, 1), 300))
+        window = [e for e in _load_window() if time.time() - e[0] <= 3600]
+        used = sum(c for _, c in window)
+    window.append([time.time(), need])
+    _save_window(window)
 
 
 def main() -> None:
@@ -197,11 +199,31 @@ def main() -> None:
     print(f"交易日 {len(all_days)}，待下載 {len(todo)}"
           f"（已落地 {len(all_days)-len(todo)} 跳過）→ {RAW_DIR}", flush=True)
 
+    # 預檢：用 1 檔便宜探測，quota 全滿（回空）就等釋出，避免一開跑就整批大 burst 抓空
+    while todo:
+        try:
+            probe = fetch_kbar_day(["2330"], "2026-05-29")
+        except Exception:
+            probe = None
+        if probe is not None and len(probe) > 0:
+            break
+        print("  ⏳ FinMind quota 仍滿（探測回空），等 10 分鐘後重試…", flush=True)
+        time.sleep(600)
+
+    backoff = 600  # 不完整（撞限額）時退避秒數
+    max_day_retries = 6
     for i, d in enumerate(todo, 1):
         univ = umap[d]
-        wait_for_budget(len(univ))   # 依真實本小時用量等到額度夠才抓
         print(f"[{i}/{len(todo)}] {d}", flush=True)
-        download_day(d, univ)
+        for attempt in range(max_day_retries):
+            _throttle(len(univ))
+            fetched, expected = download_day(d, univ)
+            if fetched >= expected:
+                break  # 完成（已寫檔）
+            # 不完整 = 多半撞限額：退避後重試「同一天」，不跳過（避免再次整批漏抓）
+            print(f"  ↻ {d} 不完整，退避 {backoff//60} 分後重試"
+                  f"（{attempt+1}/{max_day_retries}）", flush=True)
+            time.sleep(backoff)
 
 
 if __name__ == "__main__":
