@@ -181,7 +181,7 @@ def test_fetch_kbar_day_retries_then_succeeds(monkeypatch):
 
     monkeypatch.setattr(mod, "_kbar_call", fake_loader_call)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)  # 不真的睡
-    df = mod.fetch_kbar_day(["2330"], "2025-06-16", token="x", max_retries=3)
+    df = mod.fetch_kbar_day(["2330"], "2025-06-16", max_retries=3)
     assert calls["n"] == 2
     assert len(df) == 1
 
@@ -193,18 +193,18 @@ def test_fetch_kbar_day_gives_up(monkeypatch):
     monkeypatch.setattr(mod, "_kbar_call", always_fail)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
     with pytest.raises(RuntimeError):
-        mod.fetch_kbar_day(["2330"], "2025-06-16", token="x", max_retries=2)
+        mod.fetch_kbar_day(["2330"], "2025-06-16", max_retries=2)
 
 
 def test_download_day_writes_and_records(conn, monkeypatch):
     mod.ensure_schema(conn)
     d = date(2025, 6, 16)
 
-    def fake_fetch(stock_ids, ds, token, **kw):
+    def fake_fetch(stock_ids, ds, **kw):
         return _sample_min_df(d)  # 回 2330 + 2317 兩檔
 
     monkeypatch.setattr(mod, "fetch_kbar_day", fake_fetch)
-    mod.download_day(conn, d, token="x", market="TWSE")
+    mod.download_day(conn, d, market="TWSE")
 
     cnt = conn.execute("SELECT COUNT(*) FROM stock_min WHERE trade_date=?", [d]).fetchone()[0]
     assert cnt == 2
@@ -213,3 +213,49 @@ def test_download_day_writes_and_records(conn, monkeypatch):
     ).fetchone()
     assert row[0] == 2          # TWSE 宇宙 = 2330,2317
     assert row[2] == "complete"
+
+
+def test_normalize_kbar_none_input():
+    out = mod.normalize_kbar(None, date(2025, 6, 16))
+    assert list(out.columns) == mod.STOCK_MIN_COLS
+    assert len(out) == 0
+
+
+def test_download_day_records_partial_on_fetch_failure(conn, monkeypatch):
+    mod.ensure_schema(conn)
+    d = date(2025, 6, 16)
+
+    def raise_on_fetch(stock_ids, ds, **kw):
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(mod, "fetch_kbar_day", raise_on_fetch)
+    mod.download_day(conn, d, market="TWSE")
+
+    row = conn.execute(
+        "SELECT status, fetched FROM stock_min_progress WHERE trade_date=?", [d]
+    ).fetchone()
+    assert row[0] == "partial"
+    assert row[1] == 0
+    cnt = conn.execute("SELECT COUNT(*) FROM stock_min WHERE trade_date=?", [d]).fetchone()[0]
+    assert cnt == 0
+
+
+def test_download_day_empty_universe_complete(conn, monkeypatch):
+    mod.ensure_schema(conn)
+    d = date(2099, 1, 1)  # 無 stock_day 資料的未來日期
+
+    fetch_called = {"n": 0}
+
+    def should_not_be_called(stock_ids, ds, **kw):
+        fetch_called["n"] += 1
+        raise AssertionError("fetch_kbar_day should not be called for empty universe")
+
+    monkeypatch.setattr(mod, "fetch_kbar_day", should_not_be_called)
+    mod.download_day(conn, d)
+
+    assert fetch_called["n"] == 0
+    row = conn.execute(
+        "SELECT status, expected FROM stock_min_progress WHERE trade_date=?", [d]
+    ).fetchone()
+    assert row[0] == "complete"
+    assert row[1] == 0

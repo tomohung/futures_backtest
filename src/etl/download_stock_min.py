@@ -97,7 +97,7 @@ def normalize_kbar(df: pd.DataFrame, d: date) -> pd.DataFrame:
     if df is None or len(df) == 0:
         return pd.DataFrame(columns=STOCK_MIN_COLS)
     out = df.copy()
-    out["trade_date"] = pd.to_datetime(out["date"]).dt.date
+    out["trade_date"] = d
     out["minute"] = pd.to_datetime(out["minute"], format="%H:%M:%S").dt.time
     out["stock_id"] = out["stock_id"].astype(str)
     out["volume"] = out["volume"].fillna(0).astype("int64")
@@ -108,11 +108,9 @@ def write_day(conn: duckdb.DuckDBPyConnection, d: date, df: pd.DataFrame) -> int
     """以日為單位刪舊寫新（冪等）。回傳寫入 row 數。"""
     conn.execute("DELETE FROM stock_min WHERE trade_date = ?", [d])
     if len(df):
-        conn.register("df_min", df)
         conn.execute(
-            f"INSERT INTO stock_min SELECT {', '.join(STOCK_MIN_COLS)} FROM df_min"
+            f"INSERT INTO stock_min SELECT {', '.join(STOCK_MIN_COLS)} FROM df"
         )
-        conn.unregister("df_min")
     return len(df)
 
 
@@ -150,7 +148,7 @@ def pending_days(
     return [d for d in days if d not in done]
 
 
-def _kbar_call(stock_id_list: list[str], date: str, use_async: bool) -> pd.DataFrame:
+def _kbar_call(stock_id_list: list[str], date_str: str, use_async: bool) -> pd.DataFrame:
     """薄包 FinMind SDK。隔離成單一接縫供測試 monkeypatch。"""
     from FinMind.data import DataLoader
 
@@ -158,14 +156,13 @@ def _kbar_call(stock_id_list: list[str], date: str, use_async: bool) -> pd.DataF
     dl = DataLoader()
     dl.login_by_token(api_token=token)
     return dl.taiwan_stock_kbar(
-        stock_id_list=stock_id_list, date=date, use_async=use_async
+        stock_id_list=stock_id_list, date=date_str, use_async=use_async
     )
 
 
 def fetch_kbar_day(
     stock_ids: list[str],
     d: str,
-    token: str,
     max_retries: int = 4,
 ) -> pd.DataFrame:
     """抓單日全宇宙分 k；rate-limit/連線錯誤指數退避重試。最終失敗則 raise。"""
@@ -175,14 +172,14 @@ def fetch_kbar_day(
             return _kbar_call(stock_ids, d, use_async=True)
         except Exception as e:  # noqa: BLE001 — 退避重試所有暫態錯誤
             last_err = e
-            time.sleep(2 ** attempt)  # 1,2,4,8...秒
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # 1,2,4,8...秒
     raise RuntimeError(f"fetch_kbar_day {d} 重試 {max_retries} 次仍失敗: {last_err}")
 
 
 def download_day(
     conn: duckdb.DuckDBPyConnection,
     d: date,
-    token: str,
     market: str | None = None,
 ) -> None:
     """抓單日 → normalize → 寫入 → 記 ledger。失敗記 partial 不中斷整體。"""
@@ -192,7 +189,7 @@ def download_day(
         record_progress(conn, d, 0, 0, 0, 0, "complete")
         return
     try:
-        raw = fetch_kbar_day(univ, d.isoformat(), token)
+        raw = fetch_kbar_day(univ, d.isoformat())
     except Exception as e:  # noqa: BLE001
         print(f"  {d} 抓取失敗，記 partial：{e}")
         record_progress(conn, d, expected, 0, expected, 0, "partial")
@@ -224,7 +221,7 @@ def main() -> None:
         print(f"交易日 {len(all_days)}，待下載 {len(todo)}（已完成 {len(all_days)-len(todo)} 跳過）")
         for i, d in enumerate(todo, 1):
             print(f"[{i}/{len(todo)}] {d}")
-            download_day(conn, d, token, args.market)
+            download_day(conn, d, args.market)
 
 
 if __name__ == "__main__":
