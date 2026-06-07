@@ -276,3 +276,40 @@ def test_download_day_empty_universe_complete(conn, monkeypatch):
     ).fetchone()
     assert row[0] == "complete"
     assert row[1] == 0
+
+
+def test_download_day_partial_when_fetch_incomplete(conn, monkeypatch):
+    # 宇宙 2 檔（2330,2317）但只取得 1 檔 → 不可記 complete（否則靜默資料遺失、不重試）
+    mod.ensure_schema(conn)
+    d = date(2025, 6, 16)
+
+    def partial_fetch(stock_ids, ds, **kw):
+        return pd.DataFrame([
+            {"date": str(d), "minute": "09:00:00", "stock_id": "2330",
+             "open": 1000.0, "high": 1010.0, "low": 995.0, "close": 1005.0, "volume": 100},
+        ])
+
+    monkeypatch.setattr(mod, "fetch_kbar_day", partial_fetch)
+    fetched, expected = mod.download_day(conn, d, market="TWSE")
+    assert (fetched, expected) == (1, 2)
+    row = conn.execute(
+        "SELECT status, fetched, failed FROM stock_min_progress WHERE trade_date=?", [d]
+    ).fetchone()
+    assert row[0] == "partial"
+    assert row[1] == 1 and row[2] == 1
+    # partial 日不可被 pending_days 跳過（必須會重抓）
+    assert d in mod.pending_days(conn, [d])
+
+
+def test_download_day_zero_fetch_is_partial(conn, monkeypatch):
+    # fetch 回空（撞 rate limit 的樣態）→ partial，不可 complete
+    mod.ensure_schema(conn)
+    d = date(2025, 6, 16)
+    monkeypatch.setattr(mod, "fetch_kbar_day",
+                        lambda *a, **k: pd.DataFrame())
+    fetched, expected = mod.download_day(conn, d, market="TWSE")
+    assert fetched == 0 and expected == 2
+    status = conn.execute(
+        "SELECT status FROM stock_min_progress WHERE trade_date=?", [d]
+    ).fetchone()[0]
+    assert status == "partial"

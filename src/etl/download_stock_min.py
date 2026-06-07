@@ -184,25 +184,67 @@ def download_day(
     conn: duckdb.DuckDBPyConnection,
     d: date,
     market: str | None = None,
-) -> None:
-    """抓單日 → normalize → 寫入 → 記 ledger。失敗記 partial 不中斷整體。"""
+) -> tuple[int, int]:
+    """抓單日 → normalize → 寫入 → 記 ledger。回傳 (fetched, expected)。
+
+    只有「全數取得」才記 complete；fetched<expected 一律記 partial 保留待重抓
+    （fetched==0 多半是撞 FinMind rate limit，SDK 會吞錯回空 df 而不 raise）。
+    """
     univ = universe_for_day(conn, d, market)
     expected = len(univ)
     if expected == 0:
         record_progress(conn, d, 0, 0, 0, 0, "complete")
-        return
+        return 0, 0
     try:
         raw = fetch_kbar_day(univ, d.isoformat())
     except Exception as e:  # noqa: BLE001
-        print(f"  {d} 抓取失敗，記 partial：{e}")
+        print(f"  {d} 抓取失敗，記 partial：{e}", flush=True)
         record_progress(conn, d, expected, 0, expected, 0, "partial")
-        return
+        return 0, expected
     norm = normalize_kbar(raw, d)
-    n_rows = write_day(conn, d, norm)
     fetched = norm["stock_id"].nunique() if len(norm) else 0
-    failed = max(0, expected - fetched)
-    record_progress(conn, d, expected, fetched, failed, n_rows, "complete")
-    print(f"  {d}: 宇宙{expected} 取得{fetched} rows={n_rows}")
+    n_rows = write_day(conn, d, norm)
+    if fetched < expected:
+        record_progress(conn, d, expected, fetched, expected - fetched, n_rows, "partial")
+        warn = " ⚠ 可能撞 rate limit" if fetched == 0 else ""
+        print(f"  {d}: 宇宙{expected} 取得{fetched} rows={n_rows} → partial{warn}", flush=True)
+        return fetched, expected
+    record_progress(conn, d, expected, fetched, 0, n_rows, "complete")
+    print(f"  {d}: 宇宙{expected} 取得{fetched} rows={n_rows}", flush=True)
+    return fetched, expected
+
+
+# FinMind Sponsor 限額 = 6000 requests/小時（一個 request = 一檔一天）。
+# 留 margin，自我節流到 RATE_PER_HOUR；超量則等最舊請求滿一小時釋出。
+RATE_PER_HOUR = 5500
+_window: list[tuple[float, int]] = []  # (timestamp, request_count)
+
+
+def _throttle(need: int, limit: int = RATE_PER_HOUR) -> None:
+    """滑動視窗節流：確保任一小時內發出的 request 數 ≤ limit。"""
+    now = time.time()
+    while _window and now - _window[0][0] > 3600:
+        _window.pop(0)
+    used = sum(c for _, c in _window)
+    while _window and used + need > limit:
+        wait = 3600 - (now - _window[0][0]) + 1
+        print(f"  ⏳ rate-limit 保護：本小時已用 {used}/{limit}，本日需 {need}，"
+              f"等 {wait/60:.0f} 分鐘釋出…", flush=True)
+        time.sleep(min(wait, 300))
+        now = time.time()
+        while _window and now - _window[0][0] > 3600:
+            _window.pop(0)
+        used = sum(c for _, c in _window)
+    _window.append((now, need))
+
+
+def _quota_available(market: str | None) -> bool:
+    """探一筆已知有資料的 stock-day，確認 FinMind quota 尚未耗盡（非空回傳）。"""
+    try:
+        df = fetch_kbar_day(["2330"], "2026-05-29")
+        return df is not None and len(df) > 0
+    except Exception:
+        return False
 
 
 def main() -> None:
@@ -221,9 +263,16 @@ def main() -> None:
         ensure_schema(conn)
         all_days = trading_days(conn, args.start, args.end)
         todo = pending_days(conn, all_days)
-        print(f"交易日 {len(all_days)}，待下載 {len(todo)}（已完成 {len(all_days)-len(todo)} 跳過）")
+        print(f"交易日 {len(all_days)}，待下載 {len(todo)}（已完成 {len(all_days)-len(todo)} 跳過）",
+              flush=True)
+        # 啟動 gate：若 quota 仍耗盡（探測秒回空），等到釋出再開跑，避免整批標 partial
+        while todo and not _quota_available(args.market):
+            print("  ⏳ FinMind quota 目前耗盡（探測回空），等 10 分鐘後重試…", flush=True)
+            time.sleep(600)
         for i, d in enumerate(todo, 1):
-            print(f"[{i}/{len(todo)}] {d}")
+            need = len(universe_for_day(conn, d, args.market))
+            _throttle(need)
+            print(f"[{i}/{len(todo)}] {d}", flush=True)
             download_day(conn, d, args.market)
 
 
