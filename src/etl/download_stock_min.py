@@ -86,3 +86,19 @@ def universe_for_day(
         params.append(market)
     sql += " ORDER BY symbol"
     return [r[0] for r in conn.execute(sql, params).fetchall()]
+
+
+STOCK_MIN_COLS = ["trade_date", "stock_id", "minute",
+                  "open", "high", "low", "close", "volume"]
+
+
+def normalize_kbar(df: pd.DataFrame, d: date) -> pd.DataFrame:
+    """FinMind kbar df → stock_min 欄序/型別。空 df 回傳空但欄位齊全。"""
+    if df is None or len(df) == 0:
+        return pd.DataFrame(columns=STOCK_MIN_COLS)
+    out = df.copy()
+    out["trade_date"] = pd.to_datetime(out["date"]).dt.date
+    out["minute"] = pd.to_datetime(out["minute"], format="%H:%M:%S").dt.time
+    out["stock_id"] = out["stock_id"].astype(str)
+    out["volume"] = out["volume"].fillna(0).astype("int64")
+    return out[STOCK_MIN_COLS].reset_index(drop=True)

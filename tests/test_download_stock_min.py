@@ -68,3 +68,26 @@ def test_universe_for_day_market_filter(conn):
 def test_universe_sorted(conn):
     univ = mod.universe_for_day(conn, date(2025, 6, 16))
     assert univ == sorted(univ)
+
+
+def test_normalize_kbar_maps_columns():
+    raw = pd.DataFrame([
+        {"date": "2025-06-16", "minute": "09:00:00", "stock_id": "2330",
+         "open": 1000.0, "high": 1010.0, "low": 995.0, "close": 1005.0, "volume": 1100},
+        {"date": "2025-06-16", "minute": "09:01:00", "stock_id": "2330",
+         "open": 1005.0, "high": 1006.0, "low": 1004.0, "close": 1005.0, "volume": 50},
+    ])
+    out = mod.normalize_kbar(raw, date(2025, 6, 16))
+    assert list(out.columns) == ["trade_date", "stock_id", "minute",
+                                 "open", "high", "low", "close", "volume"]
+    assert out["trade_date"].iloc[0] == date(2025, 6, 16)
+    assert out["minute"].iloc[0] == time(9, 0, 0)
+    assert out["stock_id"].iloc[0] == "2330"
+    assert len(out) == 2
+
+
+def test_normalize_kbar_empty():
+    out = mod.normalize_kbar(pd.DataFrame(), date(2025, 6, 16))
+    assert list(out.columns) == ["trade_date", "stock_id", "minute",
+                                 "open", "high", "low", "close", "volume"]
+    assert len(out) == 0
