@@ -130,3 +130,38 @@ def test_write_day_only_deletes_target_day(conn):
     mod.write_day(conn, d2, mod.normalize_kbar(_sample_min_df(d2), d2))  # 重寫 d2
     cnt1 = conn.execute("SELECT COUNT(*) FROM stock_min WHERE trade_date=?", [d1]).fetchone()[0]
     assert cnt1 == 2  # d1 不受影響
+
+
+def test_record_progress_upsert(conn):
+    mod.ensure_schema(conn)
+    d = date(2025, 6, 16)
+    mod.record_progress(conn, d, expected=3, fetched=2, failed=1, n_rows=10, status="partial")
+    row = conn.execute(
+        "SELECT expected, fetched, failed, n_rows, status FROM stock_min_progress WHERE trade_date=?",
+        [d],
+    ).fetchone()
+    assert row == (3, 2, 1, 10, "partial")
+    # 重跑同日覆蓋（upsert）
+    mod.record_progress(conn, d, expected=3, fetched=3, failed=0, n_rows=15, status="complete")
+    row = conn.execute(
+        "SELECT fetched, failed, status FROM stock_min_progress WHERE trade_date=?", [d]
+    ).fetchone()
+    assert row == (3, 0, "complete")
+    cnt = conn.execute("SELECT COUNT(*) FROM stock_min_progress WHERE trade_date=?", [d]).fetchone()[0]
+    assert cnt == 1  # 不重複
+
+
+def test_pending_days_skips_complete(conn):
+    mod.ensure_schema(conn)
+    d1, d2 = date(2025, 6, 16), date(2025, 6, 17)
+    mod.record_progress(conn, d1, expected=3, fetched=3, failed=0, n_rows=15, status="complete")
+    pend = mod.pending_days(conn, [d1, d2])
+    assert pend == [d2]
+
+
+def test_pending_days_includes_partial(conn):
+    mod.ensure_schema(conn)
+    d1 = date(2025, 6, 16)
+    mod.record_progress(conn, d1, expected=3, fetched=2, failed=1, n_rows=10, status="partial")
+    pend = mod.pending_days(conn, [d1])
+    assert pend == [d1]  # partial 要重跑

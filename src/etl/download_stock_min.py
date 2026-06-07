@@ -114,3 +114,37 @@ def write_day(conn: duckdb.DuckDBPyConnection, d: date, df: pd.DataFrame) -> int
         )
         conn.unregister("df_min")
     return len(df)
+
+
+def record_progress(
+    conn: duckdb.DuckDBPyConnection,
+    d: date,
+    expected: int,
+    fetched: int,
+    failed: int,
+    n_rows: int,
+    status: str,
+) -> None:
+    """ledger upsert（同日覆蓋）。"""
+    conn.execute("DELETE FROM stock_min_progress WHERE trade_date = ?", [d])
+    conn.execute(
+        """
+        INSERT INTO stock_min_progress
+        (trade_date, expected, fetched, failed, n_rows, status, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, now())
+        """,
+        [d, expected, fetched, failed, n_rows, status],
+    )
+
+
+def pending_days(
+    conn: duckdb.DuckDBPyConnection, days: list[date]
+) -> list[date]:
+    """過濾掉 ledger 已 status='complete' 的日；其餘（缺/partial）保留。"""
+    done = {
+        r[0]
+        for r in conn.execute(
+            "SELECT trade_date FROM stock_min_progress WHERE status = 'complete'"
+        ).fetchall()
+    }
+    return [d for d in days if d not in done]
