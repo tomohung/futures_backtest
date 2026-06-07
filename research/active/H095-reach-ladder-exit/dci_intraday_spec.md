@@ -34,11 +34,42 @@
 
 本規格在現有資料下**一行都驗證不了**。`stock_day` 只有日線。盤中版需要：
 
-- 約 40 檔（權值前 20 + 視需要擴充）的**盤中分時價**，至少 09:30 一個定點快照（逐分更佳）。
-- 全市場 **running 漲跌家數**（up/down/listed）在 09:30 的當下值。
+- 權值前 20（thrust）的**盤中分時 open + 現價**，至少 09:30 一個定點快照（逐分更佳）。
+- **running 漲跌家數**（up/down/listed）在 09:30 的當下值（breadth）。
 
-→ 校正前必須先界定並開始蒐集此盤中快照流（另立資料規格）。本文件的所有門檻與
-權重均標示為 `待盤中資料校正`。
+### 1.1 資料來源：FinMind `TaiwanStockKBar`（付費歷史回補）
+
+選 FinMind 而非自蒐即時快照的關鍵理由：**歷史回補**——直接拿過去多年的分時 K，
+立刻能校 τ/β + OOS，免去自蒐快照「等半年才有樣本」的瓶頸。
+
+| 項目 | 確認結果（2026-06 查證） |
+|---|---|
+| dataset | **`TaiwanStockKBar`**（有 `open/high/low/close/volume`）。**不可用 `TaiwanStockPriceMinute`**（只有 `deal_price`，無 open，thrust 算不出來） |
+| 歷史深度 | 2019-01-01 ~ now（少數缺漏日，如 2019-02-20） |
+| 所需等級 | **sponsor** 可存取；**「一次取單日全市場」需 sponsorpro** |
+| 涵蓋 | 上市+上櫃，單日約 2000+ 檔；async 拉單日全市場約 2–3 分鐘 |
+| 單次請求 | 一次一天（loop by date） |
+| 速率/月費 | sponsor 級確切數字未定（贊助頁為 JS 動態頁）→ 採購前向 FinMind 確認 |
+
+### 1.2 上市-only vs 全市場 breadth（與採購等級綁定）
+
+- **買 sponsorpro（單日全市場一次到位）**：上市 vs 全市場在 API 工夫上幾乎沒差，
+  → **保留全市場 breadth**，與線上版（上市+上櫃）一致，免日後重校。**建議路線。**
+- **只買 sponsor（逐檔 loop）**：限縮上市可把 request 量砍半（~1000 vs ~2000+），
+  但 τ/β 是在「上市 breadth」上校的，日後若套全市場需重新確認（caveat）。
+
+### 1.3 資料管線（採購後施工藍圖）
+
+1. **回補**：FinMind `TaiwanStockKBar` 逐日抓（sponsorpro 用單日全市場 bulk），
+   存進 DuckDB 新表（如 `stock_minute`）。粗估全市場 7 年 ≈ 1700 交易日 × 2–3 分/日
+   ≈ 60–80 小時背景拉取，一次性、可分批。
+2. **重建 09:30 快照**：每日取 ≤ 09:30 的分時，算每檔 `(open, price@09:30)`；
+   權值 20 → thrust；全市場 → 09:30 running 漲跌家數 → breadth。
+3. **校正**：對 open-anchor reach（L3/L4）跑 thrust/breadth/confirm 的分位/相關分析，
+   複用 `dci_voteset_compare.py` 框架定 τ/β（多空分開），逐年檢查穩定性。
+4. **OOS 驗證**後才能標 Confirmed、接出場階梯。
+
+→ 在 FinMind 資料落地前，本文件所有門檻與權重均標示為 `待盤中資料校正`。
 
 ---
 
