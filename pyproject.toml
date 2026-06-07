@@ -16,6 +16,8 @@ dependencies = [
     "uvicorn[standard]>=0.27",
     "cachetools>=5.3",
     "httpx>=0.27",
+    "finmind>=1.9.11",
+    "tqdm>=4.68.1",
 ]
 
 [project.scripts]
