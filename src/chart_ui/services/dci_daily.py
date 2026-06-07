@@ -1,6 +1,10 @@
 """當日 DCI（方向共識指標）— 收盤/事後值。詳見
 research/active/H095-reach-ladder-exit/dci_spec.md。
 
+W/H 每檔僅投「今收 − 今開」一票（open-anchor），不含「今收 − 昨收」：後者夾帶隔夜
+跳空噪音、且與 H095 的 open-anchor reach 目標不同錨。三方對照（dci_voteset_compare.py，
+N=1227）證實只投開收票鑑別力最佳，故線上版採此。
+
 W 用固定權值清單(無真實市值,以成交值近似權重)、H 用當日成交值前20、B 用漲跌家數。
 B/H 取「上市+上櫃(TWSE+TPEX)」全市場，與即時下單軟體一致；W 仍只取上市權值股
 (權值清單寫死、待改月更官方比重表)。盤中即時版需另接盤中三序列；此處僅供 chart-ui 覆盤標「事後」。
@@ -32,41 +36,37 @@ def _sign(x: float) -> int:
 
 
 def _strength_norm(rows: list[dict] | None) -> float | None:
-    """每檔兩票：sign(last-prev)、sign(last-open)；回 sum/有效票數，無有效票回 None。"""
+    """每檔一票：sign(last-open)（開盤錨方向）；回 sum/有效票數，無有效票回 None。"""
     total = 0
     n = 0
     for r in rows or []:
-        last, prev, op = r.get("last"), r.get("prev"), r.get("open")
-        if last is not None and prev is not None:
-            total += _sign(last - prev); n += 1
+        last, op = r.get("last"), r.get("open")
         if last is not None and op is not None:
             total += _sign(last - op); n += 1
     return total / n if n else None
 
 
 def _rows(conn, sel: date, *, symbols: list[str] | None) -> list[dict]:
-    """取當日個股 (last=close, prev=close-change, open) 列。
+    """取當日個股 (last=close, open) 列。
     symbols 指定 → 權值清單(僅上市)；否則取全市場(上市+上櫃)成交值前 20。"""
     if symbols is not None:
         ph = ",".join(["?"] * len(symbols))
         sql = (
-            "SELECT close, change, open FROM stock_day "
+            "SELECT close, open FROM stock_day "
             f"WHERE market='TWSE' AND trade_date = ? AND symbol IN ({ph}) "
             "AND close IS NOT NULL"
         )
         params = [sel, *symbols]
     else:
         sql = (
-            "SELECT close, change, open FROM stock_day "
+            "SELECT close, open FROM stock_day "
             "WHERE trade_date = ? AND close IS NOT NULL "
             "AND value IS NOT NULL ORDER BY value DESC LIMIT 20"
         )
         params = [sel]
     out = []
-    for close, change, op in conn.execute(sql, params).fetchall():
-        last = float(close)
-        prev = last - float(change) if change is not None else None
-        out.append({"last": last, "prev": prev,
+    for close, op in conn.execute(sql, params).fetchall():
+        out.append({"last": float(close),
                     "open": float(op) if op is not None else None})
     return out
 
