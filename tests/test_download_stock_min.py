@@ -165,3 +165,32 @@ def test_pending_days_includes_partial(conn):
     mod.record_progress(conn, d1, expected=3, fetched=2, failed=1, n_rows=10, status="partial")
     pend = mod.pending_days(conn, [d1])
     assert pend == [d1]  # partial 要重跑
+
+
+def test_fetch_kbar_day_retries_then_succeeds(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_loader_call(stock_id_list, date, use_async):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            raise RuntimeError("rate limit")
+        return pd.DataFrame([
+            {"date": date, "minute": "09:00:00", "stock_id": "2330",
+             "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1}
+        ])
+
+    monkeypatch.setattr(mod, "_kbar_call", fake_loader_call)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)  # 不真的睡
+    df = mod.fetch_kbar_day(["2330"], "2025-06-16", token="x", max_retries=3)
+    assert calls["n"] == 2
+    assert len(df) == 1
+
+
+def test_fetch_kbar_day_gives_up(monkeypatch):
+    def always_fail(stock_id_list, date, use_async):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(mod, "_kbar_call", always_fail)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    with pytest.raises(RuntimeError):
+        mod.fetch_kbar_day(["2330"], "2025-06-16", token="x", max_retries=2)

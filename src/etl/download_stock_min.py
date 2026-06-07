@@ -148,3 +148,32 @@ def pending_days(
         ).fetchall()
     }
     return [d for d in days if d not in done]
+
+
+def _kbar_call(stock_id_list: list[str], date: str, use_async: bool) -> pd.DataFrame:
+    """薄包 FinMind SDK。隔離成單一接縫供測試 monkeypatch。"""
+    from FinMind.data import DataLoader
+
+    token = os.environ["FINMIND_API_KEY"]
+    dl = DataLoader()
+    dl.login_by_token(api_token=token)
+    return dl.taiwan_stock_kbar(
+        stock_id_list=stock_id_list, date=date, use_async=use_async
+    )
+
+
+def fetch_kbar_day(
+    stock_ids: list[str],
+    d: str,
+    token: str,
+    max_retries: int = 4,
+) -> pd.DataFrame:
+    """抓單日全宇宙分 k；rate-limit/連線錯誤指數退避重試。最終失敗則 raise。"""
+    last_err: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            return _kbar_call(stock_ids, d, use_async=True)
+        except Exception as e:  # noqa: BLE001 — 退避重試所有暫態錯誤
+            last_err = e
+            time.sleep(2 ** attempt)  # 1,2,4,8...秒
+    raise RuntimeError(f"fetch_kbar_day {d} 重試 {max_retries} 次仍失敗: {last_err}")
