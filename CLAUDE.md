@@ -74,6 +74,26 @@ CREATE TABLE ticks_options (
 - ETL：`src/etl/parse_options_rpt.py`（只保留 TXO，過濾價差合約）
 - 合約格式：`YYYYMM`（月合約，第三週三到期）、`YYYYMMWn`（週三到期）、`YYYYMMFn`（週五到期，2025-06-27 起）
 
+#### stock_min 表（全市場個股分K，H095 DCI 盤中校準用）
+```sql
+CREATE TABLE stock_min (
+    trade_date  DATE,
+    stock_id    VARCHAR,
+    minute      TIME,
+    open   DECIMAL(12,4),
+    high   DECIMAL(12,4),
+    low    DECIMAL(12,4),
+    close  DECIMAL(12,4),
+    volume BIGINT,
+    PRIMARY KEY (trade_date, stock_id, minute)
+);
+```
+- 資料來源：FinMind `TaiwanStockKBar`（**Sponsor 限定**，token 取自 env `FINMIND_API_KEY`）
+- ETL：`src/etl/download_stock_min.py`（逐交易日，宇宙取自 stock_day 當日 symbols 含已下市公司）
+- 一個 request = 一檔一天；用官方 SDK `use_async` 批多檔，全市場單日 ~24 秒
+- 以「日」為冪等單位 DELETE+INSERT；進度表 `stock_min_progress` 可中斷續傳
+- **邊界**：上市 TWSE 全段、上櫃 TPEX 實質 2021-04-13 起（stock_day 上櫃宇宙起點）
+
 #### rollover_log 表
 ```sql
 CREATE TABLE rollover_log (
@@ -120,6 +140,7 @@ futures_backtest/
 │   │   ├── parse_options_rpt.py ← options zip → ticks_options 表 ✅
 │   │   ├── download_stock_market.py ← TWSE/TPEX 廣度資料下載（H079 用）✅
 │   │   ├── parse_stock_market.py ← TWSE/TPEX → market_breadth + stock_day ✅
+│   │   ├── download_stock_min.py ← 全市場個股分k下載（FinMind TaiwanStockKBar，DCI 校準用）✅
 │   │   └── validate.py         ← 資料驗證 ✅
 │   ├── strategies/
 │   │   ├── orb.py              ← ORBStrategy（開盤區間突破）✅
