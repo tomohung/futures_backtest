@@ -200,6 +200,23 @@ def test_loader_builds_table(tmp_path):
         assert c.execute("SELECT COUNT(*) FROM stock_min").fetchone()[0] == 4
 
 
+def test_wait_for_budget_waits_then_proceeds(monkeypatch):
+    # 真實用量先不足、再恢復 → 應先等待再返回
+    usages = iter([5900, 5900, 1000])  # 前兩次剩 100<need+margin，第三次充足
+    monkeypatch.setattr(mod, "_api_usage", lambda: next(usages))
+    slept = {"n": 0}
+    monkeypatch.setattr(mod.time, "sleep", lambda s: slept.__setitem__("n", slept["n"] + 1))
+    mod.wait_for_budget(need=1000, poll_sec=1)
+    assert slept["n"] == 2  # 等了兩輪才夠
+
+
+def test_wait_for_budget_enough_no_wait(monkeypatch):
+    monkeypatch.setattr(mod, "_api_usage", lambda: 100)
+    monkeypatch.setattr(mod.time, "sleep",
+                        lambda s: (_ for _ in ()).throw(AssertionError("不該等待")))
+    mod.wait_for_budget(need=1000)  # 100 用量、剩 5900 足夠 → 不等
+
+
 def test_loader_idempotent(tmp_path):
     raw = tmp_path / "raw"
     mod.write_day_parquet(date(2025, 6, 16), _sample_norm(date(2025, 6, 16)), raw_dir=raw)

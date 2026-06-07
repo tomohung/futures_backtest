@@ -145,36 +145,37 @@ def download_day(d: date, universe: list[str], raw_dir: Path = RAW_DIR) -> tuple
 
 
 # FinMind Sponsor 限額 = 6000 requests/小時（一個 request = 一檔一天）。
-# 留 margin，自我節流到 RATE_PER_HOUR；超量則等最舊請求滿一小時釋出。
-RATE_PER_HOUR = 5500
-_window: list[tuple[float, int]] = []  # (timestamp, request_count)
+# 用「真實本小時用量」驅動節流（重啟/跨 process 都正確），不靠本地計數。
+LIMIT_HOUR = 6000
+USAGE_MARGIN = 300       # 保守邊際，避免邊界打到限額
+USER_INFO_URL = "https://api.web.finmindtrade.com/v2/user_info"
 
 
-def _throttle(need: int, limit: int = RATE_PER_HOUR) -> None:
-    """滑動視窗節流：確保任一小時內發出的 request 數 ≤ limit。"""
-    now = time.time()
-    while _window and now - _window[0][0] > 3600:
-        _window.pop(0)
-    used = sum(c for _, c in _window)
-    while _window and used + need > limit:
-        wait = 3600 - (now - _window[0][0]) + 1
-        print(f"  ⏳ rate-limit 保護：本小時已用 {used}/{limit}，本日需 {need}，"
-              f"等 {wait/60:.0f} 分鐘釋出…", flush=True)
-        time.sleep(min(wait, 300))
-        now = time.time()
-        while _window and now - _window[0][0] > 3600:
-            _window.pop(0)
-        used = sum(c for _, c in _window)
-    _window.append((now, need))
+def _api_usage() -> int:
+    """查 FinMind 本小時真實已用 request 數（user_info 的 user_count 即本時段用量）。
 
-
-def _quota_available() -> bool:
-    """探一筆已知有資料的 stock-day，確認 FinMind quota 尚未耗盡（非空回傳）。"""
+    查不到時回 LIMIT_HOUR（保守＝視為已滿，會觸發等待），避免誤判而爆量。
+    """
+    import requests
     try:
-        df = fetch_kbar_day(["2330"], "2026-05-29")
-        return df is not None and len(df) > 0
+        j = requests.get(
+            USER_INFO_URL, params={"token": os.environ["FINMIND_API_KEY"]}, timeout=20
+        ).json()
+        return int(j.get("user_count", LIMIT_HOUR))
     except Exception:
-        return False
+        return LIMIT_HOUR
+
+
+def wait_for_budget(need: int, poll_sec: int = 120) -> None:
+    """等到 FinMind 本小時真實剩餘額度 ≥ need + margin 才返回（滾動視窗會自然釋出）。"""
+    while True:
+        usage = _api_usage()
+        remaining = LIMIT_HOUR - usage
+        if remaining >= need + USAGE_MARGIN:
+            return
+        print(f"  ⏳ rate-limit 保護：真實已用 {usage}/{LIMIT_HOUR}，本日需 {need}，"
+              f"剩 {remaining} 不足，等 {poll_sec}s 後再查…", flush=True)
+        time.sleep(poll_sec)
 
 
 def main() -> None:
@@ -196,14 +197,9 @@ def main() -> None:
     print(f"交易日 {len(all_days)}，待下載 {len(todo)}"
           f"（已落地 {len(all_days)-len(todo)} 跳過）→ {RAW_DIR}", flush=True)
 
-    # 啟動 gate：quota 仍耗盡（探測秒回空）就等釋出，避免整批白跑
-    while todo and not _quota_available():
-        print("  ⏳ FinMind quota 目前耗盡（探測回空），等 10 分鐘後重試…", flush=True)
-        time.sleep(600)
-
     for i, d in enumerate(todo, 1):
         univ = umap[d]
-        _throttle(len(univ))
+        wait_for_budget(len(univ))   # 依真實本小時用量等到額度夠才抓
         print(f"[{i}/{len(todo)}] {d}", flush=True)
         download_day(d, univ)
 
