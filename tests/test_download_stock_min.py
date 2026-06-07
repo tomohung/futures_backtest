@@ -91,3 +91,42 @@ def test_normalize_kbar_empty():
     assert list(out.columns) == ["trade_date", "stock_id", "minute",
                                  "open", "high", "low", "close", "volume"]
     assert len(out) == 0
+
+
+def _sample_min_df(d):
+    return pd.DataFrame([
+        {"date": str(d), "minute": "09:00:00", "stock_id": "2330",
+         "open": 1000.0, "high": 1010.0, "low": 995.0, "close": 1005.0, "volume": 1100},
+        {"date": str(d), "minute": "09:01:00", "stock_id": "2317",
+         "open": 150.0, "high": 151.0, "low": 149.0, "close": 150.5, "volume": 800},
+    ])
+
+
+def test_write_day_inserts(conn):
+    mod.ensure_schema(conn)
+    d = date(2025, 6, 16)
+    norm = mod.normalize_kbar(_sample_min_df(d), d)
+    n = mod.write_day(conn, d, norm)
+    assert n == 2
+    cnt = conn.execute("SELECT COUNT(*) FROM stock_min WHERE trade_date=?", [d]).fetchone()[0]
+    assert cnt == 2
+
+
+def test_write_day_idempotent(conn):
+    mod.ensure_schema(conn)
+    d = date(2025, 6, 16)
+    norm = mod.normalize_kbar(_sample_min_df(d), d)
+    mod.write_day(conn, d, norm)
+    mod.write_day(conn, d, norm)  # 重跑同日不應重複
+    cnt = conn.execute("SELECT COUNT(*) FROM stock_min WHERE trade_date=?", [d]).fetchone()[0]
+    assert cnt == 2
+
+
+def test_write_day_only_deletes_target_day(conn):
+    mod.ensure_schema(conn)
+    d1, d2 = date(2025, 6, 16), date(2025, 6, 17)
+    mod.write_day(conn, d1, mod.normalize_kbar(_sample_min_df(d1), d1))
+    mod.write_day(conn, d2, mod.normalize_kbar(_sample_min_df(d2), d2))
+    mod.write_day(conn, d2, mod.normalize_kbar(_sample_min_df(d2), d2))  # 重寫 d2
+    cnt1 = conn.execute("SELECT COUNT(*) FROM stock_min WHERE trade_date=?", [d1]).fetchone()[0]
+    assert cnt1 == 2  # d1 不受影響

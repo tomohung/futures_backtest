@@ -102,3 +102,15 @@ def normalize_kbar(df: pd.DataFrame, d: date) -> pd.DataFrame:
     out["stock_id"] = out["stock_id"].astype(str)
     out["volume"] = out["volume"].fillna(0).astype("int64")
     return out[STOCK_MIN_COLS].reset_index(drop=True)
+
+
+def write_day(conn: duckdb.DuckDBPyConnection, d: date, df: pd.DataFrame) -> int:
+    """以日為單位刪舊寫新（冪等）。回傳寫入 row 數。"""
+    conn.execute("DELETE FROM stock_min WHERE trade_date = ?", [d])
+    if len(df):
+        conn.register("df_min", df)
+        conn.execute(
+            f"INSERT INTO stock_min SELECT {', '.join(STOCK_MIN_COLS)} FROM df_min"
+        )
+        conn.unregister("df_min")
+    return len(df)
