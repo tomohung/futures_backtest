@@ -57,3 +57,32 @@ CREATE TABLE IF NOT EXISTS stock_min_progress (
 def ensure_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(SCHEMA_STOCK_MIN)
     conn.execute(SCHEMA_PROGRESS)
+
+
+def trading_days(
+    conn: duckdb.DuckDBPyConnection, start: date, end: date
+) -> list[date]:
+    """區間內 stock_day 出現過的交易日（升冪）。"""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT trade_date
+        FROM stock_day
+        WHERE trade_date BETWEEN ? AND ?
+        ORDER BY trade_date
+        """,
+        [start, end],
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def universe_for_day(
+    conn: duckdb.DuckDBPyConnection, d: date, market: str | None = None
+) -> list[str]:
+    """當日 stock_day 有成交的 symbols（升冪）。market=None 取全市場。"""
+    sql = "SELECT DISTINCT symbol FROM stock_day WHERE trade_date = ?"
+    params: list = [d]
+    if market:
+        sql += " AND market = ?"
+        params.append(market)
+    sql += " ORDER BY symbol"
+    return [r[0] for r in conn.execute(sql, params).fetchall()]

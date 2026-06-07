@@ -43,3 +43,28 @@ def test_stock_min_columns(conn):
     cols = {r[0] for r in conn.execute("DESCRIBE stock_min").fetchall()}
     assert {"trade_date", "stock_id", "minute", "open", "high",
             "low", "close", "volume"}.issubset(cols)
+
+
+def test_trading_days_range(conn):
+    days = mod.trading_days(conn, date(2025, 6, 16), date(2025, 6, 17))
+    assert days == [date(2025, 6, 16), date(2025, 6, 17)]
+
+
+def test_trading_days_filters_range(conn):
+    days = mod.trading_days(conn, date(2025, 6, 17), date(2025, 6, 17))
+    assert days == [date(2025, 6, 17)]
+
+
+def test_universe_for_day_both_markets(conn):
+    univ = mod.universe_for_day(conn, date(2025, 6, 16))
+    assert set(univ) == {"2330", "2317", "5483"}
+
+
+def test_universe_for_day_market_filter(conn):
+    univ = mod.universe_for_day(conn, date(2025, 6, 16), market="TWSE")
+    assert set(univ) == {"2330", "2317"}
+
+
+def test_universe_sorted(conn):
+    univ = mod.universe_for_day(conn, date(2025, 6, 16))
+    assert univ == sorted(univ)
