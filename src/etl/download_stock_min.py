@@ -177,3 +177,55 @@ def fetch_kbar_day(
             last_err = e
             time.sleep(2 ** attempt)  # 1,2,4,8...秒
     raise RuntimeError(f"fetch_kbar_day {d} 重試 {max_retries} 次仍失敗: {last_err}")
+
+
+def download_day(
+    conn: duckdb.DuckDBPyConnection,
+    d: date,
+    token: str,
+    market: str | None = None,
+) -> None:
+    """抓單日 → normalize → 寫入 → 記 ledger。失敗記 partial 不中斷整體。"""
+    univ = universe_for_day(conn, d, market)
+    expected = len(univ)
+    if expected == 0:
+        record_progress(conn, d, 0, 0, 0, 0, "complete")
+        return
+    try:
+        raw = fetch_kbar_day(univ, d.isoformat(), token)
+    except Exception as e:  # noqa: BLE001
+        print(f"  {d} 抓取失敗，記 partial：{e}")
+        record_progress(conn, d, expected, 0, expected, 0, "partial")
+        return
+    norm = normalize_kbar(raw, d)
+    n_rows = write_day(conn, d, norm)
+    fetched = norm["stock_id"].nunique() if len(norm) else 0
+    failed = max(0, expected - fetched)
+    record_progress(conn, d, expected, fetched, failed, n_rows, "complete")
+    print(f"  {d}: 宇宙{expected} 取得{fetched} rows={n_rows}")
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description="下載全市場個股分 k（FinMind TaiwanStockKBar）")
+    p.add_argument("--start", type=date.fromisoformat, default=date(2021, 1, 1))
+    p.add_argument("--end", type=date.fromisoformat, default=date.today())
+    p.add_argument("--market", choices=["TWSE", "TPEX"], default=None,
+                   help="預設全市場；指定則只抓單一市場")
+    args = p.parse_args()
+
+    token = os.environ.get("FINMIND_API_KEY")
+    if not token:
+        raise SystemExit("缺 env FINMIND_API_KEY")
+
+    with duckdb.connect(str(DB_PATH)) as conn:
+        ensure_schema(conn)
+        all_days = trading_days(conn, args.start, args.end)
+        todo = pending_days(conn, all_days)
+        print(f"交易日 {len(all_days)}，待下載 {len(todo)}（已完成 {len(all_days)-len(todo)} 跳過）")
+        for i, d in enumerate(todo, 1):
+            print(f"[{i}/{len(todo)}] {d}")
+            download_day(conn, d, token, args.market)
+
+
+if __name__ == "__main__":
+    main()

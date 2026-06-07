@@ -194,3 +194,22 @@ def test_fetch_kbar_day_gives_up(monkeypatch):
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
     with pytest.raises(RuntimeError):
         mod.fetch_kbar_day(["2330"], "2025-06-16", token="x", max_retries=2)
+
+
+def test_download_day_writes_and_records(conn, monkeypatch):
+    mod.ensure_schema(conn)
+    d = date(2025, 6, 16)
+
+    def fake_fetch(stock_ids, ds, token, **kw):
+        return _sample_min_df(d)  # 回 2330 + 2317 兩檔
+
+    monkeypatch.setattr(mod, "fetch_kbar_day", fake_fetch)
+    mod.download_day(conn, d, token="x", market="TWSE")
+
+    cnt = conn.execute("SELECT COUNT(*) FROM stock_min WHERE trade_date=?", [d]).fetchone()[0]
+    assert cnt == 2
+    row = conn.execute(
+        "SELECT expected, fetched, status FROM stock_min_progress WHERE trade_date=?", [d]
+    ).fetchone()
+    assert row[0] == 2          # TWSE 宇宙 = 2330,2317
+    assert row[2] == "complete"
