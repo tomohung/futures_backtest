@@ -88,10 +88,11 @@ CREATE TABLE stock_min (
     PRIMARY KEY (trade_date, stock_id, minute)
 );
 ```
-- 資料來源：FinMind `TaiwanStockKBar`（**Sponsor 限定**，token 取自 env `FINMIND_API_KEY`）
-- ETL：`src/etl/download_stock_min.py`（逐交易日，宇宙取自 stock_day 當日 symbols 含已下市公司）
-- 一個 request = 一檔一天；用官方 SDK `use_async` 批多檔，全市場單日 ~24 秒
-- 以「日」為冪等單位 DELETE+INSERT；進度表 `stock_min_progress` 可中斷續傳
+- 資料來源：FinMind `TaiwanStockKBar`（**Sponsor 限定**，6000 req/hr，一 request=一檔一天，token 取自 env `FINMIND_API_KEY`）
+- **兩步 ETL（下載與入庫分離，避免長時間鎖住 futures.duckdb）**：
+  1. `src/etl/download_stock_min.py`：逐交易日抓 → 寫 `data/stock_min_raw/YYYY-MM-DD.parquet`（**下載期間完全不開 DuckDB**，啟動時一次讀宇宙進記憶體後即不再碰主庫，故可與 daily_update / chart-ui 並行）。檔案存在=該日完成（冪等續傳）；fetched<expected 不寫檔待重抓；內建 5500/hr 節流 + quota gate
+  2. `src/etl/load_stock_min.py`：`read_parquet` 全量重建 stock_min 表（預設入 futures.duckdb，`--db` 可改獨立庫）
+- 宇宙取自 stock_day 當日 symbols（含已下市公司，避免 survivorship bias）
 - **邊界**：上市 TWSE 全段、上櫃 TPEX 實質 2021-04-13 起（stock_day 上櫃宇宙起點）
 
 #### rollover_log 表
@@ -117,6 +118,7 @@ futures_backtest/
 ├── data/
 │   ├── raw/              ← 期貨原始 zip 檔（依年份子目錄，不納入版控）
 │   ├── raw_options/      ← 選擇權原始 zip 檔（依年份子目錄，不納入版控）
+│   ├── stock_min_raw/    ← 個股分k parquet 落地區（每日一檔，不納入版控）
 │   └── futures.duckdb    ← DuckDB 資料庫（不納入版控）
 ├── docs/                 ← 系統技術文件
 │   └── daily_update.md
@@ -140,7 +142,8 @@ futures_backtest/
 │   │   ├── parse_options_rpt.py ← options zip → ticks_options 表 ✅
 │   │   ├── download_stock_market.py ← TWSE/TPEX 廣度資料下載（H079 用）✅
 │   │   ├── parse_stock_market.py ← TWSE/TPEX → market_breadth + stock_day ✅
-│   │   ├── download_stock_min.py ← 全市場個股分k下載（FinMind TaiwanStockKBar，DCI 校準用）✅
+│   │   ├── download_stock_min.py ← 個股分k下載→parquet 落地（FinMind TaiwanStockKBar，DCI 校準用）✅
+│   │   ├── load_stock_min.py    ← parquet → DuckDB stock_min 表（phase 2）✅
 │   │   └── validate.py         ← 資料驗證 ✅
 │   ├── strategies/
 │   │   ├── orb.py              ← ORBStrategy（開盤區間突破）✅

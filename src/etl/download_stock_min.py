@@ -1,16 +1,21 @@
 """
-下載全市場（上市+上櫃）個股分 k（FinMind TaiwanStockKBar）→ DuckDB table `stock_min`。
+下載全市場個股分 k（FinMind TaiwanStockKBar）→ parquet landing 區 `data/stock_min_raw/`。
 
-逐交易日：宇宙取自 stock_day 當日 symbols（含已下市公司，避免 survivorship bias）。
-以「日」為冪等單位 DELETE+INSERT；stock_min_progress 記錄完成狀態，可中斷續傳。
+**下載階段完全不開 futures.duckdb**：啟動時一次把區間每日宇宙讀進記憶體後，
+整個下載 loop 只碰 FinMind API + 檔案系統，因此可與 daily_update / chart-ui /
+早盤簡報並行、無 DuckDB 寫鎖衝突。
 
-dataset TaiwanStockKBar 為 Sponsor 限定，token 取自 env FINMIND_API_KEY。
-一個 request = 一檔一天（不接受 end_date）；用官方 SDK use_async 批多檔。
+每天一個檔：`data/stock_min_raw/YYYY-MM-DD.parquet`。**檔案存在 = 該日完成**（冪等續傳）；
+fetched<expected（多半撞 rate limit）則不寫檔，留待重跑。
+
+第二步「parquet → DuckDB stock_min 表」見 `load_stock_min.py`（快、幾分鐘、可隨時做）。
+
+dataset TaiwanStockKBar 為 Sponsor 限定（6000 req/hr，一 request=一檔一天），
+token 取自 env FINMIND_API_KEY；用官方 SDK use_async 批多檔。
 
 用法：
-  uv run python src/etl/download_stock_min.py                       # 預設 2021-01-01 至今
-  uv run python src/etl/download_stock_min.py --start 2024-01-01 --end 2024-12-31
-  uv run python src/etl/download_stock_min.py --market TWSE          # 只抓上市
+  uv run python src/etl/download_stock_min.py --market TWSE --start 2025-06-01 --end 2026-06-05
+  uv run python src/etl/download_stock_min.py            # 預設 2021-01-01 至今、全市場
 """
 
 from __future__ import annotations
@@ -26,70 +31,37 @@ import pandas as pd
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 DB_PATH = PROJECT_ROOT / "data" / "futures.duckdb"
-
-SCHEMA_STOCK_MIN = """
-CREATE TABLE IF NOT EXISTS stock_min (
-    trade_date  DATE,
-    stock_id    VARCHAR,
-    minute      TIME,
-    open   DECIMAL(12,4),
-    high   DECIMAL(12,4),
-    low    DECIMAL(12,4),
-    close  DECIMAL(12,4),
-    volume BIGINT,
-    PRIMARY KEY (trade_date, stock_id, minute)
-);
-"""
-
-SCHEMA_PROGRESS = """
-CREATE TABLE IF NOT EXISTS stock_min_progress (
-    trade_date   DATE PRIMARY KEY,
-    expected     INTEGER,
-    fetched      INTEGER,
-    failed       INTEGER,
-    n_rows       BIGINT,
-    status       VARCHAR,
-    fetched_at   TIMESTAMP
-);
-"""
-
-
-def ensure_schema(conn: duckdb.DuckDBPyConnection) -> None:
-    conn.execute(SCHEMA_STOCK_MIN)
-    conn.execute(SCHEMA_PROGRESS)
-
-
-def trading_days(
-    conn: duckdb.DuckDBPyConnection, start: date, end: date
-) -> list[date]:
-    """區間內 stock_day 出現過的交易日（升冪）。"""
-    rows = conn.execute(
-        """
-        SELECT DISTINCT trade_date
-        FROM stock_day
-        WHERE trade_date BETWEEN ? AND ?
-        ORDER BY trade_date
-        """,
-        [start, end],
-    ).fetchall()
-    return [r[0] for r in rows]
-
-
-def universe_for_day(
-    conn: duckdb.DuckDBPyConnection, d: date, market: str | None = None
-) -> list[str]:
-    """當日 stock_day 有成交的 symbols（升冪）。market=None 取全市場。"""
-    sql = "SELECT DISTINCT symbol FROM stock_day WHERE trade_date = ?"
-    params: list = [d]
-    if market:
-        sql += " AND market = ?"
-        params.append(market)
-    sql += " ORDER BY symbol"
-    return [r[0] for r in conn.execute(sql, params).fetchall()]
-
+RAW_DIR = PROJECT_ROOT / "data" / "stock_min_raw"
 
 STOCK_MIN_COLS = ["trade_date", "stock_id", "minute",
                   "open", "high", "low", "close", "volume"]
+
+
+def day_path(d: date, raw_dir: Path = RAW_DIR) -> Path:
+    """該交易日的 parquet 落地路徑。"""
+    return raw_dir / f"{d.isoformat()}.parquet"
+
+
+def load_universe_map(
+    start: date, end: date, market: str | None = None
+) -> dict[date, list[str]]:
+    """一次讀 futures.duckdb 取得區間每日宇宙 {date: [symbols]}，之後下載 loop 不再碰 DB。
+
+    宇宙取自 stock_day 當日有成交 symbols（含已下市公司，避免 survivorship bias）。
+    """
+    sql = (
+        "SELECT trade_date, symbol FROM stock_day "
+        "WHERE trade_date BETWEEN ? AND ? "
+        + ("AND market = ? " if market else "")
+        + "ORDER BY trade_date, symbol"
+    )
+    params: list = [start, end, market] if market else [start, end]
+    with duckdb.connect(str(DB_PATH), read_only=True) as conn:
+        rows = conn.execute(sql, params).fetchall()
+    umap: dict[date, list[str]] = {}
+    for d, s in rows:
+        umap.setdefault(d, []).append(s)
+    return umap
 
 
 def normalize_kbar(df: pd.DataFrame, d: date) -> pd.DataFrame:
@@ -101,54 +73,25 @@ def normalize_kbar(df: pd.DataFrame, d: date) -> pd.DataFrame:
     out["minute"] = pd.to_datetime(out["minute"], format="%H:%M:%S").dt.time
     out["stock_id"] = out["stock_id"].astype(str)
     out["volume"] = out["volume"].fillna(0).astype("int64")
-    # FinMind 舊資料（如 2021 的 ETF）偶有同一分鐘重複 print（OHLC 同、volume 微差），
-    # 會違反 stock_min 的 PK。對 PK 去重，保留後到的 final print。
+    # FinMind 舊資料（如 2021 的 ETF）偶有同一分鐘重複 print（OHLC 同、volume 微差）。
+    # 去重保留後到的 final print，避免日後載入 DB 時違反 PK。
     out = out.drop_duplicates(subset=["trade_date", "stock_id", "minute"], keep="last")
     return out[STOCK_MIN_COLS].reset_index(drop=True)
 
 
-def write_day(conn: duckdb.DuckDBPyConnection, d: date, df: pd.DataFrame) -> int:
-    """以日為單位刪舊寫新（冪等）。回傳寫入 row 數。"""
-    conn.execute("DELETE FROM stock_min WHERE trade_date = ?", [d])
-    if len(df):
-        conn.execute(
-            f"INSERT INTO stock_min SELECT {', '.join(STOCK_MIN_COLS)} FROM df"
-        )
-    return len(df)
-
-
-def record_progress(
-    conn: duckdb.DuckDBPyConnection,
-    d: date,
-    expected: int,
-    fetched: int,
-    failed: int,
-    n_rows: int,
-    status: str,
-) -> None:
-    """ledger upsert（同日覆蓋）。"""
-    conn.execute("DELETE FROM stock_min_progress WHERE trade_date = ?", [d])
-    conn.execute(
-        """
-        INSERT INTO stock_min_progress
-        (trade_date, expected, fetched, failed, n_rows, status, fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?, now())
-        """,
-        [d, expected, fetched, failed, n_rows, status],
-    )
-
-
-def pending_days(
-    conn: duckdb.DuckDBPyConnection, days: list[date]
-) -> list[date]:
-    """過濾掉 ledger 已 status='complete' 的日；其餘（缺/partial）保留。"""
-    done = {
-        r[0]
-        for r in conn.execute(
-            "SELECT trade_date FROM stock_min_progress WHERE status = 'complete'"
-        ).fetchall()
-    }
-    return [d for d in days if d not in done]
+def write_day_parquet(d: date, df: pd.DataFrame, raw_dir: Path = RAW_DIR) -> Path:
+    """用 in-memory DuckDB 把當日 df 寫成 parquet（:memory: 無檔鎖，不碰 futures.duckdb）。"""
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    out = day_path(d, raw_dir)
+    tmp = out.with_suffix(".parquet.tmp")  # 先寫 tmp 再 rename，避免中斷留半檔
+    con = duckdb.connect()  # in-memory
+    try:
+        con.register("d_df", df)
+        con.execute(f"COPY d_df TO '{tmp}' (FORMAT PARQUET)")
+    finally:
+        con.close()
+    tmp.replace(out)
+    return out
 
 
 def _kbar_call(stock_id_list: list[str], date_str: str, use_async: bool) -> pd.DataFrame:
@@ -163,11 +106,7 @@ def _kbar_call(stock_id_list: list[str], date_str: str, use_async: bool) -> pd.D
     )
 
 
-def fetch_kbar_day(
-    stock_ids: list[str],
-    d: str,
-    max_retries: int = 4,
-) -> pd.DataFrame:
+def fetch_kbar_day(stock_ids: list[str], d: str, max_retries: int = 4) -> pd.DataFrame:
     """抓單日全宇宙分 k；rate-limit/連線錯誤指數退避重試。最終失敗則 raise。"""
     last_err: Exception | None = None
     for attempt in range(max_retries):
@@ -180,37 +119,28 @@ def fetch_kbar_day(
     raise RuntimeError(f"fetch_kbar_day {d} 重試 {max_retries} 次仍失敗: {last_err}")
 
 
-def download_day(
-    conn: duckdb.DuckDBPyConnection,
-    d: date,
-    market: str | None = None,
-) -> tuple[int, int]:
-    """抓單日 → normalize → 寫入 → 記 ledger。回傳 (fetched, expected)。
+def download_day(d: date, universe: list[str], raw_dir: Path = RAW_DIR) -> tuple[int, int]:
+    """抓單日 → normalize → 寫 parquet。回傳 (fetched, expected)。
 
-    只有「全數取得」才記 complete；fetched<expected 一律記 partial 保留待重抓
+    只有「全數取得」才寫檔（檔案存在=完成）；fetched<expected 一律不寫、留待重跑
     （fetched==0 多半是撞 FinMind rate limit，SDK 會吞錯回空 df 而不 raise）。
     """
-    univ = universe_for_day(conn, d, market)
-    expected = len(univ)
+    expected = len(universe)
     if expected == 0:
-        record_progress(conn, d, 0, 0, 0, 0, "complete")
         return 0, 0
     try:
-        raw = fetch_kbar_day(univ, d.isoformat())
+        raw = fetch_kbar_day(universe, d.isoformat())
     except Exception as e:  # noqa: BLE001
-        print(f"  {d} 抓取失敗，記 partial：{e}", flush=True)
-        record_progress(conn, d, expected, 0, expected, 0, "partial")
+        print(f"  {d} 抓取失敗，跳過待重抓：{e}", flush=True)
         return 0, expected
     norm = normalize_kbar(raw, d)
     fetched = norm["stock_id"].nunique() if len(norm) else 0
-    n_rows = write_day(conn, d, norm)
     if fetched < expected:
-        record_progress(conn, d, expected, fetched, expected - fetched, n_rows, "partial")
         warn = " ⚠ 可能撞 rate limit" if fetched == 0 else ""
-        print(f"  {d}: 宇宙{expected} 取得{fetched} rows={n_rows} → partial{warn}", flush=True)
+        print(f"  {d}: 宇宙{expected} 取得{fetched} → 不寫檔待重抓{warn}", flush=True)
         return fetched, expected
-    record_progress(conn, d, expected, fetched, 0, n_rows, "complete")
-    print(f"  {d}: 宇宙{expected} 取得{fetched} rows={n_rows}", flush=True)
+    out = write_day_parquet(d, norm, raw_dir)
+    print(f"  {d}: 宇宙{expected} 取得{fetched} rows={len(norm)} → {out.name}", flush=True)
     return fetched, expected
 
 
@@ -238,7 +168,7 @@ def _throttle(need: int, limit: int = RATE_PER_HOUR) -> None:
     _window.append((now, need))
 
 
-def _quota_available(market: str | None) -> bool:
+def _quota_available() -> bool:
     """探一筆已知有資料的 stock-day，確認 FinMind quota 尚未耗盡（非空回傳）。"""
     try:
         df = fetch_kbar_day(["2330"], "2026-05-29")
@@ -248,32 +178,34 @@ def _quota_available(market: str | None) -> bool:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="下載全市場個股分 k（FinMind TaiwanStockKBar）")
+    p = argparse.ArgumentParser(
+        description="下載個股分 k（FinMind TaiwanStockKBar）→ parquet landing 區")
     p.add_argument("--start", type=date.fromisoformat, default=date(2021, 1, 1))
     p.add_argument("--end", type=date.fromisoformat, default=date.today())
     p.add_argument("--market", choices=["TWSE", "TPEX"], default=None,
                    help="預設全市場；指定則只抓單一市場")
     args = p.parse_args()
 
-    token = os.environ.get("FINMIND_API_KEY")
-    if not token:
+    if not os.environ.get("FINMIND_API_KEY"):
         raise SystemExit("缺 env FINMIND_API_KEY")
 
-    with duckdb.connect(str(DB_PATH)) as conn:
-        ensure_schema(conn)
-        all_days = trading_days(conn, args.start, args.end)
-        todo = pending_days(conn, all_days)
-        print(f"交易日 {len(all_days)}，待下載 {len(todo)}（已完成 {len(all_days)-len(todo)} 跳過）",
-              flush=True)
-        # 啟動 gate：若 quota 仍耗盡（探測秒回空），等到釋出再開跑，避免整批標 partial
-        while todo and not _quota_available(args.market):
-            print("  ⏳ FinMind quota 目前耗盡（探測回空），等 10 分鐘後重試…", flush=True)
-            time.sleep(600)
-        for i, d in enumerate(todo, 1):
-            need = len(universe_for_day(conn, d, args.market))
-            _throttle(need)
-            print(f"[{i}/{len(todo)}] {d}", flush=True)
-            download_day(conn, d, args.market)
+    # 一次讀宇宙（唯一碰 futures.duckdb 的地方），之後不再開 DB
+    umap = load_universe_map(args.start, args.end, args.market)
+    all_days = sorted(umap)
+    todo = [d for d in all_days if not day_path(d).exists()]
+    print(f"交易日 {len(all_days)}，待下載 {len(todo)}"
+          f"（已落地 {len(all_days)-len(todo)} 跳過）→ {RAW_DIR}", flush=True)
+
+    # 啟動 gate：quota 仍耗盡（探測秒回空）就等釋出，避免整批白跑
+    while todo and not _quota_available():
+        print("  ⏳ FinMind quota 目前耗盡（探測回空），等 10 分鐘後重試…", flush=True)
+        time.sleep(600)
+
+    for i, d in enumerate(todo, 1):
+        univ = umap[d]
+        _throttle(len(univ))
+        print(f"[{i}/{len(todo)}] {d}", flush=True)
+        download_day(d, univ)
 
 
 if __name__ == "__main__":

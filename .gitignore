@@ -226,6 +226,7 @@ data/chart_lists/
 data/raw_market/
 data/raw_margin/
 data/raw_econ/
+data/stock_min_raw/
 
 # 由 ETL pipeline 重建的衍生資料（不納入版控，跑 daily_update 會自動產生）
 data/external_sources/TAIEX_daily.csv
