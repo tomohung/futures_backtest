@@ -3,13 +3,14 @@
 目的：用首批下載的全市場分 k（stock_min）算出盤中逐分鐘 DCI，疊台指期 TX 走勢
 與 reach ladder（L1–L5）進程，目視盤中 DCI 與台指方向/階梯達成的關係。
 
-定義（盤中版，對齊 dci_daily.compute_daily_dci 的「等權兩票」收盤定義）：
-  每檔每分鐘兩票：sign(price_t − 昨收) + sign(price_t − 當日開盤)
-    - 昨收 = stock_day(當日).close − change；開盤 = stock_day(當日).open
+定義（盤中版，對齊 dci_daily.compute_daily_dci 的「OC-only」收盤定義）：
+  W/H 每檔每分鐘一票：sign(price_t − 當日開盤)（open-anchor；昨收票夾帶隔夜跳空噪音已棄用）
+    - 開盤 = stock_day(當日).open
     - price_t = stock_min 該檔 ≤ t 的最後一根 close（forward-fill；首根前用開盤）
-  W = 權值前~21（TWSE，固定清單）兩票平均
-  H = 當日成交值前 20（全市場 TWSE+TPEX，依 stock_day.value 取，整日固定集合）兩票平均
+  W = 權值前~21（TWSE，固定清單）OC 票平均
+  H = 當日成交值前 20（全市場 TWSE+TPEX，依 stock_day.value 取，整日固定集合）OC 票平均
   B = (現價>昨收家數 − 現價<昨收家數) / 上市總家數（market_breadth listed_count, 全市場）
+      ＊B 結構不同（家數），仍以「vs 昨收」計、對齊 daily market_breadth
   dci_long = .40W+.35H+.25B；dci_short = .30W+.30H+.40B（多空不對稱，dci_spec §5）
 
 ladder（TX-only，對齊 daystats）：
@@ -24,13 +25,18 @@ H 集合用整日成交值前20（非逐分鐘重選），為單日覆盤的簡�
 from __future__ import annotations
 
 from datetime import date, time
+import os
 from pathlib import Path
 
 import duckdb
 import numpy as np
 import pandas as pd
 
-DB = str(Path(__file__).resolve().parents[3] / "data" / "futures.duckdb")
+# 預設讀正式庫；回補背景跑時 DB 被寫鎖，可用 env STOCK_MIN_DB 指向快照副本
+DB = os.environ.get(
+    "STOCK_MIN_DB",
+    str(Path(__file__).resolve().parents[3] / "data" / "futures.duckdb"),
+)
 SEL = date(2026, 5, 29)
 
 TOP_WEIGHT_SYMBOLS = [
@@ -94,12 +100,12 @@ def intraday_dci(c) -> pd.DataFrame:
     h_idx = [cols.get_loc(s) for s in h_set]
 
     P = panel.values.astype(float)               # [T × N]
-    sp = np.sign(P - prev[None, :])              # vs 昨收
-    so = np.sign(P - opn[None, :])               # vs 開盤
+    sp = np.sign(P - prev[None, :])              # vs 昨收（只用於 B 家數）
+    so = np.sign(P - opn[None, :])               # vs 開盤（W/H 的 OC-only 票）
 
     def strength(idx):
-        a, b = sp[:, idx], so[:, idx]
-        return (a.sum(1) + b.sum(1)) / (2 * len(idx))
+        # OC-only：每檔僅投一票 sign(price_t − 今開)，對齊線上 dci_daily（昨收票夾帶隔夜跳空噪音）
+        return so[:, idx].sum(1) / len(idx)
 
     W = strength(w_idx)
     H = strength(h_idx)
