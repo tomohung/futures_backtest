@@ -124,17 +124,41 @@ def test_download_day_complete_writes_parquet(tmp_path, monkeypatch):
     assert mod.day_path(d, tmp_path).exists()
 
 
-def test_download_day_partial_no_file(tmp_path, monkeypatch):
-    # 宇宙 2 檔但只回 1 檔 → 不寫檔（留待重抓）
+def test_is_complete_tolerance():
+    assert mod._is_complete(1085, 1085)      # 全取得
+    assert mod._is_complete(1084, 1085)      # 缺 1（停牌）→ 容忍
+    assert mod._is_complete(1075, 1085)      # 缺 10 ≤ 1%（~11）→ 容忍
+    assert not mod._is_complete(1070, 1085)  # 缺 15 > 容忍 → 不完整
+    assert not mod._is_complete(130, 1081)   # 撞限額大量缺 → 不完整
+    assert not mod._is_complete(0, 1085)     # 全空 → 不完整
+    assert mod._is_complete(8, 10)           # 小宇宙：缺 2 ≤ floor 5 → 容忍
+
+
+def test_download_day_truncated_no_file(tmp_path, monkeypatch):
+    # 宇宙 20 檔但只回 1 檔（撞限額樣態，缺 19 > 容忍）→ 不寫檔
     d = date(2025, 6, 16)
+    univ = [f"{1000+i}" for i in range(20)]
     monkeypatch.setattr(mod, "fetch_kbar_day",
                         lambda ids, ds, **k: pd.DataFrame([
-                            {"date": ds, "minute": "09:00:00", "stock_id": "2330",
+                            {"date": ds, "minute": "09:00:00", "stock_id": "1000",
                              "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1},
                         ]))
-    fetched, expected = mod.download_day(d, ["2330", "2317"], raw_dir=tmp_path)
-    assert (fetched, expected) == (1, 2)
+    fetched, expected = mod.download_day(d, univ, raw_dir=tmp_path)
+    assert (fetched, expected) == (1, 20)
     assert not mod.day_path(d, tmp_path).exists()
+
+
+def test_download_day_tolerates_few_missing_writes_file(tmp_path, monkeypatch):
+    # 宇宙 8 檔、回 7 檔（缺 1 ≤ floor 5）→ 視為完成、寫檔
+    d = date(2025, 6, 16)
+    univ = [f"{2000+i}" for i in range(8)]
+    rows = [{"date": str(d), "minute": "09:00:00", "stock_id": s,
+             "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1}
+            for s in univ[:7]]
+    monkeypatch.setattr(mod, "fetch_kbar_day", lambda ids, ds, **k: pd.DataFrame(rows))
+    fetched, expected = mod.download_day(d, univ, raw_dir=tmp_path)
+    assert (fetched, expected) == (7, 8)
+    assert mod.day_path(d, tmp_path).exists()
 
 
 def test_download_day_empty_fetch_no_file(tmp_path, monkeypatch):

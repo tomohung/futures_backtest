@@ -120,10 +120,24 @@ def fetch_kbar_day(stock_ids: list[str], d: str, max_retries: int = 4) -> pd.Dat
     raise RuntimeError(f"fetch_kbar_day {d} 重試 {max_retries} 次仍失敗: {last_err}")
 
 
+MISSING_FLOOR = 5  # 容忍的缺檔絕對下限（停牌/全日無成交股當天本就無分k）
+
+
+def _is_complete(fetched: int, expected: int) -> bool:
+    """fetched 是否足以視為完成。
+
+    容忍少數缺檔（停牌/全日無量股當天無分k，常缺 0~數檔）；撞 rate limit 則會
+    掉幾百到全部，遠超容忍 → 判為不完整待重抓。容忍量 = max(5, 1% 宇宙)。
+    """
+    if fetched <= 0:
+        return False
+    return (expected - fetched) <= max(MISSING_FLOOR, round(expected * 0.01))
+
+
 def download_day(d: date, universe: list[str], raw_dir: Path = RAW_DIR) -> tuple[int, int]:
     """抓單日 → normalize → 寫 parquet。回傳 (fetched, expected)。
 
-    只有「全數取得」才寫檔（檔案存在=完成）；fetched<expected 一律不寫、留待重跑
+    取得數在容忍範圍內才寫檔（檔案存在=完成）；缺太多（多半撞 rate limit）不寫、待重跑。
     （fetched==0 多半是撞 FinMind rate limit，SDK 會吞錯回空 df 而不 raise）。
     """
     expected = len(universe)
@@ -136,12 +150,14 @@ def download_day(d: date, universe: list[str], raw_dir: Path = RAW_DIR) -> tuple
         return 0, expected
     norm = normalize_kbar(raw, d)
     fetched = norm["stock_id"].nunique() if len(norm) else 0
-    if fetched < expected:
-        warn = " ⚠ 可能撞 rate limit" if fetched == 0 else ""
+    if not _is_complete(fetched, expected):
+        warn = " ⚠ 可能撞 rate limit" if fetched < expected * 0.5 else ""
         print(f"  {d}: 宇宙{expected} 取得{fetched} → 不寫檔待重抓{warn}", flush=True)
         return fetched, expected
     out = write_day_parquet(d, norm, raw_dir)
-    print(f"  {d}: 宇宙{expected} 取得{fetched} rows={len(norm)} → {out.name}", flush=True)
+    miss = expected - fetched
+    note = f"（缺{miss}檔，多為停牌）" if miss else ""
+    print(f"  {d}: 宇宙{expected} 取得{fetched} rows={len(norm)} → {out.name}{note}", flush=True)
     return fetched, expected
 
 
@@ -217,10 +233,10 @@ def main() -> None:
         print(f"[{i}/{len(todo)}] {d}", flush=True)
         for attempt in range(max_day_retries):
             _throttle(len(univ))
-            fetched, expected = download_day(d, univ)
-            if fetched >= expected:
-                break  # 完成（已寫檔）
-            # 不完整 = 多半撞限額：退避後重試「同一天」，不跳過（避免再次整批漏抓）
+            download_day(d, univ)
+            if day_path(d).exists():
+                break  # 已寫檔 = 完成（含容忍少數缺檔）
+            # 缺太多 = 多半撞限額：退避後重試「同一天」，不跳過（避免再次整批漏抓）
             print(f"  ↻ {d} 不完整，退避 {backoff//60} 分後重試"
                   f"（{attempt+1}/{max_day_retries}）", flush=True)
             time.sleep(backoff)
