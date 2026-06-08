@@ -3,7 +3,9 @@
 
 歷史可追溯：2008-01-02 起（FinMind 涵蓋）。
 
-來源說明：FinMind 公開 endpoint，無需 token，當日收盤後即可取得 T+0 資料。
+來源說明：FinMind 公開 endpoint，free tier 即可取（TAIEX 非付費牆，一天一筆量極小，
+不帶 token）。當日收盤後即可取得 T+0 資料。402 = 該 IP 匿名額度暫時用罄（每小時重置），
+daily_update 已 warn-only 處理、不擋簡報。
 舊版改用 yfinance ^TWII 常因 T+1 延遲卡住最新交易日 close，2026-05 起改用 FinMind。
 
 冪等：每次重抓覆蓋指定區間。
@@ -16,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -41,6 +44,7 @@ CREATE TABLE IF NOT EXISTS taiex_day (
 
 
 def fetch(start: date, end: date) -> pd.DataFrame:
+    """FinMind free tier（不帶 token）抓 TAIEX 日線。402 = 該 IP 匿名額度暫時用罄。"""
     params = {
         "dataset": "TaiwanStockPrice",
         "data_id": "TAIEX",
@@ -48,6 +52,8 @@ def fetch(start: date, end: date) -> pd.DataFrame:
         "end_date": end.isoformat(),
     }
     r = requests.get(FINMIND_URL, params=params, timeout=60)
+    if r.status_code == 402:
+        raise RuntimeError("FinMind 402 匿名額度暫時用罄（每小時重置），TAIEX 今日略過")
     r.raise_for_status()
     payload = r.json()
     if payload.get("msg") != "success":
@@ -93,7 +99,12 @@ def main() -> None:
     args = p.parse_args()
 
     print(f"Fetching FinMind TAIEX {args.start} ~ {args.end}")
-    df = fetch(args.start, args.end)
+    try:
+        df = fetch(args.start, args.end)
+    except RuntimeError as e:
+        # free tier 額度用罄等預期失敗：印乾淨訊息、非零退出，不吐 traceback
+        print(f"  [SKIP] {e}")
+        sys.exit(1)
     print(f"  Got {len(df)} rows: {df['trade_date'].min()} ~ {df['trade_date'].max()}")
     write_db(df)
 
