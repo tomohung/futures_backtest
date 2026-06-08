@@ -8,6 +8,10 @@ H103（Inconclusive，傾向正面）：開盤跌破昨/前日 VWAP 成本、且
 盤前 morning_briefing 跑時通常還沒有今日開盤價，故用最近夜盤收盤當「預判開盤」，
 並給觸發價 X = min(vwap_last, vwap_prev) − 1.0×ema20：今日開盤落在 X 以下即成立。
 
+觀察欄位（H104 T4，樣本薄 N=28，未成案）：H103 反彈多單在「開盤站上夜盤 05:00 收」
+（隔夜賣壓已回升）時較強——回測該子集 OOS PF 3.62 vs 開盤仍在夜盤收下方 0.81。
+盤前無真實開盤無法預判，故把夜盤 05:00 收當「待確認參考線」印出，08:45 後人工對照。
+
 使用：uv run python src/analysis/h103_alert.py
 """
 import duckdb
@@ -83,6 +87,7 @@ def compute_h103_alert() -> dict | None:
         "last_day": last_day, "vwap_last": vwap_last, "vwap_prev": vwap_prev,
         "cost": cost, "ema20": ema20, "trigger": trigger, "ref_open": ref_open,
         "triggered": triggered,
+        "night_ref": night_close,   # 夜盤 05:00 收：T4 觀察用「待確認參考線」（開盤站上=較強變體）
         "target": (ref_open + TARGET_K * ema20) if ref_open is not None else None,
         "stop": (ref_open - STOP_K * ema20) if ref_open is not None else None,
     }
@@ -111,6 +116,9 @@ def main():
         print(f"  夜收預判開盤 = {a['ref_open']}")
         print(f"  → ⚪ 未觸發：開盤需再低 {a['ref_open'] - a['trigger']:.0f} 點"
               f"（跌破 {a['trigger']:.0f}）才成立")
+    if a["night_ref"] is not None:
+        print(f"  [T4觀察・薄樣本N=28] 夜盤05:00收參考線 = {a['night_ref']}：開盤站上=隔夜已回升"
+              "=較強變體(回測OOS PF3.62)；開盤仍在其下=較弱(0.81)。08:45 後人工對照。")
     print("  註：僅供觀察，非自動訊號；做空/夾中間/跳空上方不適用。")
 
 
