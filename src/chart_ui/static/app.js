@@ -110,6 +110,7 @@ function clearMarkers() {
   if (markerState.handle) { try { markerState.handle.setMarkers([]); } catch (_) {} }
   for (const pl of markerState.priceLines) { try { chartState.candle.removePriceLine(pl); } catch (_) {} }
   markerState.priceLines = [];
+  if (markerState.legSeries) { try { chartState.chart.removeSeries(markerState.legSeries); } catch (_) {} markerState.legSeries = null; }
   if (chartState.reviewDate) { chartState.reviewDate = null; if (reviewReqUpdate) reviewReqUpdate(); }  // 覆盤時間線跟著清
 }
 
@@ -132,7 +133,7 @@ function drawTradeMarkers(item) {
   if (state.list && state.list.entry_marker === false) return;  // 清單關閉 generic「進」箭頭（如 ORB，指標自帶標記）
   // 『所有交易日』項目只有 time、無交易資訊 → 不畫 marker。
   const hasTrade = item.side || item.entry != null || item.exit_time != null
-    || (item.levels && item.levels.length);
+    || (item.levels && item.levels.length) || (item.legPoints && item.legPoints.length);
   if (!hasTrade) return;
   const isLong = /long|buy|做多/i.test(item.side || '');
   const markers = [];
@@ -168,6 +169,23 @@ function drawTradeMarkers(item) {
       price: +lv.price, color: '#6aa3ff', lineStyle: 2, lineWidth: 1,
       axisLabelVisible: true, title: lv.label || '',
     }));
+  }
+  // 斜線 leg overlay（P0→P1→P2→…）：item.legPoints = [[time_str, price], ...]
+  if (item.legPoints && item.legPoints.length >= 2) {
+    const seen = new Set();
+    const pts = [];
+    for (const [ts, pr] of item.legPoints) {
+      const bt = nearestBarTime(localToEpoch(ts));
+      if (bt != null && pr != null && !seen.has(bt)) { seen.add(bt); pts.push({ time: bt, value: +pr }); }
+    }
+    pts.sort((a, b) => a.time - b.time);
+    if (pts.length >= 2) {
+      markerState.legSeries = chartState.chart.addSeries(LightweightCharts.LineSeries, {
+        color: '#ff8c1a', lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+      markerState.legSeries.setData(pts);
+    }
   }
 }
 
