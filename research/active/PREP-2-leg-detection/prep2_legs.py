@@ -69,14 +69,20 @@ def find_two_legs(prices, atr, k=0.3, leg1_min=0.5, retr=(0.3, 0.9),
     定義：leg1(衝勢, ≥leg1_min×ATR) → 回撤(P1→P2, 深度∈retr×leg1, 即真回撤非反轉) → leg2(同向續勢)。
     anchor='open'：只用開盤錨的第一隻腳當 leg1（震盪開盤日 leg1<leg1_min 自然不成立 → 此模式只在
                    開盤即驅動日觸發）。
-    anchor='anywhere'：掃日內所有 leg triple，取第一組（或全部）符合者（盤中兩腳型）。
+    anchor='intraday'：跳過開盤錨那隻腳（leg1 從盤中起 i0>0），第一組符合者（純盤中型，與 open 不重疊）。
+    anchor='anywhere'：掃所有 leg triple（含開盤），第一組符合者（= open ∪ intraday）。
     回傳 list of dict：P0..P3(idx,price)、leg1/retr/leg2 大小(×ATR)、retr_ratio、leg2_over_leg1、
                        success(leg2 是否突破 P1 = 成功腳 vs GA-05 失敗腳)。
     """
     theta = k * atr
     legs = legs_from_pivots(detect_legs(prices, theta))
     out = []
-    starts = [0] if anchor == "open" else range(max(0, len(legs) - 2))
+    if anchor == "open":
+        starts = [0]
+    elif anchor == "intraday":
+        starts = range(1, max(1, len(legs) - 2))
+    else:
+        starts = range(max(0, len(legs) - 2))
     for j in starts:
         if j + 2 >= len(legs):
             break

@@ -32,7 +32,7 @@ def tstr(d, idx):
 
 def build(mode):
     items = []
-    for d in sorted(days.keys()):
+    for d in sorted(days.keys(), reverse=True):   # 倒序：最新日期在最上
         a = atr.get(d, np.nan)
         if not np.isfinite(a):
             continue
@@ -62,7 +62,7 @@ def build(mode):
     n_succ = sum(1 for it in items if it["result"] == "Win")
     summary = {"trades": len(items), "win_rate": round(n_succ / len(items), 3) if items else None,
                "pnl_pts": round(sum(it["pnl_pts"] for it in items), 1), "pf": None}
-    label = "開盤衝勢型" if mode == "open" else "盤中兩腳型"
+    label = {"open": "開盤衝勢型", "intraday": "盤中兩腳型"}.get(mode, mode)
     path = write_chart_list(f"prep2-twoleg-{mode}", items,
                             name=f"PREP-2 兩腳·{label}({mode})", summary=summary,
                             entry_marker=True)
@@ -70,6 +70,6 @@ def build(mode):
 
 
 print("=== 產生 chart-ui 清單 ===")
-for m in ("open", "anywhere"):
+for m in ("open", "intraday"):
     build(m)
 print("啟動 chart-ui 後 dropdown 可見；點日期跳到 P0。")
