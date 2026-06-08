@@ -152,8 +152,9 @@ futures_backtest/
 │   │   ├── estimate_hl_exit.py ← EstHL 出場策略 ✅
 │   │   └── reversal_follow.py  ← Reversal 跟隨策略 ✅
 │   ├── analysis/
-│   │   ├── morning_briefing.py  ← 早盤簡報（ETL + key_prices + daily_range + breadth + fg_composite_monitor）✅
+│   │   ├── morning_briefing.py  ← 早盤簡報（ETL + key_prices + h103_alert + daily_range + breadth + fg_composite_monitor）✅
 │   │   ├── key_prices.py        ← 關鍵價格 + 支撐壓力 ✅
+│   │   ├── h103_alert.py        ← H103 跳空下方遠做多盤前提醒（觀察用，夜收預判 + 觸發價 X）✅
 │   │   ├── regime_health.py     ← Regime 健康快報（已驗證無交易濾網效果，已從 morning_briefing 移除）
 │   │   ├── daily_range.py       ← 日盤波動 + VIX 圖表 ✅
 │   │   ├── breadth_thermometer.py ← H079 漲停萎縮溫度計（觀察用 alert，預設 RATIO ma7 pct=0.15）✅

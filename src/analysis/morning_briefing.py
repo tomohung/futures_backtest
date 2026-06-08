@@ -20,6 +20,7 @@ def run(script: Path) -> None:
 if __name__ == "__main__":
     run(ETL_DIR / "daily_update.py")
     run(ANALYSIS_DIR / "key_prices.py")
+    run(ANALYSIS_DIR / "h103_alert.py")
     run(ANALYSIS_DIR / "daily_range.py")
     run(ANALYSIS_DIR / "breadth_thermometer.py")
     run(ANALYSIS_DIR / "fg_composite_monitor.py")
