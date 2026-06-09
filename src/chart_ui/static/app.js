@@ -17,9 +17,13 @@ const BB_BAND_COLOR = '#c678dd';
 // MA Turn（移植 5-ma-turn-from-deduction.pine）：另開副圖，柱狀 = 現價 − 扣抵值（close − close[period]）。
 // 在固定較高週期 MATURN_TF 分上算（仿原 pine 的 request.security 5分）；過零 = 該週期 SMA 轉向，
 // 柱高 = 現價還要再移動多少均線才翻向。正值(均線上彎=偏多)台灣慣例 → 紅，負值(下彎) → 綠。
-const MATURN_TF = 5;            // 扣抵值計算週期（分鐘，固定較高週期）
-const MATURN_PERIOD = 120;     // SMA 期數（扣抵值 = period 個 bucket 前的收盤）
+// 註：MA Turn 副圖已移除（改為延伸力 EXT 副圖）；MATURN_TF/PERIOD 仍供 600分MA 疊線沿用（maTurnCompute 回傳 ma600）。
+const MATURN_TF = 5;            // 600MA 的 bucket 週期（分鐘）
+const MATURN_PERIOD = 120;     // 600MA = MATURN_TF×PERIOD = 600 分
 const MATURN_ZERO_COLOR = '#888';
+// 延伸力 EXT 強門檻（看盤參考線）：H111 ext_long top~20%≈+0.10、H112 ext_short(z-sum) top~20%≈+1.2。
+const EXT_STRONG_LONG = 0.10;
+const EXT_STRONG_SHORT = 1.2;
 const MACD_DEA_COLOR = '#6aa3ff';   // mini 1H MACD 的 DEA(訊號)線
 const MACD_MIN_BARS = 34;   // slow(26)+signal(9)-2 = 第一個有效 dea/hist index;不足則不畫 MACD
 // MACD 柱 TradingView 式深淺：離零軸方向變大=飽和色,縮回零軸=淡色（漲紅跌綠）。
@@ -706,23 +710,48 @@ function initChart() {
   chartState.bb.createPriceLine({ price: 1, color: BB_REF_COLOR, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '1' });
   chartState.bb.createPriceLine({ price: 0, color: BB_REF_COLOR, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '0' });
   chart.priceScale('bb').applyOptions({ scaleMargins: { top: 0.15, bottom: 0.15 } });
-  // MA Turn 副圖（pane 3）：現價 − 扣抵值柱狀，過零 = MATURN_TF 分 SMA(period) 轉向。0 軸虛線。
-  chartState.maTurn = chart.addSeries(
-    LightweightCharts.HistogramSeries,
-    { priceScaleId: 'maturn', priceLineVisible: false, lastValueVisible: false,
-      priceFormat: { type: 'price', precision: 0, minMove: 1 } },
+  // 延伸力 EXT 副圖（盤中 open-anchor，預測關卡達成；H095/H111/H112）。
+  //   pane 3 = ext_long（龍頭推力，漲紅）；pane 4 = ext_short（廣度，跌綠）。
+  //   0 軸 + 強門檻虛線（ext_long≥+0.10、ext_short(z-sum)≥+1.2，看盤用）。
+  chartState.extLong = chart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: COLORS.up, lineWidth: 2, priceScaleId: 'extlong',
+      priceLineVisible: false, lastValueVisible: false,
+      priceFormat: { type: 'price', precision: 2, minMove: 0.01 } },
     3,
   );
-  chartState.maTurn.createPriceLine({ price: 0, color: MATURN_ZERO_COLOR, lineWidth: 1,
-    lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false });
-  chart.priceScale('maturn').applyOptions({ scaleMargins: { top: 0.2, bottom: 0.1 } });
+  chartState.extLong.createPriceLine({ price: 0, color: MATURN_ZERO_COLOR, lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '0' });
+  chartState.extLong.createPriceLine({ price: EXT_STRONG_LONG, color: COLORS.up, lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '強' });
+  chart.priceScale('extlong').applyOptions({ scaleMargins: { top: 0.2, bottom: 0.1 } });
+  chartState.extShort = chart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: COLORS.down, lineWidth: 2, priceScaleId: 'extshort',
+      priceLineVisible: false, lastValueVisible: false,
+      priceFormat: { type: 'price', precision: 2, minMove: 0.01 } },
+    4,
+  );
+  // 顯示翻轉（畫 −ext_short）：下殺燃料↑ → 線往下，與走勢同相、好讀。強空門檻落在 −1.2。
+  chartState.extShort.createPriceLine({ price: 0, color: MATURN_ZERO_COLOR, lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '0' });
+  chartState.extShort.createPriceLine({ price: -EXT_STRONG_SHORT, color: COLORS.down, lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '強空' });
+  chart.priceScale('extshort').applyOptions({ scaleMargins: { top: 0.2, bottom: 0.1 } });
+  // 副圖高度：主圖放大、量/%B/延伸力副圖縮小（pane 0 主圖佔大宗）。
+  try {
+    const panes = chart.panes();
+    const stretch = [12, 2, 2.5, 2.5, 2.5];   // main, vol, bb, extLong, extShort
+    panes.forEach((p, i) => { if (stretch[i] != null) p.setStretchFactor(stretch[i]); });
+  } catch (_) { /* 舊版 lib 無 panes API 則略過 */ }
   chart.subscribeCrosshairMove((param) => updateLegend(param));
   chart.subscribeClick((param) => onChartClick(param));
   const wrap = document.querySelector('.chart-wrap');
   if (wrap) new ResizeObserver(() => {
     positionPaneLegend(document.getElementById('vol-legend'), 1);
     positionPaneLegend(document.getElementById('bb-legend'), 2);
-    positionPaneLegend(document.getElementById('maturn-legend'), 3);
+    positionPaneLegend(document.getElementById('extlong-legend'), 3);
+    positionPaneLegend(document.getElementById('extshort-legend'), 4);
   }).observe(wrap);
 }
 
@@ -927,9 +956,10 @@ function updateLegend(param) {
   const main = document.getElementById('legend');
   const vol = document.getElementById('vol-legend');
   const bb = document.getElementById('bb-legend');
-  const maturn = document.getElementById('maturn-legend');
+  const extL = document.getElementById('extlong-legend');
+  const extS = document.getElementById('extshort-legend');
   const bars = chartState.bars || [];
-  if (!bars.length) { for (const e of [main, vol, bb, maturn]) if (e) e.innerHTML = ''; return; }
+  if (!bars.length) { for (const e of [main, vol, bb, extL, extS]) if (e) e.innerHTML = ''; return; }
   let idx = param && param.time != null ? bars.findIndex((b) => b.time === param.time) : -1;
   if (idx < 0) idx = bars.length - 1;
   const b = bars[idx];
@@ -1038,13 +1068,23 @@ function updateLegend(param) {
     const cls = v == null ? 'muted' : (v > 1 ? 'up' : (v < 0 ? 'down' : ''));
     bb.innerHTML = `<span style="color:${BB_COLOR}">%B(${BB_LEN},${BB_MULT})</span> <span class="${cls}">${v == null ? '-' : v.toFixed(2)}</span>`;
   }
-  if (maturn) {
-    positionPaneLegend(maturn, 3);
-    const mv = chartState.maTurnArr ? chartState.maTurnArr[idx] : null;
-    const cls = mv == null ? 'muted' : (mv >= 0 ? 'up' : 'down');
-    const arrow = mv == null ? '' : (mv >= 0 ? ' ↑' : ' ↓');
-    maturn.innerHTML = `<span class="muted">MA Turn(${MATURN_TF}分,${MATURN_PERIOD})</span> `
-      + `<span class="${cls}">${mv == null ? '—' : (mv >= 0 ? '+' : '') + r(mv) + arrow}</span>`;
+  const ext = (chartState.extMap && chartState.extMap.get(b.time)) || null;
+  if (extL) {
+    positionPaneLegend(extL, 3);
+    const v = ext ? ext.ext_long : null;
+    const strong = v != null && v >= EXT_STRONG_LONG;
+    const cls = v == null ? 'muted' : (v > 0 ? 'up' : 'down');
+    extL.innerHTML = `<span style="color:${COLORS.up}">延伸力·多(W50)</span> `
+      + `<span class="${cls}">${v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2)}${strong ? ' 強' : ''}</span>`;
+  }
+  if (extS) {
+    positionPaneLegend(extS, 4);
+    const raw = ext ? ext.ext_short : null;
+    const v = raw == null ? null : -raw;                       // 翻轉顯示（負=空方燃料/偏空）
+    const strong = v != null && v <= -EXT_STRONG_SHORT;        // 強空
+    const cls = v == null ? 'muted' : (v < 0 ? 'down' : 'up');
+    extS.innerHTML = `<span style="color:${COLORS.down}">延伸力·空(廣度)</span> `
+      + `<span class="${cls}">${v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2)}${strong ? ' 強空' : ''}</span>`;
   }
 }
 
@@ -1365,14 +1405,11 @@ async function loadKline(centerEpochToFocus) {
   chartState.bbMarkersHandle = chartState.bbMarkersHandle
     ? (chartState.bbMarkersHandle.setMarkers(bbMarks), chartState.bbMarkersHandle)
     : LightweightCharts.createSeriesMarkers(chartState.bb, bbMarks);
-  // MA Turn 柱狀（現價 − 扣抵值）：正(上彎)紅、負(下彎)綠；同基準的 600分MA 畫主圖。
-  const { hist: maTurnArr, ma: ma600Arr } = maTurnCompute(bars, MATURN_PERIOD);
-  chartState.maTurnArr = maTurnArr;
+  // 600分MA 疊線（沿用 maTurnCompute 回傳的 ma；MA Turn 柱已移除）。
+  const { ma: ma600Arr } = maTurnCompute(bars, MATURN_PERIOD);
   chartState.ma600Arr = ma600Arr;
-  chartState.maTurn.setData(bars.flatMap((b, i) => (maTurnArr[i] != null
-    ? [{ time: b.time, value: maTurnArr[i], color: maTurnArr[i] >= 0 ? COLORS.up : COLORS.down }]
-    : [])));
   chartState.indMa600Series.setData(_toData(ma600Arr));
+  loadExtension(state.centerDate);          // 延伸力 EXT 副圖（盤中，按日 fetch）
   focusTime(centerEpochToFocus);
   if (window._afterKline) window._afterKline();        // Task 10 掛 marker
   if (sessionReqUpdate) sessionReqUpdate();            // 觸發盤別分界線重畫
@@ -1381,6 +1418,23 @@ async function loadKline(centerEpochToFocus) {
   // session 切換時 mini 仍抓 full,等同 no-op,不值得加 guard。
   loadMiniChart(state.centerDate, state.adjust);
   loadMiniDayChart(state.centerDate, state.adjust);
+}
+
+// 延伸力 EXT 副圖：按交易日 fetch /api/extension，設 ext_long/ext_short 兩線並存 time→值 map（legend 用）。
+// 只有有 stock_min 的日子(2025-06~2026-02)有資料；其餘/日線檢視清空。
+async function loadExtension(centerDate) {
+  if (!chartState.extLong) return;
+  const clear = () => { chartState.extLong.setData([]); chartState.extShort.setData([]); chartState.extMap = null; };
+  if (!centerDate || state.tf === '1d') { clear(); return; }
+  chartState.extReqDate = centerDate;                 // race guard：換日後舊回應丟棄
+  let res = null;
+  try { res = await fetchJSON(`/api/extension?date=${encodeURIComponent(centerDate)}`); } catch (_) { /* noop */ }
+  if (chartState.extReqDate !== centerDate) return;   // 已換日
+  const bars = (res && res.bars) || [];
+  chartState.extLong.setData(bars.map((b) => ({ time: b.time, value: b.ext_long })));
+  chartState.extShort.setData(bars.map((b) => ({ time: b.time, value: -b.ext_short })));   // 翻轉顯示
+  chartState.extMap = bars.length ? new Map(bars.map((b) => [b.time, b])) : null;
+  updateLegend(null);
 }
 
 // 將視窗置中到某 time（epoch 或 'YYYY-MM-DD'）；找不到就顯示尾段。
@@ -1540,7 +1594,10 @@ function renderSidebar() {
   });
 }
 
-// 右側欄：每日統計（20日平均振幅 / 同星期振幅 / 今日日盤高低 / 夜盤波動 / 加權成交金額 / 前一日 TWNVIX / 關卡價）。切換日期時更新。
+// 右側欄：每日統計，三組分頁排列。切換日期時更新。
+//   盤前預判：20日均振幅 / 同星期振幅 / 夜盤波動 / 前一日 TWNVIX
+//   盤中實況：今日日盤高低 / 加權成交金額
+//   關卡操作：關卡價(達到率+觸及提示) / DCI 方向共識(含出場建議)
 async function renderDayStats(date) {
   const el = document.getElementById('rail');
   if (!el) return;
@@ -1562,12 +1619,14 @@ async function renderDayStats(date) {
     + `<div class="kv"><span class="k">日盤</span><span class="v">${r(ar.day)}<span class="n"> n=${ar.n_day ?? 0}</span></span></div>`
     + `<div class="kv"><span class="k">全日盤</span><span class="v">${r(ar.full)}<span class="n"> n=${ar.n_full ?? 0}</span></span></div></div>`;
 
+  const todayRangePct = (t && t.range != null && ar.day)
+    ? `<span class="n"> ${Math.round(t.range / ar.day * 100)}% 20日均</span>` : '';
   const todaySec =
     `<div class="sec"><div class="sec-title">今日 ${dateWeekday(d.date)}（日盤）</div>`
     + (t
       ? `<div class="kv"><span class="k">最高</span><span class="v up">${r(t.high)}</span></div>`
         + `<div class="kv"><span class="k">最低</span><span class="v down">${r(t.low)}</span></div>`
-        + `<div class="kv"><span class="k">振幅</span><span class="v">${r(t.range)}</span></div>`
+        + `<div class="kv"><span class="k">振幅</span><span class="v">${r(t.range)}${todayRangePct}</span></div>`
       : `<div class="kv"><span class="k">—</span><span class="v">無日盤資料</span></div>`)
     + `</div>`;
 
@@ -1680,7 +1739,11 @@ async function renderDayStats(date) {
     dciSec += `</div>`;
   }
 
-  el.innerHTML = avgSec + wdSec + todaySec + nvSec + toSec + vixSec + lvlSec + dciSec;
+  const grp = (title) => `<div class="grp">${title}</div>`;
+  el.innerHTML =
+    grp('盤前預判') + avgSec + wdSec + nvSec + vixSec
+    + grp('盤中實況') + todaySec + toSec
+    + grp('關卡操作') + lvlSec + dciSec;
 }
 
 async function selectItem(i) {
