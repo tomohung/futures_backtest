@@ -151,6 +151,30 @@ class ReversalStrategy(EstimateHLExitMixin, Strategy):
             if a is None or b is None:
                 return None
             return a if a == b else 0
+        if mode in ("dci", "both"):
+            # H110：09:10 DCI（龍頭廣度 thrust）取代 5m120MA。
+            #   DCI_Dir/DCI_Strong 由回測注入，09:10 前與非窗日為 NaN → 退回 base。
+            #   dci  : 強分位信 DCI（可翻向）、否則退回 base。
+            #   both : 強分位需與 base 同向才進（否則 0=skip）、否則退回 base。
+            base_dir = slope(float(self.data.MA5m_120[-1]),
+                             float(self.data.MA5m_120_Prev[-1]))
+            strong = float(self.data.DCI_Strong[-1])
+            ddir = float(self.data.DCI_Dir[-1])
+            if np.isnan(strong) or strong < 0.5 or np.isnan(ddir):
+                return base_dir
+            ddir = 1 if ddir > 0 else -1
+            if mode == "dci":
+                return ddir
+            return base_dir if base_dir == ddir else 0
+        if mode == "dcilong":
+            # H110：只用「強的多方 DCI」override；空方(dci_long<0)已知弱 → 退回 base。
+            base_dir = slope(float(self.data.MA5m_120[-1]),
+                             float(self.data.MA5m_120_Prev[-1]))
+            strong = float(self.data.DCI_Strong[-1])
+            ddir = float(self.data.DCI_Dir[-1])
+            if np.isnan(strong) or strong < 0.5 or np.isnan(ddir):
+                return base_dir
+            return 1 if ddir > 0 else base_dir
         raise ValueError(f"unknown dir_mode: {mode!r}")
 
     def next(self):
