@@ -1435,12 +1435,15 @@ async function loadExtension(centerDate) {
   chartState.extShort.setData(bars.map((b) => ({ time: b.time, value: -b.ext_short })));   // 翻轉顯示
   chartState.extMap = bars.length ? new Map(bars.map((b) => [b.time, b])) : null;
   updateLegend(null);
+  // ext setData 可能把主圖視窗推掉（非同步、在 focusTime 之後才回來）→ 重新對焦修正
+  if (chartState._focusTarget != null) focusTime(chartState._focusTarget);
 }
 
 // 將視窗置中到某 time（epoch 或 'YYYY-MM-DD'）；找不到就顯示尾段。
 function focusTime(target) {
   const bars = chartState.bars;
   if (!bars.length) return;
+  chartState._focusTarget = target;   // 存下供 loadExtension 回來後重新對焦（避免 ext setData 推掉視窗）
   let idx = bars.length - 1;
   if (target != null) {
     let best = Infinity;
@@ -1458,7 +1461,11 @@ function focusTime(target) {
   const maxTo = bars.length - 1 + 3;           // 右側少量 padding
   if (to > maxTo) { from -= (to - maxTo); to = maxTo; }  // 觸右界 → 整段左移，維持視窗大小
   from = Math.max(0, from);
-  chartState.chart.timeScale().setVisibleLogicalRange({ from, to });
+  // 剛 setData 那一幀套視窗範圍常無效（lightweight-charts 坑→「點第二次才切到正確日期」）；
+  // 同步套一次 + 下一幀補套一次，確保新資料就緒後生效。
+  const ts = chartState.chart.timeScale();
+  ts.setVisibleLogicalRange({ from, to });
+  requestAnimationFrame(() => ts.setVisibleLogicalRange({ from, to }));
 }
 
 function setTitle() {
