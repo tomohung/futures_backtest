@@ -2,14 +2,14 @@
 
 與 legacy DCI（services/dci_daily.py，收盤 W/H/B、±0.2）**不同物**：
 這是 H095/H111/H112 的盤中重設計版——open-anchor、預測「當天往某方向延伸到關卡的程度」。
-  ext_long(t)  = value-weighted tanh((p@≤t − open)/range_i) 於前 50 大型股（動態 20日均成交值）
-                 → 預測上行關卡達成（H111：W-50 @09:30 強→L4 ~46%）
-  ext_short(t) = z(s_thr) + z(s_B)，固定 z 尺度（181 日 @09:30 校準）
+  ext_long(t)  = value-weighted tanh((p@≤t − open)/range_i) 於前 10 大型股（動態 20日均成交值）
+                 → 早盤上行延伸偏向（H111/H114 OOS：W10 窄 universe 解釋力 OOS 零衰退，W50 崩）
+  ext_short(t) = z(s_thr) + z(s_B)，固定 z 尺度（全窗 250 日 @09:30 校準）
                  s_thr=−thrust(W-100 寬權值)、s_B=−(漲−跌家數)/active（全 TWSE）
-                 → 預測下行關卡（H112，較弱、Inconclusive）
+                 → 連續下行壓力表（H112 OOS：連續 corr 穩 +0.31~0.36，但離散關卡地圖已否證）
 
-只對有 stock_min 的日子（2025-06~2026-02）有值；其餘回 None。
-強門檻參考線：ext_long ≥ +0.10、ext_short(z-sum) ≥ +1.2（看盤用）。
+只對有 stock_min 的日子（2025-06~2026-06）有值；其餘回 None。
+強門檻參考線：ext_long ≥ +0.12、ext_short(z-sum) ≥ +1.33（全窗 top~20%，看盤用）。
 """
 from __future__ import annotations
 
@@ -21,12 +21,12 @@ import pandas as pd
 
 from src.chart_ui import paths
 
-# 固定 z 尺度（H112 short_reach_panel @09:30）
-_THR_MU, _THR_SD = 0.02058, 0.14655
-_B_MU, _B_SD = -0.05156, 0.38352
+# 固定 z 尺度（H112 short_reach_panel @09:30，全窗 250 日 2025-06~2026-06 重校）
+_THR_MU, _THR_SD = 0.01590, 0.15487
+_B_MU, _B_SD = -0.04558, 0.39559
 
-STRONG_LONG = 0.10        # ext_long 強門檻（H111 top~20%）
-STRONG_SHORT = 1.2        # ext_short(z-sum) 強門檻（H112 top~20%）
+STRONG_LONG = 0.16        # ext_long(W10) 強門檻（全窗 @09:30 top~20%；W10 OOS 解釋力零衰退，優於 W50）
+STRONG_SHORT = 1.33       # ext_short(z-sum) 強門檻（全窗 top~20%；OOS：連續壓力表，離散關卡地圖已否證 H112）
 
 
 def _features(conn, sel: date) -> pd.DataFrame | None:
@@ -79,7 +79,7 @@ def compute_extension_series(conn, sel: date) -> dict | None:
         m = np.tanh((P_thr - opn[None, :]) / rng[None, :])      # [T,N]，rng 無效→nan
 
     order = np.argsort(-np.nan_to_num(tval, nan=-1.0))
-    w50, w100 = order[:50], order[:100]
+    w10, w100 = order[:10], order[:100]   # ext_long 用 W10（OOS：窄勝寬，W50 解釋力 OOS 崩）；ext_short 家數仍需 W100 廣尾
 
     def wthrust(idx):
         mi = m[:, idx]; wi = tval[idx]
@@ -88,7 +88,7 @@ def compute_extension_series(conn, sel: date) -> dict | None:
         den = np.where(ok, wi[None, :], 0.0).sum(1)
         return np.divide(num, den, out=np.zeros_like(num), where=den > 0)
 
-    ext_long = wthrust(w50)
+    ext_long = wthrust(w10)
     s_thr = -wthrust(w100)
     # 家數：只算「真的成交過」的股票（P_real 非 NaN），未成交不投票
     traded = np.isfinite(P_real) & np.isfinite(prev)[None, :]
