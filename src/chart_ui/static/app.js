@@ -1602,7 +1602,7 @@ function renderSidebar() {
 }
 
 // 右側欄：每日統計，三組分頁排列。切換日期時更新。
-//   盤前預判：20日均振幅 / 同星期振幅 / 夜盤波動 / 前一日 TWNVIX
+//   盤前預判：20日均振幅 / 同星期振幅 / 夜盤波動 / 前一日 TWNVIX(+regime 升壓降壓 + ladder reach 期望/動作,H117)
 //   盤中實況：今日日盤高低 / 加權成交金額
 //   關卡操作：關卡價(達到率+觸及提示) / DCI 方向共識(含出場建議)
 async function renderDayStats(date) {
@@ -1672,12 +1672,25 @@ async function renderDayStats(date) {
       : `<div class="kv"><span class="k">—</span><span class="v">無資料</span></div>`)
     + `</div>`;
 
-  const vixSec =
-    `<div class="sec"><div class="sec-title">前一日 TWNVIX</div>`
-    + (pv
-      ? `<div class="kv"><span class="k">${pv.date}</span><span class="v">${pv.vix.toFixed(2)}</span></div>`
-      : `<div class="kv"><span class="k">—</span><span class="v">—</span></div>`)
-    + `</div>`;
+  const vixSec = (() => {
+    if (!pv) return `<div class="sec"><div class="sec-title">前一日 TWNVIX</div><div class="kv"><span class="k">—</span><span class="v">—</span></div></div>`;
+    const pc = (x) => Math.round(x * 100) + '%';
+    let h = `<div class="sec"><div class="sec-title">前一日 TWNVIX（盤前 regime）</div>`;
+    h += `<div class="kv"><span class="k">${pv.date}</span><span class="v">${pv.vix.toFixed(2)}`
+      + (pv.ma20 != null ? `<span class="n"> MA20 ${pv.ma20}</span>` : '') + `</span></div>`;
+    if (pv.regime) {
+      h += `<div class="kv"><span class="k">regime</span><span class="v"><b>${pv.regime}</b>`
+        + `<span class="n"> ${pv.level || ''}</span></span></div>`;
+    }
+    if (pv.expect) {
+      const e = pv.expect;
+      h += `<div class="kv"><span class="k">深reach 多</span><span class="v">L4 ${pc(e.uL4)} · L5 ${pc(e.uL5)}</span></div>`
+        + `<div class="kv"><span class="k">深reach 空</span><span class="v">L4 ${pc(e.dL4)} · L5 ${pc(e.dL5)}</span></div>`
+        + `<div class="kv"><span class="k n">全體基準</span><span class="v n">L4~25% · L5~12%</span></div>`;
+    }
+    if (pv.note) h += `<div class="vix-note n">${pv.note}</div>`;
+    return h + `</div>`;
+  })();
 
   const lvlRow = (cls, o) =>
     `<div class="lvl ${cls}${o.today ? ' today' : ''}"><span class="lbl">${o.label}</span><span class="px">${(+o.price).toLocaleString()}</span></div>`;

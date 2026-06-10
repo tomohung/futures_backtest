@@ -137,12 +137,29 @@ def _today_hl(conn, sel: date) -> tuple[float, float] | None:
 
 
 def _prev_vix(conn, sel: date) -> dict | None:
-    row = conn.execute(
-        "SELECT date, vix FROM vixtwn WHERE date < ? ORDER BY date DESC LIMIT 1", [sel]
-    ).fetchone()
-    if not row:
+    """前一交易日 VIX + 因果 regime（VIX vs MA20,盤前可判;H117）+ ladder 達成期望/動作。"""
+    rows = conn.execute(
+        "SELECT date, vix FROM vixtwn WHERE date < ? ORDER BY date DESC LIMIT 20", [sel]
+    ).fetchall()
+    if not rows:
         return None
-    return {"date": str(row[0]), "vix": float(row[1])}
+    d0, v0 = rows[0][0], float(rows[0][1])
+    out = {"date": str(d0), "vix": v0}
+    vals = [float(r[1]) for r in rows]
+    if len(vals) >= 20:
+        ma20 = sum(vals) / len(vals)
+        regime = "升壓" if v0 >= ma20 else "降壓"
+        out["ma20"] = round(ma20, 1)
+        out["regime"] = regime
+        out["level"] = "極高>24" if v0 > 24 else ("高18-24" if v0 >= 18 else "低<18")
+        try:
+            from src.analysis.vix_regime import REACH_EXPECT
+            e = REACH_EXPECT[regime]
+            out["expect"] = {"uL4": e["多L4"], "uL5": e["多L5"], "dL4": e["空L4"], "dL5": e["空L5"]}
+            out["note"] = e["note"]
+        except Exception:
+            pass
+    return out
 
 
 def _night_range(conn, sel: date, prev_day: date | None) -> float | None:
