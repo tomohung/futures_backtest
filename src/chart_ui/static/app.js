@@ -1675,12 +1675,13 @@ async function renderDayStats(date) {
   const vixSec = (() => {
     if (!pv) return `<div class="sec"><div class="sec-title">前一日 TWNVIX</div><div class="kv"><span class="k">—</span><span class="v">—</span></div></div>`;
     const pc = (x) => Math.round(x * 100) + '%';
-    let h = `<div class="sec"><div class="sec-title">前一日 TWNVIX（盤前 regime）</div>`;
-    h += `<div class="kv"><span class="k">${pv.date}</span><span class="v">${pv.vix.toFixed(2)}`
-      + (pv.ma20 != null ? `<span class="n"> MA20 ${pv.ma20}</span>` : '') + `</span></div>`;
+    let h = `<div class="sec"><div class="sec-title">盤前 regime（前一日資料）</div>`;
+    const ex = pv.extreme ? ' 🔥≥35' : '';
+    h += `<div class="kv"><span class="k">${pv.date}</span><span class="v">VIX ${pv.vix.toFixed(1)}`
+      + (pv.ma20 != null ? `<span class="n"> /MA20 ${pv.ma20}</span>` : '') + `<span class="n"> ${pv.level || ''}${ex}</span></span></div>`;
     if (pv.regime) {
-      h += `<div class="kv"><span class="k">regime</span><span class="v"><b>${pv.regime}</b>`
-        + `<span class="n"> ${pv.level || ''}</span></span></div>`;
+      h += `<div class="kv"><span class="k">VIX/已實現</span><span class="v">`
+        + `${pv.vix_dir || '?'} / ${pv.rv_dir || '?'} → <b>${pv.regime}</b></span></div>`;
     }
     if (pv.expect) {
       const e = pv.expect;

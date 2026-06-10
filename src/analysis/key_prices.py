@@ -545,17 +545,18 @@ def print_report(data):
 
     # ── VIX regime（因果：盤前只有昨日 VIX;H117）────────────
     try:
-        from src.analysis.vix_regime import get_regime, REACH_EXPECT
+        from src.analysis.vix_regime import get_regime, REACH_EXPECT, regime_note
         vr = get_regime()
         e = REACH_EXPECT[vr["regime"]]
+        ex = " 🔥VIX≥35" if vr["extreme"] else ""
         print()
-        print(f"### VIX regime（昨日 VIX {vr['date']}，套用今日）")
+        print(f"### ladder regime（昨日資料 {vr['date']}，套用今日;組合 VIX+已實現）")
         print(f"| 項目 | 值 |")
         print(f"|------|------|")
-        print(f"| VIX / MA20 | {vr['vix']} / {vr['ma20']}（{vr['level']}、方向{vr['dir']}） |")
-        print(f"| regime | **{vr['regime']}** |")
+        print(f"| VIX / MA20 | {vr['vix']} / {vr['ma20']}（{vr['level']}{ex}） |")
+        print(f"| 方向 | VIX {vr['vix_dir']} / 已實現 {vr['rv_dir']} → **{vr['regime']}** |")
         print(f"| 深 reach 期望 | 多 L4≈{e['多L4']:.0%}/L5≈{e['多L5']:.0%}、空 L4≈{e['空L4']:.0%}/L5≈{e['空L5']:.0%}（全體~25%/12%） |")
-        print(f"| 動作 | {e['note']} |")
+        print(f"| 動作 | {regime_note(vr['regime'], vr['level'], vr['extreme'])} |")
     except Exception:
         pass
 
