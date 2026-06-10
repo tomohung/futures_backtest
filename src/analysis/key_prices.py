@@ -543,6 +543,41 @@ def print_report(data):
         op = "≥" if nvf["pass"] else "<"
         print(f"| S001/S002 NVF (H075)      | {binary}  夜盤 {nr}pt / EMA20 {ema}pt = {norm:.2f} {op} {thr:.2f} |")
 
+    # ── VIX regime（因果：盤前只有昨日 VIX;H117）────────────
+    try:
+        from src.analysis.vix_regime import get_regime, REACH_EXPECT
+        vr = get_regime()
+        e = REACH_EXPECT[vr["regime"]]
+        print()
+        print(f"### VIX regime（昨日 VIX {vr['date']}，套用今日）")
+        print(f"| 項目 | 值 |")
+        print(f"|------|------|")
+        print(f"| VIX / MA20 | {vr['vix']} / {vr['ma20']}（{vr['level']}、方向{vr['dir']}） |")
+        print(f"| regime | **{vr['regime']}** |")
+        print(f"| 深 reach 期望 | 多 L4≈{e['多L4']:.0%}/L5≈{e['多L5']:.0%}、空 L4≈{e['空L4']:.0%}/L5≈{e['空L5']:.0%} |")
+        print(f"| 操作含義 | {e['note']} |")
+    except Exception:
+        pass
+
+    # ── H103 跳空下方遠做多（觀察，H103 Inconclusive）───────
+    try:
+        from src.analysis.gapdown_revert_alert import compute_gapdown_revert_alert
+        a = compute_gapdown_revert_alert()
+        if a is not None:
+            status = "🔴 預判觸發" if a["triggered"] else "⚪ 未觸發"
+            print()
+            print(f"### H103 跳空下方遠做多（觀察，非訊號）")
+            print(f"| 項目 | 值 |")
+            print(f"|------|------|")
+            print(f"| 觸發價 X | {a['trigger']:.0f}（min成本 {a['cost']} − 1.0×ema20 {a['ema20']:.0f}） |")
+            print(f"| 夜收預判開盤 | {n(a['ref_open'])} → {status} |")
+            if a["triggered"]:
+                print(f"| 進/目標/停損 | ≈{a['ref_open']} / {a['target']:.0f} / {a['stop']:.0f}（R:R 1.4） |")
+            if a["night_ref"] is not None:
+                print(f"| T4 參考(夜05:00收) | {n(a['night_ref'])}（開盤站上=較強變體） |")
+    except Exception:
+        pass
+
     # Weekday 漲跌統計
     wd_stats = d.get("weekday_stats")
     if wd_stats:

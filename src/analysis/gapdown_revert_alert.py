@@ -12,7 +12,8 @@ H103（Inconclusive，傾向正面）：開盤跌破昨/前日 VWAP 成本、且
 （隔夜賣壓已回升）時較強——回測該子集 OOS PF 3.62 vs 開盤仍在夜盤收下方 0.81。
 盤前無真實開盤無法預判，故把夜盤 05:00 收當「待確認參考線」印出，08:45 後人工對照。
 
-使用：uv run python src/analysis/h103_alert.py
+使用：uv run python src/analysis/gapdown_revert_alert.py
+（檔名前身 h103_alert.py;H103 = 跳空下方遠做多假設,research/active/H103-gapdown-cost-revert/）
 """
 import duckdb
 import pandas as pd
@@ -25,7 +26,7 @@ CLEAR_THRESH = 1.0   # up_clear_norm 門檻（≥1 個日均振幅）
 TARGET_K, STOP_K = 0.7, 0.5
 
 
-def compute_h103_alert() -> dict | None:
+def compute_gapdown_revert_alert() -> dict | None:
     """回傳盤前提醒所需數據；資料不足回 None。"""
     with duckdb.connect(str(DB_PATH), read_only=True) as conn:
         last_day = conn.execute("""
@@ -94,9 +95,9 @@ def compute_h103_alert() -> dict | None:
 
 
 def main():
-    a = compute_h103_alert()
+    a = compute_gapdown_revert_alert()
     print("=" * 70)
-    print("[H103 跳空下方遠做多] 盤前提醒（觀察用・H103 Inconclusive・前推/覆盤）")
+    print("[跳空下方遠做多 / H103] 盤前提醒（觀察用・H103 Inconclusive・前推/覆盤）")
     print("=" * 70)
     if a is None:
         print("  資料不足，略過。")
