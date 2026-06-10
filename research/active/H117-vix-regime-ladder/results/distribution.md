@@ -36,14 +36,29 @@
 - **符合**：深 reach ~2× regime 差異成立且因果守住。
 - **修正**：原疊圖看到的「升偏空/降偏多」**經因果檢定為假象**,排除——只保留 magnitude。
 
-## Gate Decision（待裁決）
-- 樣本 N=1296、多 regime、因果驗證 → 充足且穩。
-- magnitude 方向（升壓深 reach ~2×）因果守住 → 支持進 Phase 2（regime-conditioned 出場 EV 測試）。
-- 待補（可進 Phase 2 前或並行）：regime 對**續攻轉換 P(L4|L3)/P(L5|L4)** 的影響、升壓深 reach 的**路徑回吐品質**（2× 頻率是否轉得成可實現 EV）。
+### 4. Phase 1-B：續攻轉換 + 路徑回吐品質（`h117_transition_path.py`,因果）
+**regime 也調節「碰到後續攻」機率,尤其深尾：**
+| regime | P(L4\|L3) | P(L5\|L4) |
+|---|---|---|
+| 升壓 | 51% | **52%** |
+| 降壓 | 44% | **36%** |
+- L4→L5：升壓 52% vs 降壓 36%（**+16pp**）→ 到 L4 後升壓抱尾有利、降壓該收（比 checklist「L4→L5 一律擲銅板」更精細）。
 
-- [ ] 繼續 Phase 2（regime-conditioned 出場 vs 固定 vs SatZone）
-- [ ] 先補 Phase 1 轉換/路徑再決定
-- [ ] Archive
+**路徑回吐（碰 L3 後最大逆行 MAE/EMA20,越近 0 越好抱）：**
+| regime | 續攻日 中位/平均 | 失敗日 中位 |
+|---|---|---|
+| 升壓 | −0.12 / −0.20 | −0.43 |
+| 降壓 | −0.12 / −0.14 | −0.34 |
+- **續攻日 median 回吐兩 regime 相同（−0.12）→ 升壓 2× 深 reach 沒被 whipsaw 吃掉、一樣好抱**;
+  升壓僅平均回吐略深（−0.20,少數深洗仍續攻）、失敗日回吐較大（−0.43 vs −0.34,停損管理）。
+- → **2× 頻率 + L4→L5 高續攻 轉得成可實現長尾 EV**（非假象）。
+
+## Gate Decision
+**[x] 繼續 Phase 2（Phase 1-B 已補完,支持規則化）**
+- magnitude 2× + L4→L5 續攻 +16pp + 路徑可實現（續攻 median 回吐相同）→ 三項齊備,因果守住。
+- Phase 2：regime-conditioned 出場（升壓抱 L4/L5、降壓 L3 早收）vs 固定出場 vs SatZone-only;IS/OOS（跨 regime）損益%/Sharpe/連敗/maxDD;控絕對波動水位看 VIX 增量。
+
+- [x] 繼續 Phase 2　[ ] 先補 Phase 1　[ ] Archive
 
 ## Derived Hypotheses
 - **方法論（記憶）**：VIX 是同期 vol 量測 → 同日 VIX→reach 是 look-ahead,必 lag;magnitude 因果真、direction 假象。
