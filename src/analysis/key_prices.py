@@ -554,8 +554,8 @@ def print_report(data):
         print(f"|------|------|")
         print(f"| VIX / MA20 | {vr['vix']} / {vr['ma20']}（{vr['level']}、方向{vr['dir']}） |")
         print(f"| regime | **{vr['regime']}** |")
-        print(f"| 深 reach 期望 | 多 L4≈{e['多L4']:.0%}/L5≈{e['多L5']:.0%}、空 L4≈{e['空L4']:.0%}/L5≈{e['空L5']:.0%} |")
-        print(f"| 操作含義 | {e['note']} |")
+        print(f"| 深 reach 期望 | 多 L4≈{e['多L4']:.0%}/L5≈{e['多L5']:.0%}、空 L4≈{e['空L4']:.0%}/L5≈{e['空L5']:.0%}（全體~25%/12%） |")
+        print(f"| 動作 | {e['note']} |")
     except Exception:
         pass
 
