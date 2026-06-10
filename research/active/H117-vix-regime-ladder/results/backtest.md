@@ -54,12 +54,17 @@ IS(2021-24)/OOS(2025-26,跨升降壓)。regime-conditioned target 切換 IS≈�
 - 半半 blend：對 target 選擇最穩健（兩 regime Sharpe 最佳/並列、maxDD 最小）。
 - stop/手續費未細掃;edge 絕對值薄(±0.01-0.02%/筆),扣成本多蒸發 → 非獨立 P&L edge。
 
-## Verdict（待裁決）
-**[x] Inconclusive — regime 作「期望 + 回撤紀律 context」成立,作「機械 target 切換規則」否決。**
-- ❌ regime-conditioned target 切換 OOS 不贏固定 L5（Invalidation #1）。
-- ✅ regime 真貢獻(描述性,因果穩):(a) 觸及率~2×(期望校準)、(b) **回撤反直覺(升壓控、降壓放)**、(c) 多空深尾不對稱(空肥,降壓尤甚)。
-- 落地：已寫入 morning briefing VIX regime 區塊(含回撤動作提醒);checklist 半半 blend 獲驗證,regime 微調 trim 比例(升壓多 trim)。
-- 不晉升 live 機械策略;作為看盤 context + checklist trim 比例的 regime 微調。
+## Verdict（2026-06-10）
+**[x] Confirmed（描述性：VIX regime 為 ladder 期望/回撤的因果、多 regime 驗證 context）
+　＋ 機械 target 切換規則否決。**（與 H114 同構：描述性成立、P&L 機械規則不成立）
+
+評分對象說明：假設核心是「VIX regime 調節 ladder 期望」這個描述性結構,**不是**單看 Phase 2 的機械 P&L 規則。
+- ✅✅ **描述性 Confirmed（因果、多 regime、N=1296、已上線）**：
+  (a) 深 reach 升壓 ~2× 降壓（觸及率期望校準,EMA20-relative 因果守住）;
+  (b) **回撤反直覺**——抱尾風險在升壓(maxDD −9)非降壓(−3.6),該控回撤的是升壓、降壓反可放手;
+  (c) 多空深尾不對稱（空 L4→L5 肥於多,降壓尤甚 多36%/空52%）。
+- ❌ **機械規則否決**：regime-conditioned target 切換 OOS 不贏固定 L5（Invalidation #1）;半半 blend 才是兩 regime 最穩(驗證 checklist)。
+- **定位**：Confirmed 為**看盤 context / 期望 + 回撤紀律工具**（已入 morning briefing VIX regime 區塊）;**不進 strategies/live/**（非機械策略,如同 H114）。checklist 的 regime 用法 = 微調 trim 比例(升壓多 trim、降壓少)。
 
 ## Derived Hypotheses
 - **觀察(memory)**：抱尾回撤風險在升壓非降壓(反直覺)→ 出場收斂該在高波,不是低波。

@@ -29,5 +29,5 @@
 - [x] 出場風格×regime 風險拆解：★反直覺——抱尾回撤兇在升壓(−9.08)非降壓(−3.61);blend 兩 regime 最穩。
 - [x] 三桶 EV 拆解：抱尾兩 regime 微幅最佳(賠付不對稱),差別在變異非 EV。
 - [x] 落地：morning briefing VIX regime 區塊已含回撤動作提醒;checklist 半半 blend 獲驗證。
-- [x] Verdict：Inconclusive — regime 作 context(期望+回撤紀律)成立、作機械 target 切換否決。
+- [x] Verdict：Confirmed（描述性 regime context,因果多 regime 驗證,已上線）+ 機械 target 切換否決（同 H114 結構）。
 </content>
