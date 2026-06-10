@@ -27,7 +27,7 @@ DB = os.environ.get(
     "STOCK_MIN_DB",
     str(Path(__file__).resolve().parents[3] / "data" / "futures.duckdb"),
 )
-START, END = date(2025, 6, 1), date(2026, 2, 28)
+START, END = date(2025, 6, 1), date(2026, 6, 30)    # 全資料窗（含 OOS；OOS 複驗 2026-06）
 WARMUP = date(2025, 3, 1)          # EMA20 / rolling20 暖機
 SNAPS = ["09:15:00", "09:30:00"]
 LVL = {"L4": 0.977}                # 聚焦 L4（reach 決策關鍵階）

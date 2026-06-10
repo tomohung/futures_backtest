@@ -19,7 +19,7 @@ from src.chart_ui.list_writer import write_chart_list
 
 HERE = Path(__file__).parent
 DB = str(HERE.parents[2] / "data" / "futures.duckdb")
-LO, HI = date(2025, 6, 2), date(2026, 2, 26)
+LO, HI = date(2025, 6, 2), date(2026, 6, 30)     # 全資料窗（含 OOS）
 LEVELS = {"L4": 0.977, "L5": 1.225}
 T0930, T1030, T1130 = time(9, 30), time(10, 30), time(11, 30)
 LABELS = {"0930": "09:30前", "1030": "10:30前", "1130": "11:30前"}
@@ -66,7 +66,7 @@ def bucket(tm):
 def main():
     fr = reach_times()
     pl = pd.read_csv(HERE / "results" / "reach_map_panel.csv"); pl["d"] = pd.to_datetime(pl.iloc[:, 0]).dt.date
-    extlong = pl.set_index("d")["W50_09:30"]
+    extlong = pl.set_index("d")["W10_09:30"]   # 對齊 chart-ui 副圖（ext_long 已改 W10）
     ps = pd.read_csv(HERE.parents[0] / "H112-dci-short-reach-map" / "results" / "short_reach_panel.csv")
     ps["d"] = pd.to_datetime(ps.iloc[:, 0]).dt.date
     extshort = ps.set_index("d")["comp_09:30"]

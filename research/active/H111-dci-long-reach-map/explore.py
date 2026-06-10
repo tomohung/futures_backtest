@@ -32,11 +32,12 @@ sys.path.insert(0, str(H095))
 from dci_universe_sweep import stock_features, wmean_tanh   # noqa: E402
 
 DB = os.environ.get("STOCK_MIN_DB", str(HERE.parents[2] / "data" / "futures.duckdb"))
-LO, HI = date(2025, 6, 1), date(2026, 2, 28)
+LO, HI = date(2025, 6, 1), date(2026, 6, 30)     # 全資料窗（含 OOS）
+IS_END = date(2026, 2, 26)                        # IS 末日；OOS = 2026-03-01 起（OOS 複驗用）
 CKPTS = ["09:01:00", "09:05:00", "09:10:00", "09:15:00", "09:20:00", "09:25:00", "09:30:00"]
 KEYS = [s[:5] for s in CKPTS]
 LVL = {"L1": 0.385, "L2": 0.497, "L3": 0.711, "L4": 0.977, "L5": 1.225}
-UNIS = ["W20", "W50", "H20"]
+UNIS = ["W10", "W20", "W50", "H20"]   # W10 為 OOS 複驗後採用的 ext_long universe
 
 
 def snap_prices(c):
@@ -82,10 +83,11 @@ def build(c):
         if dd not in tx.index or not (tx.loc[dd, "ema20"] > 0):
             continue
         w = gd.dropna(subset=["trail_val"])
-        w20 = w.nlargest(20, "trail_val"); w50 = w.nlargest(50, "trail_val")
+        w10 = w.nlargest(10, "trail_val"); w20 = w.nlargest(20, "trail_val"); w50 = w.nlargest(50, "trail_val")
         h20 = gd.dropna(subset=["prev_value"]).nlargest(20, "prev_value")
         rec = {"d": dd, "ema20": float(tx.loc[dd, "ema20"]), "up_full": float(tx.loc[dd, "up_full"])}
         for k in KEYS:
+            rec[f"W10_{k}"] = wmean_tanh(w10, f"p_{k}", "trail_val")
             rec[f"W20_{k}"] = wmean_tanh(w20, f"p_{k}", "trail_val")
             rec[f"W50_{k}"] = wmean_tanh(w50, f"p_{k}", "trail_val")
             rec[f"H20_{k}"] = wmean_tanh(h20, f"p_{k}", "prev_value")
@@ -184,7 +186,8 @@ def main():
     for k in KEYS:
         L.append(f"{k:>6} | " + "".join(f"{np.corrcoef(df[f'{u}_{k}'], df['exc'])[0,1]:>+9.3f}" for u in UNIS))
 
-    L.append("\n  ⚠ 上市-only、181 日、偏多頭、無 OOS → 描述性，附 N。")
+    nis = sum(1 for d in df.index if d <= IS_END); noos = N - nis
+    L.append(f"\n  ⚠ 上市-only、全窗 N={N}（IS≤{IS_END}:{nis}日 / OOS≥2026-03:{noos}日）→ 描述性，附 N。OOS 複驗見 backtest.py。")
     txt = "\n".join(L)
     print(txt)
     out = HERE / "results"; out.mkdir(exist_ok=True)

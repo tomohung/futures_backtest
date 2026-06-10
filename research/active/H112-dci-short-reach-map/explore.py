@@ -26,7 +26,8 @@ sys.path.insert(0, str(H095))
 from dci_universe_sweep import stock_features, wmean_tanh   # noqa: E402
 
 DB = os.environ.get("STOCK_MIN_DB", str(HERE.parents[2] / "data" / "futures.duckdb"))
-LO, HI = date(2025, 6, 1), date(2026, 2, 28)
+LO, HI = date(2025, 6, 1), date(2026, 6, 30)     # 全資料窗（含 OOS）
+IS_END = date(2026, 2, 26)                        # OOS = 2026-03-01 起（空方複驗重點：OOS 下殺日）
 CKPTS = ["09:01:00", "09:05:00", "09:10:00", "09:15:00", "09:20:00", "09:25:00", "09:30:00"]
 KEYS = [s[:5] for s in CKPTS]
 LVL = {"L1": 0.385, "L2": 0.497, "L3": 0.711, "L4": 0.977, "L5": 1.225}
@@ -160,7 +161,29 @@ def main():
         q5 = fwd[q == 4].mean() if (q == 4).sum() else np.nan
         L.append(f"  {name}: 全日={full:.0%} fwd={base:.0%}(N達fwd={int(fwd.sum())})  Q5={q5:.0%} lift={q5-base:+.0%}")
 
-    L.append("\n  ⚠ 上市-only、181 日、輕微多頭偏（下行深關卡稀）→ 描述性、樣本薄，更需 OOS。附 N。")
+    # E) OOS 複驗：IS vs OOS 的下殺日量 + 段內離散下行關卡地圖是否乾淨
+    L.append("\n" + "═" * 92)
+    L.append("E) OOS 複驗（IS≤2026-02-26 vs OOS≥2026-03）：下殺日量 + 段內 comp Q5 forward lift")
+    is_mask = np.array([d <= IS_END for d in df.index])
+    for seg_lab, seg in (("IS", is_mask), ("OOS", ~is_mask), ("全窗", np.ones(len(df), bool))):
+        g = df[seg]
+        n = len(g)
+        # 下行 forward L4 達成日量（核心稀缺資源）
+        cnt = {nm: int(reach_fwd(g, "09:30", nm).sum()) for nm in ("L3", "L4", "L5")}
+        L.append(f"\n  [{seg_lab}] N={n}　forward 達成日量 @09:30: "
+                 + " ".join(f"{nm}={cnt[nm]}" for nm in ("L3", "L4", "L5")))
+        # 段內 quintile（rank-based，不受 z 尺度影響）→ L4 Q5 lift + 單調
+        col = g["comp_09:30"]; q = quintile(col); y = reach_fwd(g, "09:30", "L4"); base = y.mean()
+        rates = [y[q == i].mean() if (q == i).sum() else np.nan for i in range(5)]
+        q5 = rates[4]
+        mono = "↗單調" if all(rates[i] <= rates[i+1] for i in range(4) if not (np.isnan(rates[i]) or np.isnan(rates[i+1]))) else "✗非單調"
+        L.append(f"     L4: base={base:.0%}  Q1-5=[" + " ".join(f"{r:.0%}" for r in rates)
+                 + f"]  Q5−base={q5-base:+.0%}  {mono}")
+        # 連續 corr（段內）
+        r = np.corrcoef(g["comp_09:30"], g["dn_exc"])[0, 1]
+        L.append(f"     連續 corr(comp, dn_exc)@09:30 = {r:+.3f}")
+
+    L.append("\n  ⚠ 上市-only、全窗 250 日、偏多頭。空方複驗重點：OOS 是否多下殺日 → 離散地圖能否轉乾淨。附 N。")
     txt = "\n".join(L)
     print(txt)
     out = HERE / "results"; out.mkdir(exist_ok=True)

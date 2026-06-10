@@ -16,7 +16,8 @@ import pandas as pd
 
 HERE = Path(__file__).parent
 DB = str(HERE.parents[2] / "data" / "futures.duckdb")
-LO, HI = date(2025, 6, 2), date(2026, 2, 26)
+LO, HI = date(2025, 6, 2), date(2026, 6, 30)     # 全資料窗（含 OOS）
+IS_END = date(2026, 2, 26)                        # OOS = 2026-03-01 起
 MARKS = {"0930": time(9, 30), "1000": time(10, 0), "1030": time(10, 30),
          "1100": time(11, 0), "1130": time(11, 30), "1345": time(13, 45)}
 HT_PANEL = HERE / "results" / "reach_map_panel.csv"   # 自足：用 H111 自己的 panel（有 W50_09:30/ema20/up_full）
@@ -55,15 +56,21 @@ def main():
         print(f"{k[:2]+':'+k[2:]+'前':>9}{n:>7}{tp:>6}{tp/n:>6.0%}{tp/nS:>7.0%}"
               f"{f'{n/N:.0%}→{tp/nS:.0%}':>11}")
 
-    # 純 forward（排 gap-and-go：09:30 已到 L4）
+    # 純 forward（排 gap-and-go：09:30 已到 L4）— 全窗 + IS/OOS 分割複驗
     notyet = p["0930"] < L4
+    p_is = p.index <= IS_END
     print(f"\n純 forward（排 09:30 前已到 L4 的 {int((~notyet).sum())} 天 gap-and-go；母體 {int(notyet.sum())}）：")
-    for k, lab in (("1030", "09:30→10:30"), ("1130", "09:30→11:30")):
-        fwd = notyet & (p[k] >= L4)
-        y = fwd[notyet]; s = strong[notyet]
-        tp = int((y & s).sum()); ny = int(y.sum())
-        print(f"  {lab} 新到L4 {ny} 天｜強抓到 {tp}（召回 {tp/ny:.0%}）｜"
-              f"base={y.mean():.0%}→強={y[s].mean():.0%}(lift {y[s].mean()-y.mean():+.0%})")
+    for seg_lab, seg in (("全窗", np.ones(len(p), bool)), ("IS", p_is), ("OOS", ~p_is)):
+        ny_mask = notyet & seg
+        for k, lab in (("1130", "09:30→11:30"),):
+            fwd = ny_mask & (p[k] >= L4)
+            y = fwd[ny_mask]; s = strong[ny_mask]
+            ny = int(y.sum())
+            if ny == 0:
+                print(f"  [{seg_lab}] {lab} 新到L4 0 天（無樣本）"); continue
+            tp = int((y & s).sum())
+            print(f"  [{seg_lab}] {lab} 新到L4 {ny} 天｜強抓 {tp}（召回 {tp/ny:.0%}）｜"
+                  f"base={y.mean():.0%}→強={y[s].mean():.0%}(lift {y[s].mean()-y.mean():+.0%}, N強={int(s.sum())})")
 
 
 if __name__ == "__main__":

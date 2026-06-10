@@ -1,17 +1,19 @@
-"""H111 Phase 2 — 穩定性 + 可用門檻（strategy-agnostic，非損益回測）。
+"""H111 Phase 2 — 穩定性 + 可用門檻 + 正式 OOS 複驗（strategy-agnostic，非損益回測）。
 
-讀 results/reach_map_panel.csv（explore.py 產出）。聚焦 W-50 @09:30、目標 L4（Phase 1 甜蜜點），
+讀 results/reach_map_panel.csv（explore.py 全窗產出）。聚焦 W-50 @09:30、目標 L4（Phase 1 甜蜜點），
 W-20 @09:15 為對照。
-  1. 絕對門檻掃描：P(forward 達 L4 | dci_long ≥ x) vs base，找最大且穩定的 lift（N 足夠）。
-  2. 穩定性：用全窗定的門檻，拆 2025-H2 vs 2026、月別，看達成率 vs base 是否一致（附 N，誠實標小樣本）。
-  3. OOS：無法做（DCI 單窗），標待資料擴充。
-  4. 下游接口：輸出「強 dci_long → forward 達 L4 機率」條件，供順勢族策略引用。
+  0. **正式 OOS 複驗**：門檻在 IS(≤2026-02-26, 181日) 校準凍結 → 套 OOS(≥2026-03-01, 69日) 評估。
+     誠實 OOS = 參數只看 IS、凍結、再評 OOS；比較 IS lift vs OOS lift / base / 召回。
+  1. 絕對門檻掃描（全窗）：P(forward 達 L4 | dci_long ≥ x) vs base（門檻穩健性參考）。
+  2. 穩定性：用全窗定的門檻，拆 2025-H2 vs 2026、月別（附 N，誠實標小樣本）。
+  3. 下游接口：輸出「強 dci_long → forward 達 L4 機率」條件，供順勢族策略引用。
 
-限制：181 日、in-sample、偏多頭、上市-only、無 OOS。所有數字附 N。
+樣本：全窗 250 日（IS 181 + OOS 69），上市-only、偏多頭。所有數字附 N。
 用法：uv run python research/active/H111-dci-long-reach-map/backtest.py
 """
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +22,7 @@ import pandas as pd
 HERE = Path(__file__).parent
 PANEL = HERE / "results" / "reach_map_panel.csv"
 LVL = {"L3": 0.711, "L4": 0.977, "L5": 1.225}
+IS_END = date(2026, 2, 26)        # IS 末日；OOS = 2026-03-01 起
 
 
 def load():
@@ -34,15 +37,39 @@ def reach_fwd(df, k, name):
     return ((df[f"upsw_{k}"] < lvl) & (df["up_full"] >= lvl)).astype(int)
 
 
+def oos_verify(df, L):
+    """門檻只用 IS 校準凍結 → 套 OOS 評估。比較 IS/OOS lift。"""
+    is_m = df["d"] <= IS_END
+    L.append("\n" + "=" * 90)
+    L.append("⓪ 正式 OOS 複驗（門檻在 IS 校準凍結 → 套 OOS 評估）")
+    L.append(f"   IS={int(is_m.sum())}日(≤{IS_END}) / OOS={int((~is_m).sum())}日(≥2026-03-01)")
+    for U, K in [("W50", "09:30"), ("W20", "09:15")]:
+        col = df[f"{U}_{K}"]; y = reach_fwd(df, K, "L4")
+        L.append("\n" + "─" * 90)
+        L.append(f"【{U} @{K}】目標 forward-L4")
+        for qx in [0.70, 0.80]:
+            x = col[is_m].quantile(qx)          # 門檻只看 IS
+            for lab, mask in [("IS", is_m), ("OOS", ~is_m)]:
+                sub = mask & (col >= x)
+                base = y[mask].mean(); rate = y[sub].mean() if sub.sum() else np.nan
+                L.append(f"   q{qx:.2f}→x≥{x:+.3f}  {lab:<3} base={base:.0%}(N={int(mask.sum())})  "
+                         f"門檻內={rate:.0%}(N={int(sub.sum())})  lift={rate-base:+.0%}")
+    return L
+
+
 def main():
     df = load()
     N = len(df)
     PRIM_U, PRIM_K = "W50", "09:30"          # 主：W-50 @09:30
     ALT_U, ALT_K = "W20", "09:15"            # 對照：W-20 @09:15
     L = ["=" * 90,
-         f"H111 Phase 2 — 穩定性 + 可用門檻  N={N}（{df['d'].min()}~{df['d'].max()}）",
-         "strategy-agnostic；主 W-50@09:30 目標 L4；上市-only、in-sample、無 OOS"]
+         f"H111 Phase 2 — 穩定性 + 可用門檻 + OOS 複驗  N={N}（{df['d'].min()}~{df['d'].max()}）",
+         "strategy-agnostic；主 W-50@09:30 目標 L4；上市-only、IS 181 + OOS 69"]
 
+    oos_verify(df, L)
+
+    L.append("\n" + "=" * 90)
+    L.append("① 全窗門檻穩健性 + 穩定性（參考；非 OOS）")
     for U, K in [(PRIM_U, PRIM_K), (ALT_U, ALT_K)]:
         col = df[f"{U}_{K}"]; y = reach_fwd(df, K, "L4"); base = y.mean()
         L.append("\n" + "─" * 90)
@@ -99,7 +126,8 @@ def main():
     L.append(f"   → 當日 forward 達 L4 機率 ≈ {y[m].mean():.0%}（base {y.mean():.0%}，N={int(m.sum())}/{N}）")
     L.append("   注意：純條件機率，非損益；接策略需另立假設驗證 P&L（[[project_dci_is_extension_signal]] 順勢族）。")
 
-    L.append("\n  ⚠ 181 日、in-sample、偏多頭、上市-only、無 OOS（2026 段樣本尤小）→ 描述性，待資料擴充 OOS。")
+    L.append("\n  ⚠ 全窗 250 日（IS 181 + OOS 69）、偏多頭、上市-only。OOS 複驗見 ⓪ 段。")
+    L.append("    結論：W50@09:30 OOS lift 崩(+19%→+2%)；W20@09:15 OOS 守住(+11%)、全窗分段亦穩(+21/+18%)。")
     txt = "\n".join(L)
     print(txt)
     (HERE / "results" / "backtest_raw.txt").write_text(txt + "\n")
