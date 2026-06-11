@@ -726,6 +726,15 @@ function initChart() {
     lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '0' });
   chartState.extLong.createPriceLine({ price: EXT_STRONG_LONG, color: COLORS.up, lineWidth: 1,
     lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '強' });
+  // 盤前『延伸力·多(0050期)』NYF 版：同 pane、共用 extlong 價軸疊線（08:45 起、領先現貨
+  // 15 分），與 W10 現貨版對照。琥珀虛線以區分。
+  chartState.extLongFut = chart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: '#e0a020', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed,
+      priceScaleId: 'extlong', priceLineVisible: false, lastValueVisible: false,
+      priceFormat: { type: 'price', precision: 2, minMove: 0.01 } },
+    3,
+  );
   chart.priceScale('extlong').applyOptions({ scaleMargins: { top: 0.2, bottom: 0.1 } });
   chartState.extShort = chart.addSeries(
     LightweightCharts.LineSeries,
@@ -1076,8 +1085,13 @@ function updateLegend(param) {
     const v = ext ? ext.ext_long : null;
     const strong = v != null && v >= EXT_STRONG_LONG;
     const cls = v == null ? 'muted' : (v > 0 ? 'up' : 'down');
+    const fv = (chartState.extFutMap && chartState.extFutMap.get(b.time));
+    const fvNum = (fv == null ? null : fv);
+    const fcls = fvNum == null ? 'muted' : (fvNum > 0 ? 'up' : 'down');
     extL.innerHTML = `<span style="color:${COLORS.up}">延伸力·多(W10)</span> `
-      + `<span class="${cls}">${v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2)}${strong ? ' 強' : ''}</span>`;
+      + `<span class="${cls}">${v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2)}${strong ? ' 強' : ''}</span>`
+      + `　<span style="color:#e0a020">0050期</span> `
+      + `<span class="${fcls}">${fvNum == null ? '—' : (fvNum >= 0 ? '+' : '') + fvNum.toFixed(2)}</span>`;
   }
   if (extS) {
     positionPaneLegend(extS, 4);
@@ -1426,16 +1440,23 @@ async function loadKline(centerEpochToFocus) {
 // 只有有 stock_min 的日子(2025-06~2026-02)有資料；其餘/日線檢視清空。
 async function loadExtension(centerDate) {
   if (!chartState.extLong) return;
-  const clear = () => { chartState.extLong.setData([]); chartState.extShort.setData([]); chartState.extMap = null; };
+  const clear = () => {
+    chartState.extLong.setData([]); chartState.extShort.setData([]);
+    if (chartState.extLongFut) chartState.extLongFut.setData([]);
+    chartState.extMap = null; chartState.extFutMap = null;
+  };
   if (!centerDate || state.tf === '1d') { clear(); return; }
   chartState.extReqDate = centerDate;                 // race guard：換日後舊回應丟棄
   let res = null;
   try { res = await fetchJSON(`/api/extension?date=${encodeURIComponent(centerDate)}`); } catch (_) { /* noop */ }
   if (chartState.extReqDate !== centerDate) return;   // 已換日
   const bars = (res && res.bars) || [];
+  const futBars = (res && res.fut_bars) || [];
   chartState.extLong.setData(bars.map((b) => ({ time: b.time, value: b.ext_long })));
   chartState.extShort.setData(bars.map((b) => ({ time: b.time, value: -b.ext_short })));   // 翻轉顯示
+  if (chartState.extLongFut) chartState.extLongFut.setData(futBars.map((b) => ({ time: b.time, value: b.ext_long })));
   chartState.extMap = bars.length ? new Map(bars.map((b) => [b.time, b])) : null;
+  chartState.extFutMap = futBars.length ? new Map(futBars.map((b) => [b.time, b.ext_long])) : null;
   updateLegend(null);
   // ext setData 可能把主圖視窗推掉（非同步、在 focusTime 之後才回來）→ 重新對焦修正
   if (chartState._focusTarget != null) focusTime(chartState._focusTarget);
