@@ -32,10 +32,17 @@ def _summary(items: list[dict]) -> dict:
 
 
 def write_chart_list(list_id: str, items: list[dict], *, out_dir: Path | None = None,
-                     name: str | None = None, summary: dict | None = None, **meta) -> Path:
-    """寫一份清單。回傳檔案路徑。atomic write。"""
+                     name: str | None = None, summary: dict | None = None,
+                     sort_desc: bool = True, **meta) -> Path:
+    """寫一份清單。回傳檔案路徑。atomic write。
+
+    sort_desc=True（預設）：items 依 `time` 倒序（最新在最上）——chart-ui 清單一律倒序。
+    確需正序的清單才傳 sort_desc=False。
+    """
     out_dir = Path(out_dir) if out_dir else paths.CHART_LISTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
+    if sort_desc:
+        items = sorted(items, key=lambda it: str(it.get("time") or ""), reverse=True)
     payload = {"name": name or list_id, **meta, "items": items}
     payload["summary"] = summary if summary is not None else _summary(items)
     path = out_dir / f"{list_id}.json"
