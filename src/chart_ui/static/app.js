@@ -224,15 +224,17 @@ function applyTouchMarkers() {
   if (touchReqUpdate) touchReqUpdate();
 }
 
-// 在 bars 與 daystats 都就緒、且非回測交易項時，畫覆盤 overlay。
+// 在 bars 與 daystats 都就緒時，畫覆盤 overlay（09:30/10:30/11:30 時間線）。
+// 時間線是當日時間格線、與交易 marker 無關，故所有清單一律畫（含 ORB 等交易清單）；
+// 只有「非交易項」才順手 clearMarkers，交易項的 marker 由 drawTradeMarkers 畫、勿清。
 function maybeDrawReview() {
+  if (state.tf === '1d' || !chartState.candle) return;
+  if (!chartState.bars || !chartState.bars.length) return;
+  if (!window._dayStats) return;
   const it = window._pendingItem;
   const hasTrade = it && (it.side || it.entry != null || it.exit_time != null
     || (it.levels && it.levels.length));
-  if (hasTrade) return;                                  // 交易日交給 drawTradeMarkers
-  if (!chartState.bars || !chartState.bars.length) return;
-  if (!window._dayStats) return;
-  clearMarkers();
+  if (!hasTrade) clearMarkers();
   drawReviewOverlay(window._dayStats);
 }
 
@@ -1074,7 +1076,7 @@ function updateLegend(param) {
     const v = ext ? ext.ext_long : null;
     const strong = v != null && v >= EXT_STRONG_LONG;
     const cls = v == null ? 'muted' : (v > 0 ? 'up' : 'down');
-    extL.innerHTML = `<span style="color:${COLORS.up}">延伸力·多(W50)</span> `
+    extL.innerHTML = `<span style="color:${COLORS.up}">延伸力·多(W10)</span> `
       + `<span class="${cls}">${v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2)}${strong ? ' 強' : ''}</span>`;
   }
   if (extS) {
