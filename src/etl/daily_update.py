@@ -10,6 +10,7 @@
   Step 1c: parse_stock_market.py — TWSE/TPEX JSON → market_breadth + stock_day
   Step 2:  build_1m.py          — ticks → ohlcv_1m 表
   Step 3:  build_continuous.py  — 換倉 + Panama adj_close
+  Step 3b: build_aux_futures.py — raw zip → aux_futures_1m（NYF=0050期，ext_long 期貨版用）
   Step 4:  validate.py          — 資料驗證（可跳過）
 
 使用 subprocess 呼叫各 step，避免 DuckDB 寫入鎖定衝突。
@@ -194,6 +195,12 @@ def main() -> None:
     if not ok:
         print("\n[ABORT] build_continuous.py 失敗，停止 pipeline。")
         sys.exit(1)
+
+    # Step 3b: build_aux_futures（NYF=0050期，供 ext_long 期貨版；warn-only）
+    # 讀 raw zip 直抽，不依賴 ticks/ohlcv，增量冪等。
+    ok = run_step(ETL_DIR / "build_aux_futures.py")
+    if not ok:
+        print("\n[WARN] build_aux_futures.py 失敗，NYF(0050期) 未更新（ext_long 期貨版會落後）。")
 
     # Step 4: validate (optional)
     if not args.skip_validate:
