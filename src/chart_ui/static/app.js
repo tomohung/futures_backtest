@@ -722,10 +722,6 @@ function initChart() {
       priceFormat: { type: 'price', precision: 2, minMove: 0.01 } },
     3,
   );
-  chartState.extLong.createPriceLine({ price: 0, color: MATURN_ZERO_COLOR, lineWidth: 1,
-    lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '0' });
-  chartState.extLong.createPriceLine({ price: EXT_STRONG_LONG, color: COLORS.up, lineWidth: 1,
-    lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '強' });
   // 盤前『延伸力·多(0050期)』NYF 版：同 pane、共用 extlong 價軸疊線（08:45 起、領先現貨
   // 15 分），與 W10 現貨版對照。琥珀虛線以區分。
   chartState.extLongFut = chart.addSeries(
@@ -749,6 +745,20 @@ function initChart() {
   chartState.extShort.createPriceLine({ price: -EXT_STRONG_SHORT, color: COLORS.down, lineWidth: 1,
     lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '強空' });
   chart.priceScale('extshort').applyOptions({ scaleMargins: { top: 0.2, bottom: 0.1 } });
+  // pane3(多) 的 0 軸/強線改掛在透明、恆有資料的 anchor series 上：W10 現貨缺資料時，
+  // extLong 空 series 不畫 price line，但 anchor 永遠有資料（loadExtension 用當日 session
+  // 時間域填），故 0 軸/強線恆可見。資料齊全時 autoscale 自會擴張、不壓縮真實線。
+  // （pane4 空方維持原樣：線掛在 extShort，無資料就整條空白——這是正常顯示。）
+  chartState.extLongAnchor = chart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: 'rgba(0,0,0,0)', lineWidth: 1, priceScaleId: 'extlong',
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false },
+    3,
+  );
+  chartState.extLongAnchor.createPriceLine({ price: 0, color: MATURN_ZERO_COLOR, lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '0' });
+  chartState.extLongAnchor.createPriceLine({ price: EXT_STRONG_LONG, color: COLORS.up, lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '強' });
   // 副圖高度：主圖放大、量/%B/延伸力副圖縮小（pane 0 主圖佔大宗）。
   try {
     const panes = chart.panes();
@@ -1443,6 +1453,7 @@ async function loadExtension(centerDate) {
   const clear = () => {
     chartState.extLong.setData([]); chartState.extShort.setData([]);
     if (chartState.extLongFut) chartState.extLongFut.setData([]);
+    if (chartState.extLongAnchor) chartState.extLongAnchor.setData([]);
     chartState.extMap = null; chartState.extFutMap = null;
   };
   if (!centerDate || state.tf === '1d') { clear(); return; }
@@ -1457,6 +1468,15 @@ async function loadExtension(centerDate) {
   if (chartState.extLongFut) chartState.extLongFut.setData(futBars.map((b) => ({ time: b.time, value: b.ext_long })));
   chartState.extMap = bars.length ? new Map(bars.map((b) => [b.time, b])) : null;
   chartState.extFutMap = futBars.length ? new Map(futBars.map((b) => [b.time, b.ext_long])) : null;
+  // anchor：用當日 session 時間域（現貨 / 期貨 / 主圖 K 任一有資料者）填 2 點，撐住 pane3
+  // 多方價軸，使 0 軸與強線在 W10 現貨缺資料時仍可見。資料齊全時 autoscale 自會擴張。
+  const tsrc = bars.length ? bars : (futBars.length ? futBars : (chartState.bars || []));
+  if (chartState.extLongAnchor) {
+    chartState.extLongAnchor.setData(tsrc.length ? [
+      { time: tsrc[0].time, value: -(EXT_STRONG_LONG + 0.05) },
+      { time: tsrc[tsrc.length - 1].time, value: EXT_STRONG_LONG + 0.05 },
+    ] : []);
+  }
   updateLegend(null);
   // ext setData 可能把主圖視窗推掉（非同步、在 focusTime 之後才回來）→ 重新對焦修正
   if (chartState._focusTarget != null) focusTime(chartState._focusTarget);
