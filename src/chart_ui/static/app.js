@@ -1103,8 +1103,11 @@ function updateLegend(param) {
     const indTouch = state.indTouch
       ? `<span class="ind-toggle" data-toggle="touch" style="color:${TOUCH_BULL_COLOR}">關卡觸及${nTouch ? ` ${nTouch}` : ''}</span>`
       : `<span class="ind-toggle ma-off" data-toggle="touch">關卡觸及</span>`;
+    const indL3 = state.indL3Legs
+      ? `<span class="ind-toggle" data-toggle="l3legs" style="color:${COLORS.up}">L3 波段</span>`
+      : `<span class="ind-toggle ma-off" data-toggle="l3legs">L3 波段</span>`;
     const maLine = `${master}　${perMa}`;
-    const indLine = `${ind5}　${indMa600}<br>${indV}<br>${pvw}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}`;   // 5MA+600MA / VWAP / 昨前VWAP / BB / Pivot / ORB / 關卡觸及 / Risk 各自獨立一行
+    const indLine = `${ind5}　${indMa600}<br>${indV}<br>${pvw}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}<br>${indL3}`;   // 5MA+600MA / VWAP / 昨前VWAP / BB / Pivot / ORB / 關卡觸及 / Risk / L3波段 各自獨立一行
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
@@ -1700,6 +1703,11 @@ function wireIndicatorToggles() {
       } else if (which === 'risk') {
         state.indRisk = !state.indRisk;
         localStorage.setItem('cu.indRisk', state.indRisk ? '1' : '0');
+        updateLegend(null);
+      } else if (which === 'l3legs') {
+        state.indL3Legs = !state.indL3Legs;
+        localStorage.setItem('cu.indL3Legs', state.indL3Legs ? '1' : '0');
+        applyL3Legs();
         updateLegend(null);
       }
     });
