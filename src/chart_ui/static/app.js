@@ -1414,12 +1414,13 @@ const _l3LegRenderer = {
           ctx.arc(cx, cy, 3 * vpr, 0, Math.PI * 2);
           ctx.fill();
         }
-        // 中點標註：幅度點數 + L3 倍數（如 +182 1.4×）
+        // 標註寫在「起點」：多頭(起點=波谷)寫下方、空頭(起點=波峰)寫上方，避開 K 棒遮擋
         const sign = lg.amp > 0 ? '+' : '';
         const label = `${sign}${lg.amp}  ${lg.mult}×`;
-        const mx = (px1 + px2) / 2, my = (py1 + py2) / 2;
+        const gap = 12 * vpr;
         ctx.fillStyle = color;
-        ctx.fillText(label, mx, my - 10 * vpr);
+        ctx.textBaseline = lg.dir === 'up' ? 'top' : 'bottom';
+        ctx.fillText(label, px1, py1 + (lg.dir === 'up' ? gap : -gap));
       }
       ctx.restore();
     });
