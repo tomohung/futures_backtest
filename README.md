@@ -50,32 +50,33 @@ futures_backtest/
 │   │   └── 2026/
 │   └── futures.duckdb     ← 自動產生，勿納入版控
 ├── src/
-│   ├── etl/
-│   │   ├── download.py         ← 從期交所自動下載期貨每日 zip
-│   │   ├── download_options.py ← 從期交所自動下載選擇權每日 zip
-│   │   ├── daily_update.py     ← 一鍵更新（下載 + 全 ETL）
-│   │   ├── parse_rpt.py        ← 期貨 zip/rpt → ticks 表
-│   │   ├── parse_options_rpt.py← 選擇權 zip/rpt → ticks_options 表
+│   ├── etl/                     ← 資料下載與處理（詳見 CLAUDE.md「ETL 執行順序」）
+│   │   ├── download.py / download_options.py ← 下載期貨 / 選擇權每日 zip
+│   │   ├── daily_update.py     ← 一鍵更新（下載 + 全 ETL，Step 0–10）
+│   │   ├── parse_rpt.py / parse_options_rpt.py ← zip/rpt → ticks / ticks_options
 │   │   ├── build_1m.py         ← ticks → ohlcv_1m（1分K）
 │   │   ├── build_continuous.py ← Panama 換倉調整
+│   │   ├── build_aux_futures.py ← raw zip → aux_futures_1m（NYF=0050期）
+│   │   ├── download_stock_market.py / parse_stock_market.py ← TWSE/TPEX → market_breadth + stock_day
+│   │   ├── download_taiex.py / build_vixtwn.py ← TAIEX 指數 / 台灣 VIX
+│   │   ├── download_margin.py / parse_margin.py ← 融資餘額
+│   │   ├── download_econ.py / parse_econ.py ← 景氣對策信號
+│   │   ├── build_indicators.py ← 合成 fg-composite indicators.csv
 │   │   └── validate.py         ← 資料正確性驗證
-│   ├── strategies/
-│   │   └── orb.py              ← ORBStrategy（Phase 2 基準）、ORBLongStrategy（現行最佳）
-│   └── backtest/
-│       ├── runner.py            ← 資料載入、TrendMA/ADX 計算
-│       ├── estimate_hl.py       ← EstRange 計算（volume-weighted estimated range）
-│       ├── backtest_estrange_options.py ← EstRange 選擇權 Credit Spread 回測
-│       ├── optimize.py          ← Phase 2 網格搜尋
-│       ├── optimize_phase4_hybrid.py ← Phase 4 Hybrid 網格搜尋
-│       ├── optimize_phase5.py   ← Rolling OR 濾網實驗
-│       ├── optimize_longonly.py ← Long-only + ADX 濾網優化
-│       ├── explore_night_day.py ← 夜盤 vs 日盤相關性探索
-│       ├── explore_regime.py    ← 市場機制指標探索（ADX/ATR%）
-│       ├── analyze.py           ← 交易紀錄分析
-│       └── summary_all.py       ← 所有策略跨年度比較總表
+│   ├── strategies/              ← 回測用策略類別（orb / reversal / exhaustion / est_hl 系列…）
+│   ├── analysis/                ← 早盤簡報、關鍵價格、VIX regime、廣度溫度計、fg-composite 監控
+│   ├── backtest/
+│   │   ├── runner.py            ← 資料載入、TrendMA/ADX 計算
+│   │   ├── estimate_hl.py       ← EstRange 計算（volume-weighted estimated range）
+│   │   ├── backtest_estrange_options.py ← EstRange 選擇權 Credit Spread 回測
+│   │   ├── optimize*.py / explore_*.py ← 各階段優化 / 探索性分析
+│   │   ├── analyze.py           ← 交易紀錄分析
+│   │   └── summary_all.py       ← 所有策略跨年度比較總表
+│   └── chart_ui/                ← 行情瀏覽 app（FastAPI + lightweight-charts，uv run chart-ui）
+├── strategies/live/             ← Confirmed 策略（S001-esthl, S002-reversal, S004-fg-composite）
+├── research/                    ← 假設驅動研究記錄（active / archive）
 ├── output/                      ← 回測結果 CSV、分析報告（勿納入版控）
-├── notebooks/                   ← Jupyter 探索分析
-└── tests/
+└── notebooks/                   ← Jupyter 探索分析
 ```
 
 ## 資料格式
@@ -147,8 +148,10 @@ claude
 
 ## 每日更新資料
 
+`daily_update.py` 是一鍵 pipeline，除期貨 / 選擇權外，也會更新 TWSE/TPEX 廣度、TAIEX、台灣 VIX、融資餘額、景氣信號與 fg-composite 指標（輔助資料源失敗為 warn-only，不中斷）。各 step 對照表見 `CLAUDE.md`。
+
 ```bash
-# 一鍵更新：自動下載最新 zip + 跑完整 ETL
+# 一鍵更新：自動下載最新 zip + 跑完整 ETL（Step 0–10）
 uv run python src/etl/daily_update.py
 
 # 只下載，不跑 ETL
@@ -156,6 +159,9 @@ uv run python src/etl/download.py
 
 # 已有 zip，只跑 ETL
 uv run python src/etl/daily_update.py --skip-download
+
+# 跳過驗證加速
+uv run python src/etl/daily_update.py --skip-validate
 ```
 
 ### 設定自動排程（macOS launchd）
@@ -235,6 +241,13 @@ conn.execute("""
 | `ohlcv_1m` | 1分K，日盤 08:45~13:45，含 `adj_close` |
 | `rollover_log` | 每月換倉記錄，Panama 價差 |
 | `ticks_options` | 選擇權原始 tick（TXO），含履約價、買賣權別 |
+| `aux_futures_1m` | 輔助期貨 1 分K（NYF=0050ETF期等），chart-ui 盤前延伸力用 |
+| `market_breadth` / `stock_day` | TWSE/TPEX 大盤廣度 + 全市場個股日 OHLCV |
+| `top_lists` / `concentration_index` | 月度成交前 20 + 集中度寬表（H080） |
+| `taiex_day` / `vixtwn` | 加權指數日線 / 台灣 VIX |
+| `margin_balance` / `econ_signal` | 融資餘額 / 景氣對策信號 |
+
+> `taiex_day` / `vixtwn` / `margin_balance` / `econ_signal` 共同支撐 fg-composite（S004）市場情緒綜合指標。
 
 - `adj_close`：Panama backward adjustment，最新合約價格不調整，歷史往前遞增調整
 - `adjustment`：累計調整量（`adj_close = close + adjustment`）
@@ -259,7 +272,15 @@ uv run python src/backtest/backtest_estrange_options.py \
   --fraction 0.70 --spread-pct 0.50 --exit-time 12:30
 ```
 
-詳細規格見 `specs/strategies/2026-03-17-estrange-options.md`。
+詳細規格見 `research/archive/confirmed/H008-estrange-options/spec.md`。
+
+## Chart UI（行情瀏覽 app）
+
+```bash
+uv run chart-ui            # 啟動，預設 http://127.0.0.1:8888/
+```
+
+讀 `data/futures.duckdb` 的 `ohlcv_1m`，可瀏覽每日 1 分K，並含延伸力（extension）副圖、NYF（0050期）盤前延伸與 VIX regime 盤前判讀。回測腳本可用 `from src.chart_ui.list_writer import write_chart_list_from_backtesting` 輸出自訂清單。
 
 ## 疑難排解
 

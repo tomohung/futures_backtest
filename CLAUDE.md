@@ -109,6 +109,21 @@ CREATE TABLE rollover_log (
 );
 ```
 
+#### 輔助資料表（由 daily_update 各 step 維護）
+| 表 | 來源 / ETL | 用途 |
+|---|---|---|
+| `aux_futures_1m` | `build_aux_futures.py`（直抽 raw zip，白名單商品如 NYF=0050ETF期） | chart-ui 盤前延伸力多（0050期）副圖；日盤 1 分 K |
+| `market_breadth` | `download_stock_market.py` + `parse_stock_market.py`（TWSE/TPEX） | 每日大盤廣度（上市/上櫃漲跌家數、成交額），H079 |
+| `stock_day` | 同上 | 全市場個股日 OHLCV（含漲停/跌停標記），DCI/H080 universe |
+| `top_lists` | `build_top_lists.py`（從 stock_day） | 月度成交金額前 20 排名（僅 TWSE），H080 |
+| `concentration_index` | `build_concentration_index.py` | 成交金額集中度寬表（N=1/5/10/20），H080 regime |
+| `taiex_day` | `download_taiex.py`（FinMind TaiwanStockPrice/TAIEX，2008 起） | 加權指數日線，fg-composite |
+| `vixtwn` | `build_vixtwn.py`（期交所台灣 VIX） | 台灣 VIX 日資料，VIX regime / fg-composite |
+| `margin_balance` | `download_margin.py` + `parse_margin.py`（TWSE MI_MARGN） | 市場融資餘額彙總，fg-composite |
+| `econ_signal` | `download_econ.py` + `parse_econ.py`（國發會景氣指標 ZIP） | 景氣對策信號分數/燈號（月），fg-composite |
+
+> fg-composite（S004 / H085）的最終特徵由 `build_indicators.py` 合成回 `indicators.csv`（DB 最新 + CSV 補歷史）。
+
 ## 目錄結構
 ```
 futures_backtest/
@@ -129,46 +144,50 @@ futures_backtest/
 │       ├── rejected/HXXX-名稱/
 │       └── inconclusive/HXXX-名稱/
 ├── strategies/
-│   ├── live/SXXX-名稱/      ← spec.md + performance.md + backtest.py
-│   └── retired/
+│   ├── live/SXXX-名稱/      ← spec.md + performance.md + backtest.py（現行：S001-esthl, S002-reversal, S004-fg-composite）
+│   └── retired/            ← 退役策略（如 S003-exhaustion）
 ├── .claude/skills/       ← 研究工作流程 skills
 ├── src/
 │   ├── etl/
-│   │   ├── download.py         ← 從期交所自動下載每日 zip ✅
-│   │   ├── daily_update.py     ← 一鍵更新（下載 + 全 ETL）✅
+│   │   ├── download.py / download_options.py ← 從期交所自動下載期貨/選擇權每日 zip ✅
+│   │   ├── daily_update.py     ← 一鍵更新（下載 + 全 ETL，Step 0–10）✅
 │   │   ├── parse_rpt.py        ← zip/rpt → ticks 表 ✅
 │   │   ├── build_1m.py         ← ticks → ohlcv_1m ✅
 │   │   ├── build_continuous.py ← 換倉 + Panama adj_close ✅
+│   │   ├── build_aux_futures.py ← raw zip → aux_futures_1m（NYF=0050期等白名單）✅
 │   │   ├── parse_options_rpt.py ← options zip → ticks_options 表 ✅
-│   │   ├── download_stock_market.py ← TWSE/TPEX 廣度資料下載（H079 用）✅
-│   │   ├── parse_stock_market.py ← TWSE/TPEX → market_breadth + stock_day ✅
+│   │   ├── download_stock_market.py / parse_stock_market.py ← TWSE/TPEX → market_breadth + stock_day（H079/H080）✅
+│   │   ├── build_top_lists.py / build_concentration_index.py ← stock_day → top_lists + concentration_index（H080）✅
+│   │   ├── download_taiex.py    ← FinMind TAIEX → taiex_day ✅
+│   │   ├── build_vixtwn.py      ← 期交所台灣 VIX → vixtwn ✅
+│   │   ├── download_margin.py / parse_margin.py ← TWSE 融資彙總 → margin_balance ✅
+│   │   ├── download_econ.py / parse_econ.py ← 國發會景氣信號 → econ_signal ✅
+│   │   ├── build_indicators.py  ← 合成 fg-composite indicators.csv（DB + CSV）✅
 │   │   ├── download_stock_min.py ← 個股分k下載→parquet 落地（FinMind TaiwanStockKBar，DCI 校準用）✅
-│   │   ├── load_stock_min.py    ← parquet → DuckDB stock_min 表（phase 2）✅
+│   │   ├── load_stock_min.py    ← parquet → DuckDB stock_min 表（增量 upsert）✅
 │   │   └── validate.py         ← 資料驗證 ✅
-│   ├── strategies/
-│   │   ├── orb.py              ← ORBStrategy（開盤區間突破）✅
-│   │   ├── reversal.py         ← ReversalStrategy（BB 反轉）✅
-│   │   ├── exhaustion.py       ← ExhaustionStrategy（趨勢耗竭反轉）✅
-│   │   ├── estimate_hl_exit.py ← EstHL 出場策略 ✅
-│   │   └── reversal_follow.py  ← Reversal 跟隨策略 ✅
+│   ├── strategies/             ← 回測用策略類別（orb / reversal / exhaustion / est_hl 系列…）✅
 │   ├── analysis/
-│   │   ├── morning_briefing.py  ← 早盤簡報（ETL + key_prices + h103_alert + daily_range + breadth + fg_composite_monitor）✅
-│   │   ├── key_prices.py        ← 關鍵價格 + 支撐壓力 ✅
+│   │   ├── morning_briefing.py  ← 早盤簡報（ETL + key_prices + h103_alert + daily_range + breadth + fg_composite + vix_regime）✅
+│   │   ├── key_prices.py        ← 關鍵價格 + 支撐壓力 + VIX regime + H103 fold（clipboard）✅
 │   │   ├── h103_alert.py        ← H103 跳空下方遠做多盤前提醒（觀察用，夜收預判 + 觸發價 X）✅
+│   │   ├── vix_regime.py        ← VIX regime 判讀（升壓/降壓 + ladder reach 期望）✅
 │   │   ├── regime_health.py     ← Regime 健康快報（已驗證無交易濾網效果，已從 morning_briefing 移除）
 │   │   ├── daily_range.py       ← 日盤波動 + VIX 圖表 ✅
-│   │   ├── breadth_thermometer.py ← H079 漲停萎縮溫度計（觀察用 alert，預設 RATIO ma7 pct=0.15）✅
+│   │   ├── breadth_thermometer.py ← H079 漲停萎縮溫度計（觀察用 alert）✅
 │   │   └── fg_composite_monitor.py ← S004 fg-composite 每日監控（comp_z + 觸發狀態 + 4 指標分項）✅
-│   └── backtest/
-│       ├── runner.py            ← 資料載入、TrendMA/ADX 計算 ✅
-│       ├── strategy_health.py   ← 策略健康監測（完整版，含回測交叉分析）✅
-│       ├── optimize.py          ← Phase 2 網格搜尋 ✅
-│       ├── optimize_phase4_hybrid.py ← Phase 4 Hybrid 優化 ✅
-│       ├── optimize_phase5.py   ← Rolling OR 濾網 ✅
-│       ├── optimize_longonly.py ← Long-only + ADX 優化 ✅
-│       ├── explore_*.py         ← 探索性分析 ✅
-│       ├── analyze.py           ← 交易分析 ✅
-│       └── summary_all.py       ← 策略跨年度比較 ✅
+│   ├── backtest/
+│   │   ├── runner.py            ← 資料載入、TrendMA/ADX 計算 ✅
+│   │   ├── estimate_hl.py       ← EstRange 計算 ✅
+│   │   ├── strategy_health.py   ← 策略健康監測（完整版，含回測交叉分析）✅
+│   │   ├── optimize*.py         ← 各階段網格搜尋 / 優化 ✅
+│   │   ├── explore_*.py         ← 探索性分析 ✅
+│   │   ├── analyze.py           ← 交易分析 ✅
+│   │   └── summary_all.py       ← 策略跨年度比較 ✅
+│   └── chart_ui/               ← 行情瀏覽 app（FastAPI + lightweight-charts）✅
+│       ├── app.py / __main__.py ← 入口（uv run chart-ui）
+│       ├── routes/             ← kline / lists / daystats / extension / risklevels
+│       └── services/           ← kline_loader / extension（延伸力）/ futures_extension（NYF）/ dci_daily …
 ├── indicators/
 │   └── tradingview/      ← TradingView Pine Script 指標
 └── output/               ← 回測結果 CSV（不納入版控）
@@ -180,9 +199,28 @@ futures_backtest/
 ```bash
 uv run python src/etl/daily_update.py
 ```
-自動偵測起始日，下載今日資料，依序執行 Step 1–4。
+自動偵測起始日，下載今日資料，依序執行下列 step（核心步驟失敗會中止；輔助資料源失敗為 warn-only，不擋簡報）：
 
-### 單步執行
+| Step | 腳本 | 產出 |
+|---|---|---|
+| 0a–0c | download / download_options / download_stock_market | 期貨 zip、選擇權 zip、TWSE/TPEX 廣度 JSON |
+| 1a–1c | parse_rpt / parse_options_rpt / parse_stock_market | ticks、ticks_options、market_breadth + stock_day |
+| 2 | build_1m | ohlcv_1m |
+| 3 | build_continuous | 換倉 + Panama adj_close |
+| 3b | build_aux_futures | aux_futures_1m（NYF=0050期，warn-only） |
+| 4 | validate | 資料驗證（可 `--skip-validate`） |
+| 5 | build_vixtwn | vixtwn（台灣 VIX） |
+| 6 | download_taiex | taiex_day（FinMind TAIEX，2008 起全量重抓） |
+| 7–8 | download_margin / parse_margin | margin_balance（融資餘額） |
+| 9 | download_econ / parse_econ | econ_signal（景氣對策信號） |
+| 10 | build_indicators | fg-composite indicators.csv（comp_z 來源） |
+
+> `top_lists` / `concentration_index`（H080）不在 daily_update 內，需要時手動跑 `build_top_lists.py` → `build_concentration_index.py`。
+> 個股分K（stock_min）為獨立兩步 ETL（`download_stock_min.py` → `load_stock_min.py`），亦不在 daily_update 內。
+
+常用旗標：`--skip-download`（已手動放好 zip）、`--skip-validate`、`--start/--end`（指定區間）。
+
+### 單步執行（期貨核心）
 ```bash
 uv run python src/etl/download.py         # Step 0: 下載 zip
 uv run python src/etl/parse_rpt.py        # Step 1: zip → ticks
@@ -290,4 +328,6 @@ uv run chart-ui            # 啟動，預設 http://127.0.0.1:8888/
 ```
 - 讀 `data/futures.duckdb` 的 `ohlcv_1m`；清單放 `data/chart_lists/*.json`（不納版控）。
 - 回測腳本輸出清單：`from src.chart_ui.list_writer import write_chart_list_from_backtesting`。
-- 內建『所有交易日』清單，點日期跳到當天 08:45。
+- 內建『所有交易日』清單（預設倒序，最新交易日在最上），點日期跳到當天 08:45。
+- 副圖：**延伸力（extension）** ext_long/ext_short（現貨 W10 universe，盤中 open-anchor）+ 期貨版 **NYF（0050期）盤前延伸**（讀 `aux_futures_1m`，領先現貨約 15 分）。
+- 盤前 rail：VIX regime 判讀（升壓/降壓 + ladder reach 期望/動作）。
