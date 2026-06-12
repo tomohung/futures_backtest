@@ -1350,7 +1350,7 @@ const _l3LegRenderer = {
       const hpr = scope.horizontalPixelRatio;
       const vpr = scope.verticalPixelRatio;
       ctx.save();
-      ctx.lineWidth = Math.max(1, Math.round(2 * hpr));
+      ctx.lineWidth = Math.max(1, Math.round(2 * hpr));  // 刻意 2× 粗（比關卡觸及等 overlay 醒目，主圖主角）
       ctx.font = `${Math.round(11 * vpr)}px -apple-system, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
