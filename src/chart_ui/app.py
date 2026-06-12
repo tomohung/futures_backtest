@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.chart_ui.paths import STATIC_DIR
-from src.chart_ui.routes import daystats, extension, kline, lists, risklevels
+from src.chart_ui.routes import daystats, extension, kline, lists, risklevels, swing_legs
 
 
 def _asset_version() -> int:
@@ -37,6 +37,7 @@ def create_app() -> FastAPI:
     app.include_router(daystats.router)
     app.include_router(risklevels.router)
     app.include_router(extension.router)
+    app.include_router(swing_legs.router)
 
     # index.html 帶上資產版本號（依 app.js/app.css mtime），改前端後瀏覽器自動抓新檔、免手動硬重整。
     # 此路由必須在 "/" StaticFiles mount 之前註冊才會優先命中。
