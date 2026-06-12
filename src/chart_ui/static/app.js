@@ -1151,8 +1151,12 @@ function updateLegend(param) {
     const v = raw == null ? null : -raw;                       // 翻轉顯示（負=空方燃料/偏空）
     const strong = v != null && v <= -EXT_STRONG_SHORT;        // 強空
     const cls = v == null ? 'muted' : (v < 0 ? 'down' : 'up');
+    const up = ext ? ext.up : null;
+    const dn = ext ? ext.dn : null;
     extS.innerHTML = `<span style="color:${COLORS.down}">延伸力·空(廣度)</span> `
-      + `<span class="${cls}">${v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2)}${strong ? ' 強空' : ''}</span>`;
+      + `<span class="${cls}">${v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2)}${strong ? ' 強空' : ''}</span>`
+      + (up == null ? '' : `　漲<span style="color:${COLORS.up}">${up}</span>`
+        + `/跌<span style="color:${COLORS.down}">${dn}</span>`);
   }
 }
 

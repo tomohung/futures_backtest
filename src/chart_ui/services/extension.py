@@ -104,8 +104,10 @@ def compute_extension_series(conn, sel: date) -> dict | None:
                             tzinfo=timezone.utc).timestamp())   # naive→UTC，對齊 kline_loader
 
     bars = [{"time": _epoch(mins), "ext_long": round(float(el), 4),
-             "ext_short": round(float(es), 4)}
-            for mins, el, es in zip(panel.index, ext_long, ext_short)]
+             "ext_short": round(float(es), 4),
+             "up": int(u), "dn": int(d), "active": int(a)}
+            for mins, el, es, u, d, a
+            in zip(panel.index, ext_long, ext_short, up, dn, active)]
     return {"bars": bars, "strong_long": STRONG_LONG, "strong_short": STRONG_SHORT}
 
 
