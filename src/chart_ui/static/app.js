@@ -251,9 +251,11 @@ function applyL3Legs() {
 
 async function loadSwingLegs(date) {
   chartState._l3LegsRaw = null;
+  chartState._l3LegsReqDate = date;
   if (date && state.tf !== '1d') {
     try {
       const r = await fetchJSON(`/api/swing-legs?date=${encodeURIComponent(date)}`);
+      if (chartState._l3LegsReqDate !== date) return;   // 換日了，丟棄過期回應
       chartState._l3LegsRaw = (r && r.legs) || [];
     } catch (_) { chartState._l3LegsRaw = []; }
   }
@@ -1920,7 +1922,7 @@ async function selectItem(i) {
   document.querySelector('.list-row.active')?.scrollIntoView({ block: 'nearest' });
 }
 
-window._afterKline = () => { drawTradeMarkers(window._pendingItem); maybeDrawReview(); applyTouchMarkers(); };
+window._afterKline = () => { drawTradeMarkers(window._pendingItem); maybeDrawReview(); applyTouchMarkers(); applyL3Legs(); };
 
 async function loadList(listId) {
   state.list = await fetchJSON(`/api/lists/${encodeURIComponent(listId)}`);
