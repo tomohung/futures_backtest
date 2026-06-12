@@ -1,7 +1,9 @@
 """主圖「L3 波段」：當日 11:30 前起點、幅度 ≥ L3 的單向 swing 波段偵測。
 
-zigzag_legs 為不依賴 DB 的純函式（反轉門檻 = L3 距離）；compute_swing_legs 包 DB
-整合（讀日盤 1 分 K、重用 daystats 的 EMA20 振幅算 L3、篩選起點 < 11:30 且幅度 ≥ L3）。
+兩個門檻刻意解耦（zigzag_legs 為不依賴 DB 的純函式，門檻由呼叫端帶入）：
+- 反轉門檻 = L2 距離（≈0.70×L3）：回檔 ≥ L2 即切段，讓接近 L3 的大回檔不被吸收。
+- 最小波段幅度 = L3 距離：只顯示淨幅 ≥ L3 的段（l3_mult 也以 L3 為基準）。
+compute_swing_legs 包 DB 整合（讀日盤 1 分 K、重用 daystats 的 EMA20 算 L2/L3、篩選起點 < 11:30）。
 """
 
 from __future__ import annotations
@@ -15,7 +17,8 @@ from src.chart_ui import paths
 from src.chart_ui.services.daystats import LVL_QUANTILES, SYMBOL, _ema20_range
 
 NOON_MIN = 690          # 11:30（起點時間閘）
-L3_COEF = LVL_QUANTILES[2][2]  # 0.711 × EMA20
+L2_COEF = LVL_QUANTILES[1][2]  # 0.497 × EMA20（反轉門檻）
+L3_COEF = LVL_QUANTILES[2][2]  # 0.711 × EMA20（最小波段幅度 / l3_mult 基準）
 
 
 def zigzag_legs(bars, threshold):
@@ -123,9 +126,10 @@ def compute_swing_legs(*, date_str: str, db_path: Path | None = None) -> dict:
         ema20 = _ema20_range(conn, sel)
         if not ema20:
             return {"legs": [], "l3_dist": None, "ema20": None}
-        l3_dist = L3_COEF * ema20
+        l2_dist = L2_COEF * ema20   # 反轉門檻：回檔 ≥ L2 即切段
+        l3_dist = L3_COEF * ema20   # 顯示門檻：只留淨幅 ≥ L3 的段
         bars = _day_bars(conn, sel)
-    raw = zigzag_legs(bars, threshold=l3_dist)
+    raw = zigzag_legs(bars, threshold=l2_dist)
     return {
         "legs": _filter_and_format(raw, threshold=l3_dist),
         "l3_dist": round(l3_dist, 1),

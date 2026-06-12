@@ -66,3 +66,14 @@ def test_compute_swing_legs_insufficient_history(test_db_path):
     assert out["legs"] == []
     assert out["ema20"] is None
     assert out["l3_dist"] is None
+
+
+def test_decoupled_reversal_l2_splits_near_l3_pullback():
+    """反轉門檻(L2=70) < 顯示門檻(L3=100)：中間 80 點回檔(介於 L2~L3)切成兩段 up；
+    對照反轉門檻=L3=100 時回檔被吸收只剩一段。鎖定 Option B 解耦行為。"""
+    bars = [(525, 1000, 1000), (526, 1140, 1140), (527, 1060, 1060),
+            (528, 1180, 1180), (529, 1180, 1180)]
+    legs_l2 = _filter_and_format(zigzag_legs(bars, threshold=70), threshold=100)
+    assert [lg["dir"] for lg in legs_l2] == ["up", "up"]
+    legs_l3 = _filter_and_format(zigzag_legs(bars, threshold=100), threshold=100)
+    assert len(legs_l3) == 1
