@@ -225,6 +225,41 @@ function applyTouchMarkers() {
   if (touchReqUpdate) touchReqUpdate();
 }
 
+// L3 波段：把 /api/swing-legs 的 legs 轉成 anchors（時間對齊 bar）並觸發重畫。
+function applyL3Legs() {
+  const bars = chartState.bars;
+  const legs = chartState._l3LegsRaw;
+  const anchors = [];
+  if (state.indL3Legs && state.tf !== '1d' && legs && bars && bars.length) {
+    const d = window._dayStats;
+    const day = d && d.date;
+    for (const lg of legs) {
+      if (!day) continue;
+      const st = nearestBarTime(localToEpoch(`${day} ${lg.start_time}:00`));
+      const et = nearestBarTime(localToEpoch(`${day} ${lg.end_time}:00`));
+      if (st == null || et == null) continue;
+      anchors.push({
+        startTime: st, startPrice: lg.start_price,
+        endTime: et, endPrice: lg.end_price,
+        dir: lg.dir, amp: lg.amp, mult: lg.l3_mult,
+      });
+    }
+  }
+  chartState.l3LegAnchors = anchors;
+  if (l3LegReqUpdate) l3LegReqUpdate();
+}
+
+async function loadSwingLegs(date) {
+  chartState._l3LegsRaw = null;
+  if (date && state.tf !== '1d') {
+    try {
+      const r = await fetchJSON(`/api/swing-legs?date=${encodeURIComponent(date)}`);
+      chartState._l3LegsRaw = (r && r.legs) || [];
+    } catch (_) { chartState._l3LegsRaw = []; }
+  }
+  applyL3Legs();
+}
+
 // 在 bars 與 daystats 都就緒時，畫覆盤 overlay（09:30/10:30/11:30 時間線）。
 // 時間線是當日時間格線、與交易 marker 無關，故所有清單一律畫（含 ORB 等交易清單）；
 // 只有「非交易項」才順手 clearMarkers，交易項的 marker 由 drawTradeMarkers 畫、勿清。
@@ -1719,6 +1754,7 @@ async function renderDayStats(date) {
   window._dayStats = d;
   maybeDrawReview();
   applyTouchMarkers();
+  loadSwingLegs(date);
   const r = (x) => (x == null ? '—' : Math.round(x).toLocaleString());
   const ar = d.avg_range_20 || {};
   const t = d.today;
