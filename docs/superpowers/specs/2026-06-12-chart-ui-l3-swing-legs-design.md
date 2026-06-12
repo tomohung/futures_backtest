@@ -1,0 +1,66 @@
+# Chart-UI 主圖「L3 波段」指標設計
+
+日期：2026-06-12
+狀態：設計已核可，待實作
+
+## 目的
+
+在 chart-ui 主圖新增一個可開關的指標，自動標出當前檢視交易日中「起點在 11:30 前、幅度 ≥ L3」的所有單向 swing 波段，幫助複盤「理想上早盤能進場吃到的最大行情」。不限一段——當天交錯的漲段、跌段只要符合條件都標。
+
+## 需求釐清結論
+
+| 議題 | 決定 |
+|---|---|
+| 一「段」如何界定 | 任意 swing 波段（波谷→波峰 或 波峰→波谷 的單向移動），用 ZigZag 偵測轉折 |
+| swing 反轉門檻 | = L3 距離（反向移動 ≥ L3 才確認新轉折）；趨勢中 < L3 的小回檔被忽略、合併成更大一段 |
+| 「11:30 前」套用部位 | **波段起點（進場點）在 11:30 前即可**，終點可延伸到下午 |
+| 方向 | 多空都標（漲段紅、跌段綠，台灣慣例） |
+| 幅度門檻 | ≥ L3 即標；L4 / L5 / 更大波段因 ≥ L3 自然全包含，由 L3 倍數標註反映大小 |
+| 視覺呈現 | 從 swing 低點到高點畫**斜線**，線上標註**幅度點數 ＋ L3 倍數** |
+| 指標名稱 | 「L3 波段」 |
+
+## 偵測演算法（ZigZag，反轉門檻 = L3 距離）
+
+1. 取當日**日盤** 1 分 K（08:45 起，讀 `ohlcv_1m`），不含夜盤。
+2. **L3 距離** = `0.711 × EMA20`。重用 `daystats.py` 既有的 `_ema20_range()`（前一日日盤 08:45–13:45 振幅的 20 日 causal EMA）與 `LVL_QUANTILES[2]`（係數 0.711），不重複實作。
+3. **ZigZag**：追蹤 running extreme，當價格從極值反向移動 ≥ L3 距離時，確認該極值為一個轉折點（pivot），方向翻轉。產出時間上交替的 low / high pivot 序列。
+4. 每相鄰兩 pivot = 一段 leg；因為反轉門檻就是 L3，每個 confirmed leg 幅度自然 ≥ L3。
+5. **篩選**：只保留**起點 pivot 時間 < 11:30（690 分）**的 legs。
+6. 每段輸出：`{start_time, start_price, end_time, end_price, dir, amplitude_pts, l3_mult}`，其中 `l3_mult = amplitude_pts / L3距離`。
+
+## 邊界處理
+
+- **最後一段未確認**：日盤尾端若尚未出現 ≥ L3 的反轉，將該段畫到日盤收盤（13:45）的方向極值；**淨幅 < L3 則不標**（不夠大不算理想行情）。
+- 波段**起點**必須在 11:30 前，**終點可延伸到下午**。
+- 只看日盤。
+
+## 後端
+
+- 新增獨立 service：`src/chart_ui/services/swing_legs.py`（職責單一）。
+- 新增 route：`GET /api/swing-legs?date=YYYY-MM-DD`，回傳 legs 陣列。
+- L3 / EMA20 計算重用 `daystats.py` 既有函式。
+
+## 前端
+
+- 新增一個指標 toggle（標籤「L3 波段」），沿用現有指標開關模式。
+- 用 lightweight-charts 的 **Primitive 自繪**（參考現有 `touchLinesPrimitive` / `_touchRenderer`，`app.js:1299-1334`）：
+  - 從 swing 低點到高點畫斜線：漲段紅、跌段綠。
+  - 線中點標註：`幅度點數` ＋ `L3 倍數`（如 `+182  1.4×`）。
+- 切換交易日時自動重抓 `/api/swing-legs` 並重畫。
+
+## 重用的現有元件
+
+| 用途 | 位置 |
+|---|---|
+| L3 係數 / EMA20 振幅 | `src/chart_ui/services/daystats.py:28-35, 459-472` |
+| K 線資料來源 | `src/chart_ui/services/kline_loader.py`、`ohlcv_1m` 表 |
+| Primitive 自繪參考 | `src/chart_ui/static/app.js:1299-1334`（touch markers） |
+| 11:30 時間參考（690 分） | `src/chart_ui/static/app.js:1186` |
+| 路由註冊模式 | `src/chart_ui/routes/`（kline / daystats / extension） |
+
+## 非目標（YAGNI）
+
+- 不做即時盤中更新（複盤用，依檢視日期重算即可）。
+- 不做夜盤波段。
+- 不做進出場績效統計（純視覺標示）。
+- 不改動現有 touch markers / 延伸力副圖邏輯。
