@@ -99,6 +99,7 @@ const state = {
   indOrb: localStorage.getItem('cu.indOrb') === '1',     // ORB 開盤區間突破（預設關）
   indTouch: localStorage.getItem('cu.indTouch') !== '0', // 關卡觸及標示（預設開）
   indRisk: localStorage.getItem('cu.indRisk') !== '0',   // EstRisk 風險/安全價位（預設開）
+  indL3Legs: localStorage.getItem('cu.indL3Legs') === '1', // L3 波段斜線（理想最大行情，預設關）
   centerDate: null,           // 'YYYY-MM-DD'
   list: null,                 // 目前清單 payload
   listId: null,
@@ -645,6 +646,7 @@ function initChart() {
   chartState.candle.attachPrimitive(reviewLinesPrimitive);    // 覆盤時間線 09:30/10:30/11:30
   chartState.candle.attachPrimitive(orbLinesPrimitive);       // ORB 區間高/低水平線段
   chartState.candle.attachPrimitive(touchLinesPrimitive);     // 關卡觸及圓點+階數
+  chartState.candle.attachPrimitive(l3LegsPrimitive);          // L3 波段斜線
   chartState.maSeries = MA_DEFS.map((d) => chart.addSeries(LightweightCharts.LineSeries, {
     color: d.color, lineWidth: 1, priceScaleId: 'right',
     priceLineVisible: false, lastValueVisible: false,
@@ -1331,6 +1333,64 @@ const touchLinesPrimitive = {
   detached() { touchReqUpdate = null; },
   updateAllViews() {},
   paneViews() { return [_touchPaneView]; },
+};
+
+// === L3 波段斜線（primitive；自繪斜線連 swing 低/高點 + 幅度標註）===
+let l3LegReqUpdate = null;
+const _l3LegRenderer = {
+  draw(target) {
+    if (state.tf === '1d' || !state.indL3Legs) return;
+    const chart = chartState.chart;
+    const series = chartState.candle;
+    const legs = chartState.l3LegAnchors;
+    if (!chart || !series || !legs || !legs.length) return;
+    const ts = chart.timeScale();
+    target.useBitmapCoordinateSpace((scope) => {
+      const ctx = scope.context;
+      const hpr = scope.horizontalPixelRatio;
+      const vpr = scope.verticalPixelRatio;
+      ctx.save();
+      ctx.lineWidth = Math.max(1, Math.round(2 * hpr));
+      ctx.font = `${Math.round(11 * vpr)}px -apple-system, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (const lg of legs) {
+        const x1 = ts.timeToCoordinate(lg.startTime);
+        const y1 = series.priceToCoordinate(lg.startPrice);
+        const x2 = ts.timeToCoordinate(lg.endTime);
+        const y2 = series.priceToCoordinate(lg.endPrice);
+        if (x1 == null || y1 == null || x2 == null || y2 == null) continue;
+        const color = lg.dir === 'up' ? COLORS.up : COLORS.down;
+        const px1 = x1 * hpr, py1 = y1 * vpr, px2 = x2 * hpr, py2 = y2 * vpr;
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(px1, py1);
+        ctx.lineTo(px2, py2);
+        ctx.stroke();
+        // 端點小圓
+        for (const [cx, cy] of [[px1, py1], [px2, py2]]) {
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(cx, cy, 3 * vpr, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // 中點標註：幅度點數 + L3 倍數（如 +182 1.4×）
+        const sign = lg.amp > 0 ? '+' : '';
+        const label = `${sign}${lg.amp}  ${lg.mult}×`;
+        const mx = (px1 + px2) / 2, my = (py1 + py2) / 2;
+        ctx.fillStyle = color;
+        ctx.fillText(label, mx, my - 10 * vpr);
+      }
+      ctx.restore();
+    });
+  },
+};
+const _l3LegPaneView = { renderer() { return _l3LegRenderer; }, zOrder() { return 'top'; } };
+const l3LegsPrimitive = {
+  attached(p) { l3LegReqUpdate = p.requestUpdate; },
+  detached() { l3LegReqUpdate = null; },
+  updateAllViews() {},
+  paneViews() { return [_l3LegPaneView]; },
 };
 
 function klineUrl() {
