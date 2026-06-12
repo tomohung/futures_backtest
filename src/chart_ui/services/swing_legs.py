@@ -72,3 +72,62 @@ def zigzag_legs(bars, threshold):
             "dir": "up" if ep >= sp else "down",
         })
     return legs
+
+
+def _min_to_hhmm(minute: int) -> str:
+    return f"{minute // 60:02d}:{minute % 60:02d}"
+
+
+def _filter_and_format(raw_legs, threshold):
+    """篩選 start_min < 11:30 且 abs(amp) ≥ threshold，並格式化輸出。
+
+    amp 帶方向（up 正 / down 負）；l3_mult = round(abs(amp)/threshold, 1)。
+    """
+    out = []
+    for lg in raw_legs:
+        if lg["start_min"] >= NOON_MIN:
+            continue
+        amp_abs = abs(lg["end_price"] - lg["start_price"])
+        if amp_abs < threshold:
+            continue
+        amp = round(lg["end_price"] - lg["start_price"])
+        out.append({
+            "start_time": _min_to_hhmm(lg["start_min"]),
+            "start_price": round(lg["start_price"]),
+            "end_time": _min_to_hhmm(lg["end_min"]),
+            "end_price": round(lg["end_price"]),
+            "dir": lg["dir"],
+            "amp": amp,
+            "l3_mult": round(amp_abs / threshold, 1),
+        })
+    return out
+
+
+def _day_bars(conn, sel: date):
+    """當日日盤 1 分 K：[(minute, high, low)]，08:45–13:45，昇冪。"""
+    rows = conn.execute(
+        "SELECT CAST(timestamp AS TIME) t, high, low FROM ohlcv_1m "
+        "WHERE symbol = ? AND CAST(timestamp AS DATE) = ? "
+        "AND CAST(timestamp AS TIME) BETWEEN TIME '08:45:00' AND TIME '13:45:00' "
+        "ORDER BY timestamp",
+        [SYMBOL, sel],
+    ).fetchall()
+    return [(t.hour * 60 + t.minute, float(h), float(l)) for t, h, l in rows]
+
+
+def compute_swing_legs(*, date_str: str, db_path: Path | None = None) -> dict:
+    """回傳 {legs:[...], l3_dist, ema20}。ema20 不足 20 日時 legs 為空。"""
+    db_path = Path(db_path) if db_path else paths.DUCKDB_PATH
+    sel = date.fromisoformat(date_str)
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        ema20 = _ema20_range(conn, sel)
+        if not ema20:
+            return {"legs": [], "l3_dist": None, "ema20": None}
+        l3_dist = L3_COEF * ema20
+        bars = _day_bars(conn, sel)
+    raw = zigzag_legs(bars, threshold=l3_dist)
+    return {
+        "legs": _filter_and_format(raw, threshold=l3_dist),
+        "l3_dist": round(l3_dist, 1),
+        "ema20": round(ema20, 1),
+    }
