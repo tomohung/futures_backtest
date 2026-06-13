@@ -204,9 +204,10 @@ function drawReviewOverlay(d) {
   if (reviewReqUpdate) reviewReqUpdate();
 }
 
-// 關卡觸及標示（獨立指標，預設開）：選定日(window._dayStats)多/空各階首觸。顯示每一個有觸及
-// 的關卡（L1–L5）。anchor.price = 該階關卡投射價（t.price）→ touchLinesPrimitive 把圓點畫在
-// 關卡價上，階數文字往外側（多往上/空往下）拉開 TOUCH_GAP。需 bars 與 _dayStats 都就緒。
+// 關卡觸及標示（獨立指標，預設開）：選定日(window._dayStats)多/空 L1–L5 觸及圓點。
+// 後端每個 ≥L2 反轉波段以波段極值為錨重新上膛，故同一階一天可有多顆圓點（不同波段、不同錨價）。
+// anchor.price = 該筆關卡投射價（t.price）→ touchLinesPrimitive 把圓點畫在關卡價上，
+// 階數文字往外側（多往上/空往下）拉開 TOUCH_GAP。需 bars 與 _dayStats 都就緒。
 function applyTouchMarkers() {
   const d = window._dayStats;
   const bars = chartState.bars;

@@ -391,11 +391,74 @@ def _level1_signals(conn, sel: date, r1: float | None, r2: float | None) -> dict
     }
 
 
-def _collect_touches(conn, sel, levels: list[tuple[str, float]]) -> dict:
-    """各階(label, 距離) 多/空首次觸及。回傳 {bull:[{level,price,time,minute}], bear:[...]}。
+def _running_anchor_touches(bars, levels: list[tuple[str, float]]) -> dict:
+    """單一 running 錨點、每階首觸（原行為）。bars=[(minute,high,low)] 昇冪。
 
-    多方(上擺)從盤中低點往上、空方(下擺)從盤中高點往下，距離達到即記首觸（與 _level1_signals 同義）。
+    多方從累計低點往上、空方從累計高點往下，距離達到即記首觸。
     price = 多方 run_low+距離 / 空方 run_high−距離（投射價）。
+    """
+    out = {"bull": [], "bear": []}
+    run_lo, run_hi = float("inf"), float("-inf")
+    up_max = dn_max = 0.0
+    done_b, done_s = set(), set()
+    for m, h, l in bars:
+        run_lo, run_hi = min(run_lo, l), max(run_hi, h)
+        up_max, dn_max = max(up_max, h - run_lo), max(dn_max, run_hi - l)
+        for label, dist in levels:
+            if label not in done_b and up_max >= dist:
+                done_b.add(label)
+                out["bull"].append({"level": label, "price": round(run_lo + dist),
+                                    "time": _hhmm(m), "minute": m})
+            if label not in done_s and dn_max >= dist:
+                done_s.add(label)
+                out["bear"].append({"level": label, "price": round(run_hi - dist),
+                                    "time": _hhmm(m), "minute": m})
+    out["bull"].sort(key=lambda x: x["minute"])
+    out["bear"].sort(key=lambda x: x["minute"])
+    return out
+
+
+def _rearm_touches(bars, levels: list[tuple[str, float]], l2_dist: float | None) -> dict:
+    """每個 ≥L2 反轉波段以波段極值為錨點重新上膛 L1–L5（方案 B）。
+
+    bars=[(minute,high,low)] 昇冪。回傳 {bull:[{level,price,time,minute}], bear:[...]}，
+    同一階一天可多筆（不同波段、不同錨價）。無任何 ≥L2 反轉時退回單一 running 錨點。
+    用與 L3 波段相同的 zigzag（反轉門檻=l2_dist，不套 L3 最小幅度）取波段轉折。
+    """
+    out = {"bull": [], "bear": []}
+    if not bars:
+        return out
+    # 延遲 import 避免 daystats ↔ swing_legs 循環依賴
+    from src.chart_ui.services.swing_legs import zigzag_legs
+
+    legs = zigzag_legs(bars, threshold=l2_dist) if l2_dist and l2_dist > 0 else []
+    if not legs:
+        return _running_anchor_touches(bars, levels)
+
+    for lg in legs:
+        sm, em, anchor = lg["start_min"], lg["end_min"], lg["start_price"]
+        side = "bull" if lg["dir"] == "up" else "bear"
+        done = set()
+        ext = 0.0
+        for m, h, l in bars:
+            if m < sm or m > em:
+                continue
+            ext = max(ext, (h - anchor) if side == "bull" else (anchor - l))
+            for label, dist in levels:
+                if label not in done and ext >= dist:
+                    done.add(label)
+                    price = round(anchor + dist) if side == "bull" else round(anchor - dist)
+                    out[side].append({"level": label, "price": price,
+                                      "time": _hhmm(m), "minute": m})
+    out["bull"].sort(key=lambda x: x["minute"])
+    out["bear"].sort(key=lambda x: x["minute"])
+    return out
+
+
+def _collect_touches(conn, sel, levels: list[tuple[str, float]]) -> dict:
+    """各階(label, 距離) 多/空波段觸及。回傳 {bull:[{level,price,time,minute}], bear:[...]}。
+
+    每個 ≥L2 反轉波段重新上膛（方案 B，詳見 _rearm_touches）；反轉門檻取 levels 中 L2 的距離。
     """
     rows = conn.execute(
         "SELECT CAST(timestamp AS TIME) t, high, low FROM ohlcv_1m "
@@ -403,29 +466,9 @@ def _collect_touches(conn, sel, levels: list[tuple[str, float]]) -> dict:
         "AND CAST(timestamp AS TIME) BETWEEN TIME '08:45:00' AND TIME '13:45:00' ORDER BY timestamp",
         [SYMBOL, sel],
     ).fetchall()
-    out = {"bull": [], "bear": []}
-    if not rows:
-        return out
-    run_lo, run_hi = float("inf"), float("-inf")
-    up_max = dn_max = 0.0
-    done_b, done_s = set(), set()
-    for t, h, l in rows:
-        h, l = float(h), float(l)
-        run_lo, run_hi = min(run_lo, l), max(run_hi, h)
-        up_max, dn_max = max(up_max, h - run_lo), max(dn_max, run_hi - l)
-        m = t.hour * 60 + t.minute
-        for label, dist in levels:
-            if label not in done_b and up_max >= dist:
-                done_b.add(label)
-                out["bull"].append({"level": label, "price": round(run_lo + dist),
-                                    "time": t.strftime("%H:%M"), "minute": m})
-            if label not in done_s and dn_max >= dist:
-                done_s.add(label)
-                out["bear"].append({"level": label, "price": round(run_hi - dist),
-                                    "time": t.strftime("%H:%M"), "minute": m})
-    out["bull"].sort(key=lambda x: x["minute"])
-    out["bear"].sort(key=lambda x: x["minute"])
-    return out
+    bars = [(t.hour * 60 + t.minute, float(h), float(l)) for t, h, l in rows]
+    l2_dist = dict(levels).get("L2")
+    return _rearm_touches(bars, levels, l2_dist)
 
 
 def _stats(vals: list[float]) -> dict | None:
@@ -476,8 +519,13 @@ def compute_daystats(*, date_str: str, db_path: Path | None = None) -> dict:
             if dci:
                 dci["hindsight"] = True
                 dci["w_proxy"] = True
-            _bmin = {t["level"]: t["minute"] for t in touches["bull"]}
-            _smin = {t["level"]: t["minute"] for t in touches["bear"]}
+            # touches 已按 minute 昇冪；同階可能多筆(多波段重新上膛)，exit_advice 取每階最早一次
+            _bmin: dict = {}
+            for t in touches["bull"]:
+                _bmin.setdefault(t["level"], t["minute"])
+            _smin: dict = {}
+            for t in touches["bear"]:
+                _smin.setdefault(t["level"], t["minute"])
             _bl = dci["regime_long"] if dci else "mid"
             _bs = dci["regime_short"] if dci else "mid"
             exit_advice = {"bull": _exit_advice(_bmin, _bl, "多"),
