@@ -1,0 +1,402 @@
+// ============================================================
+// Swing Levels TX — 波段關卡圓點 + 即時關卡線（重新上膛版）
+//
+// 在 1 分 K 即時看盤上標示「每個波段重新上膛的 L1–L5 觸及圓點」，並畫出
+// 當前波段的即時關卡線。對應 chart-ui 的方案 B（daystats._rearm_touches），
+// 但因 TradingView 是逐根即時資料，改用「線上 zigzag（方案 C）」以避免重繪：
+//
+//   chart-ui 方案 B 用事後 zigzag（波段低點要等之後反彈 ≥L2 才確認），在 live
+//   會把圓點補畫回過去那根 = 重繪。本指標改成「反轉 ≥L2 確認的當下才換錨／重新
+//   上膛」，圓點一律畫在價格真正觸及該關卡的那一根、畫了就不再移動（非重繪）。
+//
+// 演算法（對齊 src/chart_ui/services/daystats.py 與 swing_legs.py）：
+//   ema20    = 前 N 個交易日「日盤振幅(high-low)」的因果式 EMA(adjust=False)
+//   五階距離 = c × ema20，c = 0.385/0.497/0.711/0.977/1.225（達到率 90/75/50/25/12.5%）
+//   反轉門檻 = d2（L2 = 0.497×ema20），與 L3 波段 zigzag 同源
+//
+//   線上 zigzag 狀態機（trend ↑/↓/na、ext=自上次轉折以來極值）：
+//     trend↑: ext=max(ext,high); 若 ext−low≥d2 → 翻空, bear_anchor=ext(波段高), 清空空方旗標, ext=low
+//     trend↓: ext=min(ext,low);  若 high−ext≥d2 → 翻多, bull_anchor=ext(波段低), 清空多方旗標, ext=high
+//     trend na(開盤): 以 run_lo/run_hi 為暫定錨，首波 ≥d2 定向
+//   圓點：多方 up_exc=high−bull_anchor 首次 ≥d_i → 於 bull_anchor+d_i 畫紅點(標 L1–L5)；
+//         空方對稱(綠)。旗標隨翻轉清空 → 同一階一天可多顆（重新上膛）。
+//   當前波段關卡線：trend↑ 從 bull_anchor 畫多方 L1–L5(紅)、trend↓ 從 bear_anchor(綠)、
+//         開盤暫定期兩側都畫；換錨時線即時跳到新錨。
+//
+//   live 取捨（已知且正確）：首波 L1 於創高過程即時出現；「重新上膛」那一波的 L1/L2
+//   會等 ≥L2 反轉確認後才冒出（C 的誠實代價，換取不重繪）。
+//
+// 僅用日盤 08:45–13:45；延遲暖機，EMA 用前一日收盤後才更新（無 lookahead）。
+//
+// Alert：多/空 × L1–L5 共 10 個獨立 alertcondition（建警報時於下拉逐一挑選）；
+//   另有一個 alert() 動態訊息涵蓋「任一波段任一關卡觸及」（選 Any alert() function call）。
+//   每次重新上膛的觸及都會觸發；建議「once per bar」。
+// ============================================================
+//@version=6
+indicator(
+    title   = "Swing Levels TX (波段關卡圓點)",
+    overlay = true,
+    max_lines_count  = 200,
+    max_labels_count = 500
+)
+
+// ============================================================
+// Inputs
+// ============================================================
+var string GRP_CALC = "計算參數"
+var string GRP_VIZ  = "顯示"
+
+ema_period  = input.int(20, "EMA Period", minval=5, maxval=100, group=GRP_CALC)
+min_warmup  = input.int(3, "最少暖機天數", minval=1, maxval=50,
+                 tooltip="累積幾個日盤後開始顯示（與 key_prices 一致）", group=GRP_CALC)
+
+show_dots   = input.bool(true, "波段觸及圓點", group=GRP_VIZ)
+show_bull   = input.bool(true, "當前波段多方關卡線（紅）", group=GRP_VIZ)
+show_bear   = input.bool(true, "當前波段空方關卡線（綠）", group=GRP_VIZ)
+show_lbl    = input.bool(true, "關卡線旁標示 L1~L5", group=GRP_VIZ)
+show_vlines = input.bool(true, "時間直線 9:30/10:30/11:30（灰）", group=GRP_VIZ)
+dot_size_in = input.string("tiny", "圓點字體大小", options=["tiny","small","normal"], group=GRP_VIZ)
+
+c1 = input.float(0.385, "L1 係數 (90%)",   step=0.001, group=GRP_CALC)
+c2 = input.float(0.497, "L2 係數 (75%)",   step=0.001, group=GRP_CALC)
+c3 = input.float(0.711, "L3 係數 (50%)",   step=0.001, group=GRP_CALC)
+c4 = input.float(0.977, "L4 係數 (25%)",   step=0.001, group=GRP_CALC)
+c5 = input.float(1.225, "L5 係數 (12.5%)", step=0.001, group=GRP_CALC)
+
+// 配色（台灣慣例：多/漲=紅，空/跌=綠）
+col_bull   = color.new(#ff5c5c, 0)
+col_bear   = color.new(#22c55e, 0)
+col_white  = color.new(#ffffff, 0)
+col_vline  = color.new(#888888, 25)
+
+// ============================================================
+// Time Windows (Asia/Taipei = UTC+8)
+// ============================================================
+_h = hour(time, "Asia/Taipei")
+_m = minute(time, "Asia/Taipei")
+_t = _h * 60 + _m
+in_session = _t >= 525 and _t < 825   // 08:45 ~ 13:44
+
+var int prev_session_day = -1
+_cur_day = dayofmonth(time, "Asia/Taipei")
+entering_session = in_session and _cur_day != prev_session_day
+if in_session
+    prev_session_day := _cur_day
+
+// ============================================================
+// EMA20 of prior-day session range (causal, adjust=False)
+// ============================================================
+var float sess_high = na
+var float sess_low  = na
+var float ema_range = na
+var int   day_count = 0
+float ema_alpha = 2.0 / (ema_period + 1)
+
+if entering_session
+    if not na(sess_high) and not na(sess_low) and sess_high > sess_low
+        prev_hl    = sess_high - sess_low
+        ema_range := na(ema_range) ? prev_hl : ema_range + ema_alpha * (prev_hl - ema_range)
+        day_count += 1
+    sess_high := na
+    sess_low  := na
+
+if in_session
+    sess_high := na(sess_high) ? high : math.max(sess_high, high)
+    sess_low  := na(sess_low)  ? low  : math.min(sess_low,  low)
+
+ready = day_count >= min_warmup and not na(ema_range) and not na(sess_high) and not na(sess_low)
+
+// 五階距離（當日 ema_range 固定）
+d1 = ema_range * c1
+d2 = ema_range * c2
+d3 = ema_range * c3
+d4 = ema_range * c4
+d5 = ema_range * c5
+
+// ============================================================
+// 線上 zigzag 狀態機 + 重新上膛（方案 C，非重繪）
+// ============================================================
+var int   trend       = 0     // 0=na, 1=up, -1=down
+var float ext         = na    // 自上次轉折以來的極值
+var float bull_anchor = na    // 當前多方錨（波段低）
+var float bear_anchor = na    // 當前空方錨（波段高）
+var float run_lo      = na    // 當日累計低（暖身定向用）
+var float run_hi      = na
+var bool  bdone1 = false
+var bool  bdone2 = false
+var bool  bdone3 = false
+var bool  bdone4 = false
+var bool  bdone5 = false
+var bool  sdone1 = false
+var bool  sdone2 = false
+var bool  sdone3 = false
+var bool  sdone4 = false
+var bool  sdone5 = false
+
+if entering_session
+    trend       := 0
+    ext         := na
+    bull_anchor := na
+    bear_anchor := na
+    run_lo      := na
+    run_hi      := na
+    bdone1 := false
+    bdone2 := false
+    bdone3 := false
+    bdone4 := false
+    bdone5 := false
+    sdone1 := false
+    sdone2 := false
+    sdone3 := false
+    sdone4 := false
+    sdone5 := false
+
+if in_session and ready
+    run_lo := na(run_lo) ? low  : math.min(run_lo, low)
+    run_hi := na(run_hi) ? high : math.max(run_hi, high)
+    if trend == 0
+        bull_anchor := run_lo
+        bear_anchor := run_hi
+        if high - run_lo >= d2
+            trend       := 1
+            bull_anchor := run_lo
+            ext         := high
+        else if run_hi - low >= d2
+            trend       := -1
+            bear_anchor := run_hi
+            ext         := low
+    else if trend == 1
+        ext := math.max(ext, high)
+        if ext - low >= d2                 // ≥L2 回檔 → 翻空，空方重新上膛
+            trend       := -1
+            bear_anchor := ext
+            sdone1 := false
+            sdone2 := false
+            sdone3 := false
+            sdone4 := false
+            sdone5 := false
+            ext    := low
+    else
+        ext := math.min(ext, low)
+        if high - ext >= d2                // ≥L2 反彈 → 翻多，多方重新上膛
+            trend       := 1
+            bull_anchor := ext
+            bdone1 := false
+            bdone2 := false
+            bdone3 := false
+            bdone4 := false
+            bdone5 := false
+            ext    := high
+
+// 只在「當前波段方向」那一側觸發，避免趨勢中對側殘錨誤觸（開盤暫定期兩側皆可）
+bull_active = trend != -1
+bear_active = trend != 1
+base_ok = ready and in_session
+
+bfire1 = base_ok and bull_active and not na(bull_anchor) and not bdone1 and (high - bull_anchor) >= d1
+bfire2 = base_ok and bull_active and not na(bull_anchor) and not bdone2 and (high - bull_anchor) >= d2
+bfire3 = base_ok and bull_active and not na(bull_anchor) and not bdone3 and (high - bull_anchor) >= d3
+bfire4 = base_ok and bull_active and not na(bull_anchor) and not bdone4 and (high - bull_anchor) >= d4
+bfire5 = base_ok and bull_active and not na(bull_anchor) and not bdone5 and (high - bull_anchor) >= d5
+sfire1 = base_ok and bear_active and not na(bear_anchor) and not sdone1 and (bear_anchor - low) >= d1
+sfire2 = base_ok and bear_active and not na(bear_anchor) and not sdone2 and (bear_anchor - low) >= d2
+sfire3 = base_ok and bear_active and not na(bear_anchor) and not sdone3 and (bear_anchor - low) >= d3
+sfire4 = base_ok and bear_active and not na(bear_anchor) and not sdone4 and (bear_anchor - low) >= d4
+sfire5 = base_ok and bear_active and not na(bear_anchor) and not sdone5 and (bear_anchor - low) >= d5
+
+// ============================================================
+// 圓點（rolling buffer，畫於投射關卡價、價格觸及的當下那根；非重繪）
+// ============================================================
+f_dsize(s) =>
+    r = size.tiny
+    if s == "small"
+        r := size.small
+    else if s == "normal"
+        r := size.normal
+    r
+
+var label[] dots = array.new<label>()
+int DOTS_MAX = 480
+
+// 多方標籤外移到 K 棒上方、箭頭往下指關卡價（style_label_down）；空方在下方、箭頭往上（style_label_up）。
+f_dot(px, txt, col, sty) =>
+    if show_dots
+        lb = label.new(bar_index, px, txt, xloc=xloc.bar_index, yloc=yloc.price,
+             style=sty, color=col, textcolor=col_white, size=f_dsize(dot_size_in))
+        array.push(dots, lb)
+        if array.size(dots) > DOTS_MAX
+            label.delete(array.shift(dots))
+
+if bfire1
+    f_dot(bull_anchor + d1, "L1", col_bull, label.style_label_down)
+    bdone1 := true
+if bfire2
+    f_dot(bull_anchor + d2, "L2", col_bull, label.style_label_down)
+    bdone2 := true
+if bfire3
+    f_dot(bull_anchor + d3, "L3", col_bull, label.style_label_down)
+    bdone3 := true
+if bfire4
+    f_dot(bull_anchor + d4, "L4", col_bull, label.style_label_down)
+    bdone4 := true
+if bfire5
+    f_dot(bull_anchor + d5, "L5", col_bull, label.style_label_down)
+    bdone5 := true
+if sfire1
+    f_dot(bear_anchor - d1, "L1", col_bear, label.style_label_up)
+    sdone1 := true
+if sfire2
+    f_dot(bear_anchor - d2, "L2", col_bear, label.style_label_up)
+    sdone2 := true
+if sfire3
+    f_dot(bear_anchor - d3, "L3", col_bear, label.style_label_up)
+    sdone3 := true
+if sfire4
+    f_dot(bear_anchor - d4, "L4", col_bear, label.style_label_up)
+    sdone4 := true
+if sfire5
+    f_dot(bear_anchor - d5, "L5", col_bear, label.style_label_up)
+    sdone5 := true
+
+// ============================================================
+// 當前波段關卡線（即時更新；換錨時跳到新錨）
+// ============================================================
+f_line(ln, px, col, sty) =>
+    line.set_xy1(ln, bar_index - 1, px)
+    line.set_xy2(ln, bar_index + 8, px)
+    line.set_style(ln, sty)
+    if not na(px)
+        line.set_color(ln, col)
+
+f_hide(ln) =>
+    line.set_xy1(ln, bar_index - 1, na)
+    line.set_xy2(ln, bar_index + 8, na)
+
+f_lbl(lb, px, txt, col) =>
+    label.set_xy(lb, bar_index + 9, px)
+    label.set_text(lb, show_lbl ? txt : "")
+    label.set_textcolor(lb, col)
+
+f_hide_lbl(lb) =>
+    label.set_xy(lb, bar_index + 9, na)
+
+var line lnM1 = line.new(na, na, na, na)
+var line lnM2 = line.new(na, na, na, na)
+var line lnM3 = line.new(na, na, na, na)
+var line lnM4 = line.new(na, na, na, na)
+var line lnM5 = line.new(na, na, na, na)
+var line lnS1 = line.new(na, na, na, na)
+var line lnS2 = line.new(na, na, na, na)
+var line lnS3 = line.new(na, na, na, na)
+var line lnS4 = line.new(na, na, na, na)
+var line lnS5 = line.new(na, na, na, na)
+
+var label lbM1 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbM2 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbM3 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbM4 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbM5 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbS1 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbS2 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbS3 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbS4 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+var label lbS5 = label.new(na, na, "", style=label.style_none, size=size.small, textalign=text.align_left)
+
+show_bull_now = show_bull and ready and bull_active and not na(bull_anchor)
+if show_bull_now
+    f_line(lnM1, bull_anchor + d1, color.new(col_bull, 0),  line.style_solid)
+    f_line(lnM2, bull_anchor + d2, color.new(col_bull, 20), line.style_dashed)
+    f_line(lnM3, bull_anchor + d3, color.new(col_bull, 35), line.style_dashed)
+    f_line(lnM4, bull_anchor + d4, color.new(col_bull, 50), line.style_dotted)
+    f_line(lnM5, bull_anchor + d5, color.new(col_bull, 65), line.style_dotted)
+    f_lbl(lbM1, bull_anchor + d1, "L1", col_bull)
+    f_lbl(lbM2, bull_anchor + d2, "L2", col_bull)
+    f_lbl(lbM3, bull_anchor + d3, "L3", col_bull)
+    f_lbl(lbM4, bull_anchor + d4, "L4", col_bull)
+    f_lbl(lbM5, bull_anchor + d5, "L5", col_bull)
+else
+    f_hide(lnM1)
+    f_hide(lnM2)
+    f_hide(lnM3)
+    f_hide(lnM4)
+    f_hide(lnM5)
+    f_hide_lbl(lbM1)
+    f_hide_lbl(lbM2)
+    f_hide_lbl(lbM3)
+    f_hide_lbl(lbM4)
+    f_hide_lbl(lbM5)
+
+show_bear_now = show_bear and ready and bear_active and not na(bear_anchor)
+if show_bear_now
+    f_line(lnS1, bear_anchor - d1, color.new(col_bear, 0),  line.style_solid)
+    f_line(lnS2, bear_anchor - d2, color.new(col_bear, 20), line.style_dashed)
+    f_line(lnS3, bear_anchor - d3, color.new(col_bear, 35), line.style_dashed)
+    f_line(lnS4, bear_anchor - d4, color.new(col_bear, 50), line.style_dotted)
+    f_line(lnS5, bear_anchor - d5, color.new(col_bear, 65), line.style_dotted)
+    f_lbl(lbS1, bear_anchor - d1, "L1", col_bear)
+    f_lbl(lbS2, bear_anchor - d2, "L2", col_bear)
+    f_lbl(lbS3, bear_anchor - d3, "L3", col_bear)
+    f_lbl(lbS4, bear_anchor - d4, "L4", col_bear)
+    f_lbl(lbS5, bear_anchor - d5, "L5", col_bear)
+else
+    f_hide(lnS1)
+    f_hide(lnS2)
+    f_hide(lnS3)
+    f_hide(lnS4)
+    f_hide(lnS5)
+    f_hide_lbl(lbS1)
+    f_hide_lbl(lbS2)
+    f_hide_lbl(lbS3)
+    f_hide_lbl(lbS4)
+    f_hide_lbl(lbS5)
+
+// ============================================================
+// 時間直線（9:30 / 10:30 / 11:30，灰虛線；rolling buffer 控總數）
+// ============================================================
+var line[] vlines = array.new<line>()
+int VLINE_MAX = 120
+
+f_vline() =>
+    ln = line.new(bar_index, low, bar_index, high, extend = extend.both,
+         color = col_vline, style = line.style_dashed, width = 1)
+    array.push(vlines, ln)
+    if array.size(vlines) > VLINE_MAX
+        line.delete(array.shift(vlines))
+
+var bool v930  = false
+var bool v1030 = false
+var bool v1130 = false
+if entering_session
+    v930  := false
+    v1030 := false
+    v1130 := false
+if show_vlines and in_session
+    if not v930 and _t >= 570
+        f_vline()
+        v930 := true
+    if not v1030 and _t >= 630
+        f_vline()
+        v1030 := true
+    if not v1130 and _t >= 690
+        f_vline()
+        v1130 := true
+
+// ============================================================
+// Alerts
+// ============================================================
+alertcondition(bfire1, "多方觸及 L1 (90%)",   "TX 多方波段觸及 L1 (90%地板)  close={{close}}")
+alertcondition(bfire2, "多方觸及 L2 (75%)",   "TX 多方波段觸及 L2 (75%)  close={{close}}")
+alertcondition(bfire3, "多方觸及 L3 (50%)",   "TX 多方波段觸及 L3 (50%)  close={{close}}")
+alertcondition(bfire4, "多方觸及 L4 (25%)",   "TX 多方波段觸及 L4 (25%)  close={{close}}")
+alertcondition(bfire5, "多方觸及 L5 (12.5%)", "TX 多方波段觸及 L5 (12.5% 長尾)  close={{close}}")
+alertcondition(sfire1, "空方觸及 L1 (90%)",   "TX 空方波段觸及 L1 (90%地板)  close={{close}}")
+alertcondition(sfire2, "空方觸及 L2 (75%)",   "TX 空方波段觸及 L2 (75%)  close={{close}}")
+alertcondition(sfire3, "空方觸及 L3 (50%)",   "TX 空方波段觸及 L3 (50%)  close={{close}}")
+alertcondition(sfire4, "空方觸及 L4 (25%)",   "TX 空方波段觸及 L4 (25%)  close={{close}}")
+alertcondition(sfire5, "空方觸及 L5 (12.5%)", "TX 空方波段觸及 L5 (12.5% 長尾)  close={{close}}")
+
+any_touch = bfire1 or bfire2 or bfire3 or bfire4 or bfire5 or sfire1 or sfire2 or sfire3 or sfire4 or sfire5
+if any_touch
+    _side = (bfire1 or bfire2 or bfire3 or bfire4 or bfire5) ? "多方" : "空方"
+    _lvl = (bfire1 or sfire1) ? "L1(90%)" : (bfire2 or sfire2) ? "L2(75%)" : (bfire3 or sfire3) ? "L3(50%)" : (bfire4 or sfire4) ? "L4(25%)" : "L5(12.5%)"
+    alert("TX " + _side + " 波段觸及 " + _lvl + "  價=" + str.tostring(close), alert.freq_once_per_bar)
