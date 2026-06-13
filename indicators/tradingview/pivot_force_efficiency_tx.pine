@@ -1,0 +1,106 @@
+// ============================================================
+// Pivot Force Efficiency TX — 波段力道效率（副圖，1分K）
+//
+// 概念：結合 bull_bear_force_volume（紅K加量、黑K減量＝淨力）與 pivot。
+//   每個 pivot 確認後，量「該波段方向推進的點數 ÷ 淨力(每1000口)」
+//   = 1000 口能推動幾點 = 多空力道效率。值越大＝越省力（盤口輕/推力強）。
+//
+// 演算法（全因果；pivot 用 ta.pivotlow/high(L,L)，於 pivot 後 L 根確認，
+//   故確認當下 pivot 那根已是過去資料，無未來函數）：
+//   netVol  = 紅K(close>open) +volume / 黑K(close<open) −volume / 平盤 0
+//   視窗回填(確認當下用)：netSum=sum(netVol,L+1)、hh=highest(high,L+1)、ll=lowest(low,L+1)
+//
+//   狀態機（只在『反向 pivot』換向時重置；同向 pivot 繼續累計、不切碎同一波）：
+//     反向(或首個) pivot 確認 → 換向 dir=±1, anchor=pivot價, cum_net=netSum, run_ext=hh/ll（從 pivot 那根回填）
+//     同向 pivot 確認 → 不重置，anchor 延伸到更極端值(多取更低/空取更高)，淨力與極值持續累計
+//     一般進行中(無新 pivot) → cum_net += netVol；run_ext = dir>0 ? max(run_ext,high) : min(run_ext,low)
+//
+//   points   = dir>0 ? run_ext−anchor : anchor−run_ext   （方向性推進點數，≥0）
+//   strength = points / (|cum_net|/unit)                  （點 / 每1000口）
+//   |cum_net| < 門檻時回 na，避免分母過小爆衝。
+//
+// 副圖：強度線（多在零軸上、空在下；台灣慣例 紅多/綠空），零軸虛線，
+//   pivot 重置處標點，右側 last-bar 數值標籤。
+//
+// 取捨：波段「進行中」直到對向 pivot 確認才換向（確認本身有 L 根延遲，屬正常）。
+//   v1 不做日界/盤別重置（純 pivot 驅動）；TX 含夜盤若跨盤錨點怪再加開關。
+// ============================================================
+//@version=6
+indicator("Pivot Force Efficiency TX (波段力道效率)", overlay = false)
+
+// === Inputs ===
+var string GRP = "參數"
+pivotLen = input.int(5,    "Pivot 長度（左右）", minval=1, maxval=50, group=GRP)
+unit     = input.float(1000, "力量單位（口）",   minval=1, group=GRP,
+             tooltip="強度＝推進點數 ÷ (淨力/此值)；預設每 1000 口")
+minNet   = input.float(200, "最小淨力門檻（口）", minval=0, group=GRP,
+             tooltip="|淨力| 低於此值不計算，避免分母過小使強度爆衝")
+col_bull = input.color(#ff5c5c, "多方色", group=GRP)
+col_bear = input.color(#22c55e, "空方色", group=GRP)
+show_lbl = input.bool(true, "右側數值標籤", group=GRP)
+show_mk  = input.bool(true, "pivot 重置標點", group=GRP)
+
+col_white = color.new(#ffffff, 0)
+col_panel = color.new(#161616, 10)
+col_zero  = color.new(#888888, 0)
+
+// === 每根 K（全域，維持 ta/math 序列狀態）===
+netVol = close > open ? volume : close < open ? -volume : 0.0
+pl = ta.pivotlow(pivotLen, pivotLen)
+ph = ta.pivothigh(pivotLen, pivotLen)
+netSum = math.sum(netVol, pivotLen + 1)
+hh = ta.highest(high, pivotLen + 1)
+ll = ta.lowest(low,  pivotLen + 1)
+
+// === 狀態機（逐 pivot 重置）===
+var int   dir     = 0      // +1=pivot low 後多方 / −1=pivot high 後空方 / 0=尚無
+var float anchor  = na     // 波段錨點價（pivot 低/高）
+var float cum_net = na     // 自 pivot 那根起的累積淨力（口）
+var float run_ext = na     // 波段方向的極值（多=最高 high / 空=最低 low）
+
+reset_now = false
+if not na(pl)
+    if dir != 1
+        dir := 1                              // 反向(或首個)：換多、重置回填
+        anchor := pl
+        cum_net := netSum
+        run_ext := hh
+        reset_now := true
+    else
+        anchor := math.min(anchor, pl)        // 同向 pivot low：錨延伸到更低，繼續累計
+if not na(ph)
+    if dir != -1
+        dir := -1                             // 反向(或首個)：換空、重置回填
+        anchor := ph
+        cum_net := netSum
+        run_ext := ll
+        reset_now := true
+    else
+        anchor := math.max(anchor, ph)        // 同向 pivot high：錨延伸到更高，繼續累計
+if not reset_now and dir != 0
+    cum_net := cum_net + netVol
+    run_ext := dir == 1 ? math.max(run_ext, high) : math.min(run_ext, low)
+
+// === 強度 ===
+points   = dir == 1 ? (run_ext - anchor) : dir == -1 ? (anchor - run_ext) : na
+net_abs  = math.abs(cum_net)
+strength = (dir != 0 and not na(net_abs) and net_abs >= minNet) ? points / (net_abs / unit) : na
+plotVal  = dir == 1 ? strength : dir == -1 ? -strength : na
+
+// === 副圖繪製 ===
+plotColor = na(plotVal) ? na : plotVal >= 0 ? col_bull : col_bear
+plot(plotVal, "力道效率(點/1k口)", color = plotColor, style = plot.style_line, linewidth = 2)
+hline(0, "零軸", color = col_zero, linestyle = hline.style_dashed)
+plotchar(show_mk and reset_now ? 0 : na, "pivot重置", "◆", location = location.absolute,
+     color = dir == 1 ? col_bull : col_bear, size = size.tiny)
+
+// === 右側數值標籤 ===
+var label lb = na
+if barstate.islast
+    if not na(lb)
+        label.delete(lb)
+    if dir != 0 and not na(strength)
+        _dirtxt = dir == 1 ? "多" : "空"
+        _txt = _dirtxt + " 效率 " + str.tostring(strength, "#.0") + " 點/1k口\n推進 " + str.tostring(points, "#") + " 點\n淨力 " + str.tostring(cum_net, "#") + " 口"
+        lb := label.new(bar_index + 2, plotVal, _txt, xloc = xloc.bar_index, yloc = yloc.price,
+             style = label.style_label_left, color = col_panel, textcolor = col_white, size = size.small)
