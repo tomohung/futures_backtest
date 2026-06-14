@@ -31,6 +31,14 @@
 // Alert：多/空 × L1–L5 共 10 個獨立 alertcondition（建警報時於下拉逐一挑選）；
 //   另有一個 alert() 動態訊息涵蓋「任一波段任一關卡觸及」（選 Any alert() function call）。
 //   每次重新上膛的觸及都會觸發；建議「once per bar」。
+//
+// 【H120 進場/停損】（研究 research/active/H120-l2-pullback-continuation，回測 confirmed）
+//   訊號：波段達 L2 確立方向 → 回檔 ≥ pb_floor(0.05×EMA20) → 收盤站回 5MA 進場（每段一次）。
+//     guard：直衝 L3 不交易、進場那根已破 L3 不交易、收盤確認才標記（非重繪）。
+//   停損：拉回極值往錨點(趨勢起點)靠 alpha=0.75；目標：L3 關卡線。
+//   標記：▲多/▼空 進場價 + 停損價(風險點數) + 目標L3；停損畫實線。Alert 含進場價/停損。
+//   回測重點：勝率 ~76–80%、空方>多方、全時段皆正(早盤EV最高)、maxDD≈−2%、成本≤6pt仍正。
+//     高勝率低賠率 profile（單筆 R:R 常<1，靠勝率撐）；想博 L4/L5 長尾改用 trail 出場(回測版本B)。
 // ============================================================
 //@version=6
 indicator(
@@ -62,6 +70,19 @@ c2 = input.float(0.497, "L2 係數 (75%)",   step=0.001, group=GRP_CALC)
 c3 = input.float(0.711, "L3 係數 (50%)",   step=0.001, group=GRP_CALC)
 c4 = input.float(0.977, "L4 係數 (25%)",   step=0.001, group=GRP_CALC)
 c5 = input.float(1.225, "L5 係數 (12.5%)", step=0.001, group=GRP_CALC)
+
+// H120 進場（拉回後站回 5MA 續攻 L2→L3）+ 停損
+var string GRP_H120 = "H120 進場/停損"
+show_entry  = input.bool(false, "顯示進場訊號 + 停損", group=GRP_H120)
+ent_long    = input.bool(true,  "  多單進場", group=GRP_H120)
+ent_short   = input.bool(true,  "  空單進場（回測較強）", group=GRP_H120)
+ent_cutoff  = input.int(825, "  進場時間上限(分)", minval=540, maxval=825, group=GRP_H120,
+                 tooltip="只在此分鐘前產生進場。525=08:45、690=11:30、825=13:45。回測全時段皆正、早盤 EV 最高")
+ema5_period = input.int(5, "  站回均線週期", minval=2, maxval=20, group=GRP_H120)
+pb_floor_c  = input.float(0.05, "  拉回最小深度係數×EMA20", step=0.01, group=GRP_H120,
+                 tooltip="確立後須回檔 ≥ 此係數×EMA20 才算有效拉回（過濾微回）")
+stop_alpha  = input.float(0.75, "  停損 alpha", step=0.05, minval=0, maxval=1, group=GRP_H120,
+                 tooltip="停損=拉回極值往錨點靠 alpha 比例。0=拉回極值(緊)、1=趨勢起點(寬)。回測最佳 0.75")
 
 // 配色（台灣慣例：多/漲=紅，空/跌=綠）
 col_bull   = color.new(#ff5c5c, 0)
@@ -113,6 +134,10 @@ d3 = ema_range * c3
 d4 = ema_range * c4
 d5 = ema_range * c5
 
+// H120：站回均線 + 拉回門檻（每根都算，避免 na 斷層）
+sma5     = ta.sma(close, ema5_period)
+pb_floor = ema_range * pb_floor_c
+
 // ============================================================
 // 線上 zigzag 狀態機 + 重新上膛（方案 C，非重繪）
 // ============================================================
@@ -133,6 +158,22 @@ var bool  sdone3 = false
 var bool  sdone4 = false
 var bool  sdone5 = false
 
+// H120 進場狀態（多/空各一組，隨換錨/開盤重置）
+var bool  b_est     = false   // 多：已達 L2 確立
+var int   b_state   = 0       // 0=尚未拉回, 1=拉回中
+var float b_pbext   = na      // 多：拉回最低
+var bool  b_entered = false
+var bool  b_matured = false   // 多：直衝 L3，跳過
+var float b_entry   = na
+var float b_stop    = na
+var bool  s_est     = false
+var int   s_state   = 0
+var float s_pbext   = na      // 空：拉回最高
+var bool  s_entered = false
+var bool  s_matured = false
+var float s_entry   = na
+var float s_stop    = na
+
 if entering_session
     trend       := 0
     ext         := na
@@ -150,6 +191,16 @@ if entering_session
     sdone3 := false
     sdone4 := false
     sdone5 := false
+    b_est     := false
+    b_state   := 0
+    b_pbext   := na
+    b_entered := false
+    b_matured := false
+    s_est     := false
+    s_state   := 0
+    s_pbext   := na
+    s_entered := false
+    s_matured := false
 
 if in_session and ready
     run_lo := na(run_lo) ? low  : math.min(run_lo, low)
@@ -175,6 +226,11 @@ if in_session and ready
             sdone3 := false
             sdone4 := false
             sdone5 := false
+            s_est     := false
+            s_state   := 0
+            s_pbext   := na
+            s_entered := false
+            s_matured := false
             ext    := low
     else
         ext := math.min(ext, low)
@@ -186,7 +242,61 @@ if in_session and ready
             bdone3 := false
             bdone4 := false
             bdone5 := false
+            b_est     := false
+            b_state   := 0
+            b_pbext   := na
+            b_entered := false
+            b_matured := false
             ext    := high
+
+// ============================================================
+// H120 進場：確立(達L2) → 拉回(≥pb_floor) → 站回 5MA 進場（每段一次，非重繪）
+//   多：ext=波段高(=running high)、bull_anchor=波段低；停損=拉回低往錨靠 alpha。
+//   guard：直衝 L3 不交易(matured)、進場那根已破 L3 不交易(overshoot)、收盤確認才進。
+// ============================================================
+bull_entry_fire = false
+bear_entry_fire = false
+if in_session and ready
+    // ---- 多單 ----
+    if trend == 1 and not na(bull_anchor)
+        if not b_est and (ext - bull_anchor) >= d2
+            b_est := true
+        if b_est and not b_entered and not b_matured
+            if b_state == 0
+                if (ext - bull_anchor) >= d3
+                    b_matured := true
+                else if (ext - low) >= pb_floor
+                    b_state := 1
+                    b_pbext := low
+            else
+                b_pbext := math.min(b_pbext, low)
+                b_reclaim = close[1] < sma5[1] and close > sma5
+                b_overshoot = close >= bull_anchor + d3
+                if ent_long and b_reclaim and not b_overshoot and _t < ent_cutoff and barstate.isconfirmed
+                    b_entry   := close
+                    b_stop    := b_pbext - stop_alpha * (b_pbext - bull_anchor)
+                    b_entered := true
+                    bull_entry_fire := true
+    // ---- 空單 ----
+    if trend == -1 and not na(bear_anchor)
+        if not s_est and (bear_anchor - ext) >= d2
+            s_est := true
+        if s_est and not s_entered and not s_matured
+            if s_state == 0
+                if (bear_anchor - ext) >= d3
+                    s_matured := true
+                else if (high - ext) >= pb_floor
+                    s_state := 1
+                    s_pbext := high
+            else
+                s_pbext := math.max(s_pbext, high)
+                s_reclaim = close[1] > sma5[1] and close < sma5
+                s_overshoot = close <= bear_anchor - d3
+                if ent_short and s_reclaim and not s_overshoot and _t < ent_cutoff and barstate.isconfirmed
+                    s_entry   := close
+                    s_stop    := s_pbext + stop_alpha * (bear_anchor - s_pbext)
+                    s_entered := true
+                    bear_entry_fire := true
 
 // 只在「當前波段方向」那一側觸發，避免趨勢中對側殘錨誤觸（開盤暫定期兩側皆可）
 bull_active = trend != -1
@@ -257,6 +367,37 @@ if sfire4
 if sfire5
     f_dot(bear_anchor - d5, "L5", col_bear, label.style_label_up)
     sdone5 := true
+
+// ============================================================
+// H120 進場標記（▲多/▼空 + 進場價 + 停損點數）+ 停損虛線
+// ============================================================
+var label[] ent_lbls = array.new<label>()
+var line[]  stop_lns = array.new<line>()
+int ENT_MAX = 60
+
+f_entry(px, stop, tgt, isLong) =>
+    if show_entry
+        risk = math.round(math.abs(px - stop))
+        head = isLong ? "▲ 多進 " : "▼ 空進 "
+        col  = isLong ? col_bull : col_bear
+        sty  = isLong ? label.style_label_up : label.style_label_down
+        yloc_px = isLong ? low : high
+        txt = head + str.tostring(math.round(px)) + "\nSL " + str.tostring(math.round(stop)) + "（風險 " + str.tostring(risk) + " 點）\n目標L3 " + str.tostring(math.round(tgt))
+        lb = label.new(bar_index, yloc_px, txt, xloc=xloc.bar_index, yloc=yloc.price,
+             style=sty, color=col, textcolor=col_white, size=size.small)
+        array.push(ent_lbls, lb)
+        if array.size(ent_lbls) > ENT_MAX
+            label.delete(array.shift(ent_lbls))
+        ln = line.new(bar_index, stop, bar_index + 12, stop, xloc=xloc.bar_index,
+             color=color.new(col, 10), style=line.style_solid, width=2)
+        array.push(stop_lns, ln)
+        if array.size(stop_lns) > ENT_MAX
+            line.delete(array.shift(stop_lns))
+
+if bull_entry_fire
+    f_entry(b_entry, b_stop, bull_anchor + d3, true)
+if bear_entry_fire
+    f_entry(s_entry, s_stop, bear_anchor - d3, false)
 
 // ============================================================
 // 當前波段關卡線（即時更新；換錨時跳到新錨）
@@ -400,3 +541,12 @@ if any_touch
     _side = (bfire1 or bfire2 or bfire3 or bfire4 or bfire5) ? "多方" : "空方"
     _lvl = (bfire1 or sfire1) ? "L1(90%)" : (bfire2 or sfire2) ? "L2(75%)" : (bfire3 or sfire3) ? "L3(50%)" : (bfire4 or sfire4) ? "L4(25%)" : "L5(12.5%)"
     alert("TX " + _side + " 波段觸及 " + _lvl + "  價=" + str.tostring(close), alert.freq_once_per_bar)
+
+// H120 進場 alert
+alertcondition(bull_entry_fire, "H120 多單進場", "TX H120 多單進場 站回5MA 價={{close}}")
+alertcondition(bear_entry_fire, "H120 空單進場", "TX H120 空單進場 站回5MA 價={{close}}")
+if bull_entry_fire or bear_entry_fire
+    _es = bull_entry_fire ? "多單" : "空單"
+    _ep = bull_entry_fire ? b_entry : s_entry
+    _sl = bull_entry_fire ? b_stop : s_stop
+    alert("TX H120 " + _es + " 進場 價=" + str.tostring(math.round(_ep)) + " 停損=" + str.tostring(math.round(_sl)), alert.freq_once_per_bar)
