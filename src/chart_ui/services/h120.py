@@ -21,7 +21,8 @@ COEF = {"L2": 0.497, "L3": 0.711, "L4": 0.977, "L5": 1.225}
 PB_FLOOR_FRAC = 0.05
 STOP_ALPHA = 0.75
 EMA5 = 5
-CUTOFF_MIN = 720   # 進場時間上限=12:00（午後尾盤幾乎無 edge，H120 分時段分析）
+CUTOFF_MIN = 720       # 進場時間上限=12:00（午後尾盤幾乎無 edge）
+MIN_DEPTH_FRAC = 0.25  # 進場最小拉回深度(÷L2)；濾掉淺拉回（avgR僅0.08、占46%）
 
 
 def _sma(seq, n):
@@ -100,6 +101,8 @@ def detect_day(bars, ema20):
                     stop = pb_ext - STOP_ALPHA * (pb_ext - anchor) if up \
                         else pb_ext + STOP_ALPHA * (anchor - pb_ext)
                     target = anchor + L3d if up else anchor - L3d
+                    depth = (peak - pb_ext) if up else (pb_ext - peak)
+                    dfrac = depth / L2d
                     out.append({
                         "entry_min": m, "entry_i": i,
                         "side": "long" if up else "short",
@@ -107,9 +110,15 @@ def detect_day(bars, ema20):
                         "pb_ext": round(pb_ext, 1), "stop": round(stop, 1),
                         "target": round(target, 1),
                         "risk": round(abs(c - stop)),
+                        "depth_frac": dfrac, "size": size_mult(dfrac),
                     })
                     break
     return out, dist
+
+
+def size_mult(dfrac: float) -> float:
+    """拉回深度(÷L2) → 加碼倍數（兩階）。<0.25 過濾不交易；0.25~0.5 ×1、≥0.5 ×2。"""
+    return 2.0 if dfrac >= 0.5 else 1.0
 
 
 def simulate(e, bars):
@@ -154,13 +163,16 @@ def compute_h120_entries(*, date_str: str, db_path: Path | None = None) -> dict:
     entries, dist = detect_day(bars, ema20)
     out = []
     for e in entries:
-        if e["entry_min"] >= CUTOFF_MIN:   # 進場時間上限 12:00
+        if e["entry_min"] >= CUTOFF_MIN:           # 進場時間上限 12:00
+            continue
+        if e["depth_frac"] < MIN_DEPTH_FRAC:       # 濾掉淺拉回
             continue
         exit_min, exit_px, pnl, result = simulate(e, bars)
         out.append({
             "time": _min_to_hhmm(e["entry_min"]),
             "side": e["side"], "entry": e["entry"], "stop": e["stop"],
             "target": e["target"], "risk": e["risk"],
+            "depth_frac": round(e["depth_frac"], 2), "size": e["size"],
             "exit_time": _min_to_hhmm(exit_min), "exit": exit_px,
             "pnl": pnl, "result": result,
         })

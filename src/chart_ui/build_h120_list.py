@@ -18,7 +18,13 @@ import duckdb
 from src.chart_ui import paths
 from src.chart_ui.list_writer import write_chart_list
 from src.chart_ui.services.daystats import SYMBOL, _ema20_range
-from src.chart_ui.services.h120 import _day_bars, _min_to_hhmm, detect_day, simulate
+from src.chart_ui.services.h120 import (
+    MIN_DEPTH_FRAC,
+    _day_bars,
+    _min_to_hhmm,
+    detect_day,
+    simulate,
+)
 
 
 def build(side: str | None, cutoff: int | None, result: str | None = None):
@@ -40,6 +46,8 @@ def build(side: str | None, cutoff: int | None, result: str | None = None):
                     continue
                 if cutoff and e["entry_min"] >= cutoff:
                     continue
+                if e["depth_frac"] < MIN_DEPTH_FRAC:   # 濾掉淺拉回（與策略一致）
+                    continue
                 exit_min, exit_px, pnl, res = simulate(e, bars)
                 if result and res != result:
                     continue
@@ -56,8 +64,9 @@ def build(side: str | None, cutoff: int | None, result: str | None = None):
                         {"price": e["stop"], "label": "停損"},
                         {"price": e["target"], "label": "目標L3"},
                     ],
-                    "note": (f"{'多' if e['side']=='long' else '空'}｜錨{int(e['anchor'])}"
-                             f"｜拉回{int(e['pb_ext'])}｜風險{e['risk']}點｜目標L3 {int(e['target'])}"),
+                    "note": (f"{'多' if e['side']=='long' else '空'} 加碼×{e['size']:g}"
+                             f"｜深度{round(e['depth_frac'],2):g}L2｜錨{int(e['anchor'])}｜拉回{int(e['pb_ext'])}"
+                             f"｜風險{e['risk']}點｜目標L3 {int(e['target'])}"),
                 })
     return items
 
