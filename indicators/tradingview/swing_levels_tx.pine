@@ -76,8 +76,8 @@ var string GRP_H120 = "H120 進場/停損"
 show_entry  = input.bool(false, "顯示進場訊號 + 停損", group=GRP_H120)
 ent_long    = input.bool(true,  "  多單進場", group=GRP_H120)
 ent_short   = input.bool(true,  "  空單進場（回測較強）", group=GRP_H120)
-ent_cutoff  = input.int(825, "  進場時間上限(分)", minval=540, maxval=825, group=GRP_H120,
-                 tooltip="只在此分鐘前產生進場。525=08:45、690=11:30、825=13:45。回測全時段皆正、早盤 EV 最高")
+ent_cutoff  = input.int(720, "  進場時間上限(分)", minval=540, maxval=825, group=GRP_H120,
+                 tooltip="只在此分鐘前產生進場。720=12:00(預設,砍掉幾乎無 edge 的午後尾盤)。525=08:45、690=11:30、825=13:45")
 ema5_period = input.int(5, "  站回均線週期", minval=2, maxval=20, group=GRP_H120)
 pb_floor_c  = input.float(0.05, "  拉回最小深度係數×EMA20", step=0.01, group=GRP_H120,
                  tooltip="確立後須回檔 ≥ 此係數×EMA20 才算有效拉回（過濾微回）")
