@@ -21,6 +21,7 @@ COEF = {"L2": 0.497, "L3": 0.711, "L4": 0.977, "L5": 1.225}
 PB_FLOOR_FRAC = 0.05
 STOP_ALPHA = 0.75
 EMA5 = 5
+CUTOFF_MIN = 720   # 進場時間上限=12:00（午後尾盤幾乎無 edge，H120 分時段分析）
 
 
 def _sma(seq, n):
@@ -151,10 +152,16 @@ def compute_h120_entries(*, date_str: str, db_path: Path | None = None) -> dict:
     if len(bars) < 5:
         return {"entries": [], "l3_dist": round(COEF["L3"] * ema20, 1), "ema20": round(ema20, 1)}
     entries, dist = detect_day(bars, ema20)
+    out = []
     for e in entries:
-        e["time"] = _min_to_hhmm(e["entry_min"])
-    return {
-        "entries": [{k: e[k] for k in ("time", "side", "entry", "stop", "target", "risk")}
-                    for e in entries],
-        "l3_dist": round(dist["L3"], 1), "ema20": round(ema20, 1),
-    }
+        if e["entry_min"] >= CUTOFF_MIN:   # 進場時間上限 12:00
+            continue
+        exit_min, exit_px, pnl, result = simulate(e, bars)
+        out.append({
+            "time": _min_to_hhmm(e["entry_min"]),
+            "side": e["side"], "entry": e["entry"], "stop": e["stop"],
+            "target": e["target"], "risk": e["risk"],
+            "exit_time": _min_to_hhmm(exit_min), "exit": exit_px,
+            "pnl": pnl, "result": result,
+        })
+    return {"entries": out, "l3_dist": round(dist["L3"], 1), "ema20": round(ema20, 1)}

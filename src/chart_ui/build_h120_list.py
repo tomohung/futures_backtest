@@ -21,7 +21,7 @@ from src.chart_ui.services.daystats import SYMBOL, _ema20_range
 from src.chart_ui.services.h120 import _day_bars, _min_to_hhmm, detect_day, simulate
 
 
-def build(side: str | None, cutoff: int | None):
+def build(side: str | None, cutoff: int | None, result: str | None = None):
     items = []
     with duckdb.connect(str(paths.DUCKDB_PATH), read_only=True) as conn:
         days = [r[0] for r in conn.execute(
@@ -40,7 +40,9 @@ def build(side: str | None, cutoff: int | None):
                     continue
                 if cutoff and e["entry_min"] >= cutoff:
                     continue
-                exit_min, exit_px, pnl, result = simulate(e, bars)
+                exit_min, exit_px, pnl, res = simulate(e, bars)
+                if result and res != result:
+                    continue
                 items.append({
                     "time": f"{d} {_min_to_hhmm(e['entry_min'])}:00",
                     "exit_time": f"{d} {_min_to_hhmm(exit_min)}:00",
@@ -49,7 +51,7 @@ def build(side: str | None, cutoff: int | None):
                     "exit": exit_px,
                     "pnl_pts": pnl,
                     "return_pct": round(pnl / e["entry"] * 100, 3),
-                    "result": result,
+                    "result": res,
                     "levels": [
                         {"price": e["stop"], "label": "停損"},
                         {"price": e["target"], "label": "目標L3"},
@@ -63,14 +65,22 @@ def build(side: str | None, cutoff: int | None):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--side", choices=["long", "short"], default=None)
-    ap.add_argument("--cutoff", type=int, default=None, help="只收此分鐘前進場（690=11:30）")
+    ap.add_argument("--result", choices=["Win", "Loss", "Open"], default=None,
+                    help="只收特定結果（Loss=敗單覆盤）")
+    ap.add_argument("--cutoff", type=int, default=720,
+                    help="只收此分鐘前進場（預設720=12:00；825=全時段）")
     ap.add_argument("--id", default=None)
     args = ap.parse_args()
 
-    items = build(args.side, args.cutoff)
-    suffix = (f"-{args.side}" if args.side else "") + (f"-le{args.cutoff}" if args.cutoff else "")
+    items = build(args.side, args.cutoff, args.result)
+    # 預設 cutoff=720(12:00) 視為標準，不加後綴；非預設才標 -le{cutoff}
+    cut_suffix = f"-le{args.cutoff}" if (args.cutoff and args.cutoff != 720) else ""
+    res_suffix = f"-{args.result.lower()}" if args.result else ""
+    suffix = (f"-{args.side}" if args.side else "") + res_suffix + cut_suffix
     list_id = args.id or f"h120-l2-pullback{suffix}"
-    name = "H120 拉回站回5MA續攻" + (f"（{args.side}）" if args.side else "") + (f"（≤{_min_to_hhmm(args.cutoff)}）" if args.cutoff else "")
+    cut_name = f"（≤{_min_to_hhmm(args.cutoff)}）" if (args.cutoff and args.cutoff != 720) else ""
+    res_name = {"Win": "（勝）", "Loss": "（敗）", "Open": "（收盤）"}.get(args.result, "")
+    name = "L2拉回續攻" + (f"（{args.side}）" if args.side else "") + res_name + cut_name
     path = write_chart_list(list_id, items, name=name,
                             desc="L2確立→拉回→收盤站回5MA進場；停損=拉回極值往錨靠0.75，目標L3。研究 H120。")
     wins = sum(1 for it in items if it["result"] == "Win")

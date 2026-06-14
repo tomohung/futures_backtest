@@ -264,23 +264,55 @@ async function loadSwingLegs(date) {
   applyL3Legs();
 }
 
-// H120 進場指標（獨立 markers handle，預設關）：當日「拉回後站回 5MA」進場箭頭，
-// 文字含停損點數(SL)。停損/目標的水平線在點選 H120 清單項時由 drawTradeMarkers 畫。
+// L2 拉回續攻指標（獨立，預設關）：當日「拉回後站回 5MA」進場箭頭(金) + 停損水平線(紅虛線，
+// 進場→出場)，停損觸發/達標 L3 的那根標出場 marker（類似 pivot 停損延伸線）。
+const H120_STOP_COLOR = '#c0392b';   // 停損線（紅虛線）
+function clearH120Stops() {
+  if (chartState.h120StopSeries) {
+    for (const s of chartState.h120StopSeries) { try { chartState.chart.removeSeries(s); } catch (_) {} }
+  }
+  chartState.h120StopSeries = [];
+}
 function applyH120Markers() {
   if (!chartState.candle) return;
+  clearH120Stops();
   const day = chartState._h120Day;
   const raw = chartState._h120Raw;
   const marks = [];
-  if (state.indH120 && state.tf !== '1d' && day && raw && chartState.bars && chartState.bars.length) {
+  const active = state.indH120 && state.tf !== '1d' && day && raw && chartState.bars && chartState.bars.length;
+  if (active) {
     for (const e of raw) {
       const bt = nearestBarTime(localToEpoch(`${day} ${e.time}:00`));
       if (bt == null) continue;
       const isLong = e.side === 'long';
+      // 進場箭頭（金）
       marks.push({
         time: bt, position: isLong ? 'belowBar' : 'aboveBar',
         shape: isLong ? 'arrowUp' : 'arrowDown', color: COLORS.accent,
-        text: `${isLong ? 'H120多' : 'H120空'} SL${e.risk}`,
+        text: `${isLong ? '拉回多' : '拉回空'} SL${e.risk}`,
       });
+      // 停損水平線：進場 → 出場（紅虛線）；出場 marker（停損觸發 or L3 達標）
+      const xt = e.exit_time ? nearestBarTime(localToEpoch(`${day} ${e.exit_time}:00`)) : null;
+      if (xt != null && e.stop != null) {
+        const seg = chartState.chart.addSeries(LightweightCharts.LineSeries, {
+          color: H120_STOP_COLOR, lineWidth: 1, lineStyle: 2,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        });
+        const a = Math.min(bt, xt), b = Math.max(bt, xt);
+        seg.setData([{ time: a, value: +e.stop }, { time: b, value: +e.stop }]);
+        chartState.h120StopSeries.push(seg);
+      }
+      if (xt != null && e.result === 'Loss') {
+        marks.push({
+          time: xt, position: isLong ? 'belowBar' : 'aboveBar',
+          shape: isLong ? 'arrowDown' : 'arrowUp', color: H120_STOP_COLOR, text: '停損',
+        });
+      } else if (xt != null && e.result === 'Win') {
+        marks.push({
+          time: xt, position: isLong ? 'aboveBar' : 'belowBar',
+          shape: 'circle', color: '#3b82f6', text: 'L3達標',
+        });
+      }
     }
     marks.sort((a, b) => a.time - b.time);
   }
@@ -1148,10 +1180,10 @@ function updateLegend(param) {
       ? `<span class="ind-toggle" data-toggle="l3legs" style="color:${COLORS.up}">L3 波段</span>`
       : `<span class="ind-toggle ma-off" data-toggle="l3legs">L3 波段</span>`;
     const indH120 = state.indH120
-      ? `<span class="ind-toggle" data-toggle="h120" style="color:${COLORS.accent}">H120進場</span>`
-      : `<span class="ind-toggle ma-off" data-toggle="h120">H120進場</span>`;
+      ? `<span class="ind-toggle" data-toggle="h120" style="color:${COLORS.accent}">L2拉回續攻</span>`
+      : `<span class="ind-toggle ma-off" data-toggle="h120">L2拉回續攻</span>`;
     const maLine = `${master}　${perMa}`;
-    const indLine = `${ind5}　${indMa600}<br>${indV}<br>${pvw}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}<br>${indL3}<br>${indH120}`;   // 5MA+600MA / VWAP / 昨前VWAP / BB / Pivot / ORB / 關卡觸及 / Risk / L3波段 / H120進場 各自獨立一行
+    const indLine = `${ind5}　${indMa600}<br>${indV}<br>${pvw}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}<br>${indL3}<br>${indH120}`;   // 5MA+600MA / VWAP / 昨前VWAP / BB / Pivot / ORB / 關卡觸及 / Risk / L3波段 / L2拉回續攻 各自獨立一行
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
