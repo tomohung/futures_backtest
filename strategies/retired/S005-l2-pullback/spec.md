@@ -1,5 +1,10 @@
 # Strategy Spec: L2 拉回續攻 — 拉回站回 5MA 續攻 L2→L3
 
+> ## ⛔ RETIRED 2026-06-15 — 前視偏誤
+> 原 Confirmed 績效是 ZigZag leg 終點 `em`（未來資訊）造成的假象。causal 重寫後 Sharpe 0.04、
+> 無可部署 edge。詳見 performance.md banner 與 H120 causal_validation.md。
+> 下方規格僅留存記錄；策略已移至 `strategies/retired/`。
+
 ## ID
 S005
 

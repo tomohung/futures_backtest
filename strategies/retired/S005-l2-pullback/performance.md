@@ -1,6 +1,14 @@
 # Performance Log: L2 拉回續攻 (S005)
 
-## Backtest Summary（部署版：trigger A, alpha=0.75, ≤12:00, 拉回深度≥0.25, mode=L3, cost=3pt, 固定1倉）
+> ## ⛔ RETIRED 2026-06-15 — 前視偏誤，績效作廢
+> 下表所有數字**無效**。回測（backtest.py）用 ZigZag leg 終點 `em` 當進場搜尋上界，
+> 而 `em` 是反轉後才確認的**未來資訊**，系統性濾掉失敗站回。
+> 完全 causal 重寫後：**Sharpe 0.48→0.04、總損益% 108→16、勝率 79→62%**，逐年接近 break-even。
+> 試過深度/離峰/空間濾網、只做多空、按星期、單部位約束皆無法救回。
+> 驗證：`research/archive/rejected/H120-l2-pullback-continuation/results/causal_validation.md`。
+> Pine 指標（`indicators/tradingview/swing_levels_tx.pine`）與 chart-ui h120 圖層**保留**作行情參考。
+
+## Backtest Summary（⚠️ 以下為作廢的前視偏誤數字，僅留存對照）（部署版：trigger A, alpha=0.75, ≤12:00, 拉回深度≥0.25, mode=L3, cost=3pt, 固定1倉）
 2021-01 ~ 2026-06。績效用損益%（pnl點數/進場價×100）；Sharpe=每筆 mean/std。
 
 | Metric | In-Sample (<2025) | Out-of-Sample (≥2025) |
