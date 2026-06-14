@@ -100,6 +100,7 @@ const state = {
   indTouch: localStorage.getItem('cu.indTouch') !== '0', // 關卡觸及標示（預設開）
   indRisk: localStorage.getItem('cu.indRisk') !== '0',   // EstRisk 風險/安全價位（預設開）
   indL3Legs: localStorage.getItem('cu.indL3Legs') === '1', // L3 波段斜線（理想最大行情，預設關）
+  indH120: localStorage.getItem('cu.indH120') === '1', // H120 進場(拉回站回5MA續攻L2→L3)箭頭+停損（預設關）
   centerDate: null,           // 'YYYY-MM-DD'
   list: null,                 // 目前清單 payload
   listId: null,
@@ -261,6 +262,45 @@ async function loadSwingLegs(date) {
     } catch (_) { chartState._l3LegsRaw = []; }
   }
   applyL3Legs();
+}
+
+// H120 進場指標（獨立 markers handle，預設關）：當日「拉回後站回 5MA」進場箭頭，
+// 文字含停損點數(SL)。停損/目標的水平線在點選 H120 清單項時由 drawTradeMarkers 畫。
+function applyH120Markers() {
+  if (!chartState.candle) return;
+  const day = chartState._h120Day;
+  const raw = chartState._h120Raw;
+  const marks = [];
+  if (state.indH120 && state.tf !== '1d' && day && raw && chartState.bars && chartState.bars.length) {
+    for (const e of raw) {
+      const bt = nearestBarTime(localToEpoch(`${day} ${e.time}:00`));
+      if (bt == null) continue;
+      const isLong = e.side === 'long';
+      marks.push({
+        time: bt, position: isLong ? 'belowBar' : 'aboveBar',
+        shape: isLong ? 'arrowUp' : 'arrowDown', color: COLORS.accent,
+        text: `${isLong ? 'H120多' : 'H120空'} SL${e.risk}`,
+      });
+    }
+    marks.sort((a, b) => a.time - b.time);
+  }
+  chartState.h120MarkersHandle = chartState.h120MarkersHandle
+    ? (chartState.h120MarkersHandle.setMarkers(marks), chartState.h120MarkersHandle)
+    : LightweightCharts.createSeriesMarkers(chartState.candle, marks);
+}
+
+async function loadH120(date) {
+  chartState._h120Raw = null;
+  chartState._h120Day = date;
+  chartState._h120ReqDate = date;
+  if (date && state.tf !== '1d') {
+    try {
+      const r = await fetchJSON(`/api/h120?date=${encodeURIComponent(date)}`);
+      if (chartState._h120ReqDate !== date) return;   // 換日了，丟棄過期回應
+      chartState._h120Raw = (r && r.entries) || [];
+    } catch (_) { chartState._h120Raw = []; }
+  }
+  applyH120Markers();
 }
 
 // 在 bars 與 daystats 都就緒時，畫覆盤 overlay（09:30/10:30/11:30 時間線）。
@@ -1107,8 +1147,11 @@ function updateLegend(param) {
     const indL3 = state.indL3Legs
       ? `<span class="ind-toggle" data-toggle="l3legs" style="color:${COLORS.up}">L3 波段</span>`
       : `<span class="ind-toggle ma-off" data-toggle="l3legs">L3 波段</span>`;
+    const indH120 = state.indH120
+      ? `<span class="ind-toggle" data-toggle="h120" style="color:${COLORS.accent}">H120進場</span>`
+      : `<span class="ind-toggle ma-off" data-toggle="h120">H120進場</span>`;
     const maLine = `${master}　${perMa}`;
-    const indLine = `${ind5}　${indMa600}<br>${indV}<br>${pvw}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}<br>${indL3}`;   // 5MA+600MA / VWAP / 昨前VWAP / BB / Pivot / ORB / 關卡觸及 / Risk / L3波段 各自獨立一行
+    const indLine = `${ind5}　${indMa600}<br>${indV}<br>${pvw}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}<br>${indL3}<br>${indH120}`;   // 5MA+600MA / VWAP / 昨前VWAP / BB / Pivot / ORB / 關卡觸及 / Risk / L3波段 / H120進場 各自獨立一行
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
@@ -1715,6 +1758,11 @@ function wireIndicatorToggles() {
         localStorage.setItem('cu.indL3Legs', state.indL3Legs ? '1' : '0');
         applyL3Legs();
         updateLegend(null);
+      } else if (which === 'h120') {
+        state.indH120 = !state.indH120;
+        localStorage.setItem('cu.indH120', state.indH120 ? '1' : '0');
+        applyH120Markers();
+        updateLegend(null);
       }
     });
   }
@@ -1771,6 +1819,7 @@ async function renderDayStats(date) {
   maybeDrawReview();
   applyTouchMarkers();
   loadSwingLegs(date);
+  loadH120(date);
   const r = (x) => (x == null ? '—' : Math.round(x).toLocaleString());
   const ar = d.avg_range_20 || {};
   const t = d.today;
@@ -1936,7 +1985,7 @@ async function selectItem(i) {
   document.querySelector('.list-row.active')?.scrollIntoView({ block: 'nearest' });
 }
 
-window._afterKline = () => { drawTradeMarkers(window._pendingItem); maybeDrawReview(); applyTouchMarkers(); applyL3Legs(); };
+window._afterKline = () => { drawTradeMarkers(window._pendingItem); maybeDrawReview(); applyTouchMarkers(); applyL3Legs(); applyH120Markers(); };
 
 async function loadList(listId) {
   state.list = await fetchJSON(`/api/lists/${encodeURIComponent(listId)}`);
