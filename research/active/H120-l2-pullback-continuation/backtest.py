@@ -36,6 +36,7 @@ RESULTS = Path(__file__).parent / "results"
 PB_FLOOR_FRAC = 0.05
 OOS_START = date(2025, 1, 1)   # IS < 2025, OOS >= 2025
 GATE_0930, GATE_1130 = 570, 690
+NOON = 720   # 部署進場上限 12:00（午後尾盤幾乎無 edge，見分時段分析）
 
 
 # ---------- 資料 ----------
@@ -258,35 +259,35 @@ def main():
     allt = run(IS, days, alpha=best_alpha, mode="L3", trail_frac=0, cost=COST)
     for b in ("≤09:30", "09:30-11:30", ">11:30"):
         print(f"  {b:<12} {fmt(metrics([t for t in allt if t['bucket']==b]))}")
-    early = [t for t in IS if t["entry_min"] < GATE_1130]
-    print(f"  ≤11:30 合併    {fmt(metrics(run(early, days, alpha=best_alpha, mode='L3', trail_frac=0, cost=COST)))}")
+    early = [t for t in IS if t["entry_min"] < NOON]
+    print(f"  ≤12:00 合併    {fmt(metrics(run(early, days, alpha=best_alpha, mode='L3', trail_frac=0, cost=COST)))}")
 
-    # ---- 3) 出場模式 L3 vs trail（IS, best alpha, ≤11:30）----
-    print("\n=== 3) 出場模式 (IS, alpha=best, ≤11:30, cost=3) ===")
+    # ---- 3) 出場模式 L3 vs trail（IS, best alpha, ≤12:00）----
+    print("\n=== 3) 出場模式 (IS, alpha=best, ≤12:00, cost=3) ===")
     print(f"  L3 固定        {fmt(metrics(run(early, days, alpha=best_alpha, mode='L3', trail_frac=0, cost=COST)))}")
     for tf in (0.5, 0.75, 1.0):
         m = metrics(run(early, days, alpha=best_alpha, mode="trail", trail_frac=tf, cost=COST))
         print(f"  trail {tf:<4}     {fmt(m)}")
 
-    # ---- 4) 成本敏感度（IS, best alpha, ≤11:30, L3）----
-    print("\n=== 4) 成本敏感度 (IS, alpha=best, ≤11:30, mode=L3) ===")
+    # ---- 4) 成本敏感度（IS, best alpha, ≤12:00, L3）----
+    print("\n=== 4) 成本敏感度 (IS, alpha=best, ≤12:00, mode=L3) ===")
     for c in (0, 2, 3, 4, 6):
         print(f"  cost={c}pt      {fmt(metrics(run(early, days, alpha=best_alpha, mode='L3', trail_frac=0, cost=c)))}")
 
-    # ---- 5) ★ IS vs OOS（鎖定 alpha=best, ≤11:30, mode=L3, cost=3）----
-    print("\n=== 5) ★ IS vs OOS (alpha=best, ≤11:30, mode=L3, cost=3pt) ===")
-    is_e = [t for t in IS if t["entry_min"] < GATE_1130]
-    oos_e = [t for t in OOS if t["entry_min"] < GATE_1130]
+    # ---- 5) ★ IS vs OOS（鎖定 alpha=best, ≤12:00, mode=L3, cost=3）----
+    print("\n=== 5) ★ IS vs OOS (alpha=best, ≤12:00, mode=L3, cost=3pt) ===")
+    is_e = [t for t in IS if t["entry_min"] < NOON]
+    oos_e = [t for t in OOS if t["entry_min"] < NOON]
     m_is = metrics(run(is_e, days, alpha=best_alpha, mode="L3", trail_frac=0, cost=COST))
     m_oos = metrics(run(oos_e, days, alpha=best_alpha, mode="L3", trail_frac=0, cost=COST))
     print(f"  IS  {fmt(m_is)}")
     print(f"  OOS {fmt(m_oos)}")
 
     # ---- 6) 逐年 + walk-forward（每年用「之前所有年」最佳 alpha）----
-    print("\n=== 6) 逐年 (≤11:30, mode=L3, cost=3, alpha=best) ===")
+    print("\n=== 6) 逐年 (≤12:00, mode=L3, cost=3, alpha=best) ===")
     by_year = defaultdict(list)
     for t in tcs:
-        if t["entry_min"] < GATE_1130:
+        if t["entry_min"] < NOON:
             by_year[t["date"].year].append(t)
     for y in sorted(by_year):
         print(f"  {y}  {fmt(metrics(run(by_year[y], days, alpha=best_alpha, mode='L3', trail_frac=0, cost=COST)))}")
@@ -295,7 +296,7 @@ def main():
     wf_trs = []
     years = sorted(by_year)
     for y in years:
-        train = [t for t in tcs if t["date"].year < y and t["entry_min"] < GATE_1130]
+        train = [t for t in tcs if t["date"].year < y and t["entry_min"] < NOON]
         if len(train) < 100:
             continue
         ba, bs = None, -9

@@ -34,13 +34,19 @@ def regime_map(days):
 
 
 def tbucket(m):
-    if m < 570:
-        return "08:45-09:30"
+    # 使用者指定三段：08:45-10:30 / 10:30-12:00 / 12:00-13:45
     if m < 630:
-        return "09:30-10:30"
-    if m < 690:
-        return "10:30-11:30"
-    return ">11:30"
+        return "08:45-10:30"
+    if m < 720:
+        return "10:30-12:00"
+    return "12:00-13:45"
+
+
+def tbucket30(m):
+    """30 分鐘梯度（找更好切法）。"""
+    base = 525
+    lo = base + ((m - base) // 30) * 30
+    return f"{lo // 60:02d}:{lo % 60:02d}"
 
 
 def line(label, m):
@@ -60,10 +66,12 @@ def main():
     for tc in tcs:
         r = bt.simulate(tc, days[tc["date"]], alpha=ALPHA, mode=MODE, trail_frac=0, cost=COST)
         r.update(date=tc["date"], up=tc["up"], side="多" if tc["up"] else "空",
-                 tb=tbucket(tc["entry_min"]), wd=tc["date"].weekday(),
+                 tb=tbucket(tc["entry_min"]), entry_min=tc["entry_min"], wd=tc["date"].weekday(),
                  reg=reg.get(tc["date"]), year=tc["date"].year)
         trs.append(r)
-    print(f"全樣本 trigger A：N={len(trs)}（2021-2026, ≤13:45 全時段）\n")
+    ndays = len({t["date"] for t in trs}) or 1
+    ntotaldays = len(ema)
+    print(f"全樣本 trigger A：N={len(trs)}（2021-2026, 全時段），有訊號日={ndays}, 交易日={ntotaldays}\n")
 
     def grp(key, order=None):
         g = defaultdict(list)
@@ -72,9 +80,30 @@ def main():
         keys = order or sorted(k for k in g if k is not None)
         return [(k, bt.metrics(g[k])) for k in keys]
 
-    print("=== 1) 進場時間桶 ===")
-    for k, m in grp(lambda t: t["tb"], ["08:45-09:30", "09:30-10:30", "10:30-11:30", ">11:30"]):
-        line(k, m)
+    def line_freq(label, m):
+        """機會(筆/日) + 期望值。"""
+        if not m:
+            print(f"  {label:<14} N=0")
+            return
+        per_day = m["N"] / ntotaldays
+        print(f"  {label:<14} N={m['N']:>4} ({per_day:.2f}筆/日) win={m['win%']:>5}% "
+              f"EV={m['EVpt']:>5}pt tot={m['tot%']:>7}% sharpe={m['sharpe']:>6} avgR={m['avgR']}")
+
+    print("=== 1) 你指定的三段（機會 + 期望值）===")
+    for k, m in grp(lambda t: t["tb"], ["08:45-10:30", "10:30-12:00", "12:00-13:45"]):
+        line_freq(k, m)
+
+    print("\n=== 1b) 三段 × 多空 ===")
+    for tb in ("08:45-10:30", "10:30-12:00", "12:00-13:45"):
+        for side in ("多", "空"):
+            line_freq(f"{tb} {side}", bt.metrics([t for t in trs if t["tb"] == tb and t["side"] == side]))
+
+    print("\n=== 1c) 30 分鐘梯度（找更好的切法）===")
+    g30 = defaultdict(list)
+    for t in trs:
+        g30[tbucket30(t["entry_min"])].append(t)
+    for k in sorted(g30):
+        line_freq(k, bt.metrics(g30[k]))
 
     print("\n=== 2) 多 / 空 ===")
     for k, m in grp(lambda t: t["side"], ["多", "空"]):
@@ -95,11 +124,49 @@ def main():
             tag = "順勢" if (side, rg) in (("多", "多頭"), ("空", "空頭")) else "逆勢"
             line(f"{side}@{rg}({tag})", bt.metrics(sub))
 
-    print("\n=== 6) 時間桶 × 多空 ===")
-    for tb in ("08:45-09:30", "09:30-10:30", "10:30-11:30", ">11:30"):
-        for side in ("多", "空"):
-            sub = [t for t in trs if t["tb"] == tb and t["side"] == side]
-            line(f"{tb} {side}", bt.metrics(sub))
+    # ---- 日內順序：第一筆 vs 後續，並與「時段」拆開 ----
+    by_date = defaultdict(list)
+    for t in trs:
+        by_date[t["date"]].append(t)
+    for d in by_date:
+        by_date[d].sort(key=lambda x: x["entry_min"])
+        for i, t in enumerate(by_date[d]):
+            t["order"] = i + 1
+            t["n_in_day"] = len(by_date[d])
+
+    print("\n=== 7) 一天進場筆數分佈 ===")
+    from collections import Counter
+    cnt = Counter(len(v) for v in by_date.values())
+    for k in sorted(cnt):
+        print(f"  {k} 筆/日：{cnt[k]} 天")
+
+    print("\n=== 8) ★ 日內第 n 筆（含平均進場時間，看是否=早盤）===")
+    def ordkey(t):
+        return t["order"] if t["order"] <= 3 else 4
+    for o in (1, 2, 3, 4):
+        sub = [t for t in trs if ordkey(t) == o]
+        if not sub:
+            continue
+        avg_min = sum(t["entry_min"] for t in sub) / len(sub)
+        lbl = f"第{o}筆" if o < 4 else "第4+筆"
+        m = bt.metrics(sub)
+        print(f"  {lbl:<8} 平均進場={avg_min//60:02.0f}:{avg_min%60:02.0f}  {bt.fmt(m)}")
+
+    print("\n=== 9) ★ 控制時段：同一時段內 第1筆 vs 後續（拆開順序 vs 時段）===")
+    for tb in ("08:45-10:30", "10:30-12:00", "12:00-13:45"):
+        first = [t for t in trs if t["tb"] == tb and t["order"] == 1]
+        rest = [t for t in trs if t["tb"] == tb and t["order"] >= 2]
+        print(f"  [{tb}]")
+        line("  第1筆", bt.metrics(first))
+        line("  第2+筆", bt.metrics(rest))
+
+    print("\n=== 10) ≤12:00 進場上限 IS/OOS（部署設定）===")
+    cut = [t for t in trs if t["entry_min"] < 720]
+    is_c = [t for t in cut if t["year"] < 2025]
+    oos_c = [t for t in cut if t["year"] >= 2025]
+    line("全樣本", bt.metrics(cut))
+    line("IS<2025", bt.metrics(is_c))
+    line("OOS>=2025", bt.metrics(oos_c))
 
 
 if __name__ == "__main__":
