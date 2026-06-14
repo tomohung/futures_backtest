@@ -34,11 +34,13 @@
 //
 // 【H120 進場/停損】（研究 research/active/H120-l2-pullback-continuation，回測 confirmed）
 //   訊號：波段達 L2 確立方向 → 回檔 ≥ pb_floor(0.05×EMA20) → 收盤站回 5MA 進場（每段一次）。
+//     進場過濾：① ≤12:00（午後尾盤無 edge）② 拉回深度 ≥ 0.25×L2（濾掉淺拉回，avgR僅0.08占46%）。
 //     guard：直衝 L3 不交易、進場那根已破 L3 不交易、收盤確認才標記（非重繪）。
 //   停損：拉回極值往錨點(趨勢起點)靠 alpha=0.75；目標：L3 關卡線。
-//   標記：▲多/▼空 進場價 + 停損價(風險點數) + 目標L3；停損畫實線。Alert 含進場價/停損。
-//   回測重點：勝率 ~76–80%、空方>多方、全時段皆正(早盤EV最高)、maxDD≈−2%、成本≤6pt仍正。
-//     高勝率低賠率 profile（單筆 R:R 常<1，靠勝率撐）；想博 L4/L5 長尾改用 trail 出場(回測版本B)。
+//   加碼：依拉回深度(÷L2) 兩階 —— 0.25~0.5 ×1、≥0.5 ×2（標記上顯示；0.5 為清楚分水嶺）。
+//   標記：▲多/▼空 進場價 + 加碼倍數 + 停損價(風險) + 目標L3；停損畫實線。Alert 含進場價/停損。
+//   回測重點：勝率 ~77–80%、空方>多方、≤12:00 IS/OOS Sharpe 0.30/0.42、maxDD≈−2%、成本≤6pt仍正。
+//     高勝率低賠率 profile，邊際靠拉回深度放大（深拉回 avgR 可達 0.7+）；想博 L4/L5 長尾改 trail 出場。
 // ============================================================
 //@version=6
 indicator(
@@ -81,6 +83,8 @@ ent_cutoff  = input.int(720, "  進場時間上限(分)", minval=540, maxval=825
 ema5_period = input.int(5, "  站回均線週期", minval=2, maxval=20, group=GRP_H120)
 pb_floor_c  = input.float(0.05, "  拉回最小深度係數×EMA20", step=0.01, group=GRP_H120,
                  tooltip="確立後須回檔 ≥ 此係數×EMA20 才算有效拉回（過濾微回）")
+min_depth_c = input.float(0.25, "  最小拉回深度（×L2，進場過濾）", step=0.05, minval=0, maxval=1, group=GRP_H120,
+                 tooltip="進場時拉回深度(前峰−拉回極值)須 ≥ 此係數×L2距離。0.25 濾掉淺拉回(avgR僅0.08,占46%)；0=不過濾。深度同時決定加碼倍數")
 stop_alpha  = input.float(0.75, "  停損 alpha", step=0.05, minval=0, maxval=1, group=GRP_H120,
                  tooltip="停損=拉回極值往錨點靠 alpha 比例。0=拉回極值(緊)、1=趨勢起點(寬)。回測最佳 0.75")
 
@@ -162,6 +166,7 @@ var bool  sdone5 = false
 var bool  b_est     = false   // 多：已達 L2 確立
 var int   b_state   = 0       // 0=尚未拉回, 1=拉回中
 var float b_pbext   = na      // 多：拉回最低
+var float b_peak    = na      // 多：拉回起點前峰（凍結，算深度）
 var bool  b_entered = false
 var bool  b_matured = false   // 多：直衝 L3，跳過
 var float b_entry   = na
@@ -169,6 +174,7 @@ var float b_stop    = na
 var bool  s_est     = false
 var int   s_state   = 0
 var float s_pbext   = na      // 空：拉回最高
+var float s_peak    = na      // 空：拉回起點前極值（凍結，算深度）
 var bool  s_entered = false
 var bool  s_matured = false
 var float s_entry   = na
@@ -194,11 +200,13 @@ if entering_session
     b_est     := false
     b_state   := 0
     b_pbext   := na
+    b_peak    := na
     b_entered := false
     b_matured := false
     s_est     := false
     s_state   := 0
     s_pbext   := na
+    s_peak    := na
     s_entered := false
     s_matured := false
 
@@ -229,6 +237,7 @@ if in_session and ready
             s_est     := false
             s_state   := 0
             s_pbext   := na
+            s_peak    := na
             s_entered := false
             s_matured := false
             ext    := low
@@ -245,6 +254,7 @@ if in_session and ready
             b_est     := false
             b_state   := 0
             b_pbext   := na
+            b_peak    := na
             b_entered := false
             b_matured := false
             ext    := high
@@ -268,11 +278,13 @@ if in_session and ready
                 else if (ext - low) >= pb_floor
                     b_state := 1
                     b_pbext := low
+                    b_peak  := ext            // 凍結拉回前峰，算深度
             else
                 b_pbext := math.min(b_pbext, low)
                 b_reclaim = close[1] < sma5[1] and close > sma5
                 b_overshoot = close >= bull_anchor + d3
-                if ent_long and b_reclaim and not b_overshoot and _t < ent_cutoff and barstate.isconfirmed
+                b_deep = (b_peak - b_pbext) >= min_depth_c * d2   // 拉回深度過濾
+                if ent_long and b_reclaim and not b_overshoot and b_deep and _t < ent_cutoff and barstate.isconfirmed
                     b_entry   := close
                     b_stop    := b_pbext - stop_alpha * (b_pbext - bull_anchor)
                     b_entered := true
@@ -288,11 +300,13 @@ if in_session and ready
                 else if (high - ext) >= pb_floor
                     s_state := 1
                     s_pbext := high
+                    s_peak  := ext            // 凍結拉回前極值，算深度
             else
                 s_pbext := math.max(s_pbext, high)
                 s_reclaim = close[1] > sma5[1] and close < sma5
                 s_overshoot = close <= bear_anchor - d3
-                if ent_short and s_reclaim and not s_overshoot and _t < ent_cutoff and barstate.isconfirmed
+                s_deep = (s_pbext - s_peak) >= min_depth_c * d2   // 拉回深度過濾
+                if ent_short and s_reclaim and not s_overshoot and s_deep and _t < ent_cutoff and barstate.isconfirmed
                     s_entry   := close
                     s_stop    := s_pbext + stop_alpha * (bear_anchor - s_pbext)
                     s_entered := true
@@ -375,14 +389,16 @@ var label[] ent_lbls = array.new<label>()
 var line[]  stop_lns = array.new<line>()
 int ENT_MAX = 60
 
-f_entry(px, stop, tgt, isLong) =>
+f_size(dfrac) =>
+    dfrac >= 0.5 ? "×2" : "×1"
+f_entry(px, stop, tgt, isLong, dfrac) =>
     if show_entry
         risk = math.round(math.abs(px - stop))
         head = isLong ? "▲ 多進 " : "▼ 空進 "
         col  = isLong ? col_bull : col_bear
         sty  = isLong ? label.style_label_up : label.style_label_down
         yloc_px = isLong ? low : high
-        txt = head + str.tostring(math.round(px)) + "\nSL " + str.tostring(math.round(stop)) + "（風險 " + str.tostring(risk) + " 點）\n目標L3 " + str.tostring(math.round(tgt))
+        txt = head + str.tostring(math.round(px)) + "  加碼" + f_size(dfrac) + "\nSL " + str.tostring(math.round(stop)) + "（風險 " + str.tostring(risk) + " 點）\n目標L3 " + str.tostring(math.round(tgt))
         lb = label.new(bar_index, yloc_px, txt, xloc=xloc.bar_index, yloc=yloc.price,
              style=sty, color=col, textcolor=col_white, size=size.small)
         array.push(ent_lbls, lb)
@@ -395,9 +411,9 @@ f_entry(px, stop, tgt, isLong) =>
             line.delete(array.shift(stop_lns))
 
 if bull_entry_fire
-    f_entry(b_entry, b_stop, bull_anchor + d3, true)
+    f_entry(b_entry, b_stop, bull_anchor + d3, true, (b_peak - b_pbext) / d2)
 if bear_entry_fire
-    f_entry(s_entry, s_stop, bear_anchor - d3, false)
+    f_entry(s_entry, s_stop, bear_anchor - d3, false, (s_pbext - s_peak) / d2)
 
 // ============================================================
 // 當前波段關卡線（即時更新；換錨時跳到新錨）
