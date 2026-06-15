@@ -36,13 +36,20 @@ def write_chart_list(list_id: str, items: list[dict], *, out_dir: Path | None = 
                      sort_desc: bool = True, **meta) -> Path:
     """寫一份清單。回傳檔案路徑。atomic write。
 
-    sort_desc=True（預設）：items 依 `time` 倒序（最新在最上）——chart-ui 清單一律倒序。
-    確需正序的清單才傳 sort_desc=False。
+    sort_desc=True（預設）：**日期倒序（最新日在最上）、但同一日內時間順序（早→晚）**。
+    即跨日倒序、日內正序——方便逐日由上往下、當日交易照時間先後讀。
+    確需全正序的清單才傳 sort_desc=False。
     """
     out_dir = Path(out_dir) if out_dir else paths.CHART_LISTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     if sort_desc:
-        items = sorted(items, key=lambda it: str(it.get("time") or ""), reverse=True)
+        def _split_dt(it):
+            s = str(it.get("time") or "")
+            parts = s.split(" ", 1)
+            return parts[0], (parts[1] if len(parts) > 1 else "")
+        # 穩定排序：先時間升序，再日期降序 → 日期倒序 + 同日時間順序
+        items = sorted(items, key=lambda it: _split_dt(it)[1])
+        items = sorted(items, key=lambda it: _split_dt(it)[0], reverse=True)
     payload = {"name": name or list_id, **meta, "items": items}
     payload["summary"] = summary if summary is not None else _summary(items)
     path = out_dir / f"{list_id}.json"
