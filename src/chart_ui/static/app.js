@@ -21,9 +21,9 @@ const BB_BAND_COLOR = '#c678dd';
 const MATURN_TF = 5;            // 600MA 的 bucket 週期（分鐘）
 const MATURN_PERIOD = 120;     // 600MA = MATURN_TF×PERIOD = 600 分
 const MATURN_ZERO_COLOR = '#888';
-// 延伸力 EXT 強門檻（看盤參考線）：H111 ext_long top~20%≈+0.10、H112 ext_short(z-sum) top~20%≈+1.2。
+// 延伸力 EXT 強門檻（看盤參考線）：H111 ext_long top~20%≈+0.10、H112 ext_short(z-sum) top~20%≈+1.33（全窗重校）。
 const EXT_STRONG_LONG = 0.10;
-const EXT_STRONG_SHORT = 1.2;
+const EXT_STRONG_SHORT = 1.33;
 const MACD_DEA_COLOR = '#6aa3ff';   // mini 1H MACD 的 DEA(訊號)線
 const MACD_MIN_BARS = 34;   // slow(26)+signal(9)-2 = 第一個有效 dea/hist index;不足則不畫 MACD
 // MACD 柱 TradingView 式深淺：離零軸方向變大=飽和色,縮回零軸=淡色（漲紅跌綠）。
@@ -826,7 +826,7 @@ function initChart() {
   chart.priceScale('bb').applyOptions({ scaleMargins: { top: 0.15, bottom: 0.15 } });
   // 延伸力 EXT 副圖（盤中 open-anchor，預測關卡達成；H095/H111/H112）。
   //   pane 3 = ext_long（龍頭推力，漲紅）；pane 4 = ext_short（廣度，跌綠）。
-  //   0 軸 + 強門檻虛線（ext_long≥+0.10、ext_short(z-sum)≥+1.2，看盤用）。
+  //   0 軸 + 強門檻虛線（ext_long≥+0.10、ext_short(z-sum)≥+1.33，看盤用）。
   chartState.extLong = chart.addSeries(
     LightweightCharts.LineSeries,
     { color: COLORS.up, lineWidth: 2, priceScaleId: 'extlong',
@@ -851,7 +851,7 @@ function initChart() {
       priceFormat: { type: 'price', precision: 2, minMove: 0.01 } },
     4,
   );
-  // 顯示翻轉（畫 −ext_short）：下殺燃料↑ → 線往下，與走勢同相、好讀。強空門檻落在 −1.2。
+  // 顯示翻轉（畫 −ext_short）：下殺燃料↑ → 線往下，與走勢同相、好讀。強空門檻落在 −1.33。
   chartState.extShort.createPriceLine({ price: 0, color: MATURN_ZERO_COLOR, lineWidth: 1,
     lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '0' });
   chartState.extShort.createPriceLine({ price: -EXT_STRONG_SHORT, color: COLORS.down, lineWidth: 1,
