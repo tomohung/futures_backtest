@@ -40,7 +40,7 @@ ALPHA = 0.75   # 部署值
 
 # ---------- 載入 live 模組（做並排對照） ----------
 def _load_live():
-    p = Path(__file__).resolve().parents[4] / "strategies/live/S005-l2-pullback/backtest.py"
+    p = Path(__file__).resolve().parents[4] / "strategies/retired/S005-l2-pullback/backtest.py"
     spec = importlib.util.spec_from_file_location("s005_live", p)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
