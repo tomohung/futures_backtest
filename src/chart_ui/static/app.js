@@ -100,7 +100,7 @@ const state = {
   indTouch: localStorage.getItem('cu.indTouch') !== '0', // 關卡觸及標示（預設開）
   indRisk: localStorage.getItem('cu.indRisk') !== '0',   // EstRisk 風險/安全價位（預設開）
   indL3Legs: localStorage.getItem('cu.indL3Legs') === '1', // L3 波段斜線（理想最大行情，預設關）
-  indH120: localStorage.getItem('cu.indH120') === '1', // H120 進場(拉回站回5MA續攻L2→L3)箭頭+停損（預設關）
+  indL2pb: localStorage.getItem('cu.indL2pb') === '1', // L2拉回續攻 進場(站回5MA續攻L2→L3)箭頭+停損（預設關）
   centerDate: null,           // 'YYYY-MM-DD'
   list: null,                 // 目前清單 payload
   listId: null,
@@ -266,20 +266,20 @@ async function loadSwingLegs(date) {
 
 // L2 拉回續攻指標（獨立，預設關）：當日「拉回後站回 5MA」進場箭頭(金) + 停損水平線(紅虛線，
 // 進場→出場)，停損觸發/達標 L3 的那根標出場 marker（類似 pivot 停損延伸線）。
-const H120_STOP_COLOR = '#c0392b';   // 停損線（紅虛線）
-function clearH120Stops() {
-  if (chartState.h120StopSeries) {
-    for (const s of chartState.h120StopSeries) { try { chartState.chart.removeSeries(s); } catch (_) {} }
+const L2PB_STOP_COLOR = '#c0392b';   // 停損線（紅虛線）
+function clearL2pbStops() {
+  if (chartState.l2pbStopSeries) {
+    for (const s of chartState.l2pbStopSeries) { try { chartState.chart.removeSeries(s); } catch (_) {} }
   }
-  chartState.h120StopSeries = [];
+  chartState.l2pbStopSeries = [];
 }
-function applyH120Markers() {
+function applyL2pbMarkers() {
   if (!chartState.candle) return;
-  clearH120Stops();
-  const day = chartState._h120Day;
-  const raw = chartState._h120Raw;
+  clearL2pbStops();
+  const day = chartState._l2pbDay;
+  const raw = chartState._l2pbRaw;
   const marks = [];
-  const active = state.indH120 && state.tf !== '1d' && day && raw && chartState.bars && chartState.bars.length;
+  const active = state.indL2pb && state.tf !== '1d' && day && raw && chartState.bars && chartState.bars.length;
   if (active) {
     for (const e of raw) {
       const bt = nearestBarTime(localToEpoch(`${day} ${e.time}:00`));
@@ -295,17 +295,17 @@ function applyH120Markers() {
       const xt = e.exit_time ? nearestBarTime(localToEpoch(`${day} ${e.exit_time}:00`)) : null;
       if (xt != null && e.stop != null) {
         const seg = chartState.chart.addSeries(LightweightCharts.LineSeries, {
-          color: H120_STOP_COLOR, lineWidth: 1, lineStyle: 2,
+          color: L2PB_STOP_COLOR, lineWidth: 1, lineStyle: 2,
           priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
         });
         const a = Math.min(bt, xt), b = Math.max(bt, xt);
         seg.setData([{ time: a, value: +e.stop }, { time: b, value: +e.stop }]);
-        chartState.h120StopSeries.push(seg);
+        chartState.l2pbStopSeries.push(seg);
       }
       if (xt != null && e.result === 'Loss') {
         marks.push({
           time: xt, position: isLong ? 'belowBar' : 'aboveBar',
-          shape: isLong ? 'arrowDown' : 'arrowUp', color: H120_STOP_COLOR, text: '停損',
+          shape: isLong ? 'arrowDown' : 'arrowUp', color: L2PB_STOP_COLOR, text: '停損',
         });
       } else if (xt != null && e.result === 'Win') {
         marks.push({
@@ -316,23 +316,23 @@ function applyH120Markers() {
     }
     marks.sort((a, b) => a.time - b.time);
   }
-  chartState.h120MarkersHandle = chartState.h120MarkersHandle
-    ? (chartState.h120MarkersHandle.setMarkers(marks), chartState.h120MarkersHandle)
+  chartState.l2pbMarkersHandle = chartState.l2pbMarkersHandle
+    ? (chartState.l2pbMarkersHandle.setMarkers(marks), chartState.l2pbMarkersHandle)
     : LightweightCharts.createSeriesMarkers(chartState.candle, marks);
 }
 
-async function loadH120(date) {
-  chartState._h120Raw = null;
-  chartState._h120Day = date;
-  chartState._h120ReqDate = date;
+async function loadL2pb(date) {
+  chartState._l2pbRaw = null;
+  chartState._l2pbDay = date;
+  chartState._l2pbReqDate = date;
   if (date && state.tf !== '1d') {
     try {
-      const r = await fetchJSON(`/api/h120?date=${encodeURIComponent(date)}`);
-      if (chartState._h120ReqDate !== date) return;   // 換日了，丟棄過期回應
-      chartState._h120Raw = (r && r.entries) || [];
-    } catch (_) { chartState._h120Raw = []; }
+      const r = await fetchJSON(`/api/l2_pullback?date=${encodeURIComponent(date)}`);
+      if (chartState._l2pbReqDate !== date) return;   // 換日了，丟棄過期回應
+      chartState._l2pbRaw = (r && r.entries) || [];
+    } catch (_) { chartState._l2pbRaw = []; }
   }
-  applyH120Markers();
+  applyL2pbMarkers();
 }
 
 // 在 bars 與 daystats 都就緒時，畫覆盤 overlay（09:30/10:30/11:30 時間線）。
@@ -1179,11 +1179,11 @@ function updateLegend(param) {
     const indL3 = state.indL3Legs
       ? `<span class="ind-toggle" data-toggle="l3legs" style="color:${COLORS.up}">L3 波段</span>`
       : `<span class="ind-toggle ma-off" data-toggle="l3legs">L3 波段</span>`;
-    const indH120 = state.indH120
-      ? `<span class="ind-toggle" data-toggle="h120" style="color:${COLORS.accent}">L2拉回續攻</span>`
-      : `<span class="ind-toggle ma-off" data-toggle="h120">L2拉回續攻</span>`;
+    const indL2pb = state.indL2pb
+      ? `<span class="ind-toggle" data-toggle="l2pb" style="color:${COLORS.accent}">L2拉回續攻</span>`
+      : `<span class="ind-toggle ma-off" data-toggle="l2pb">L2拉回續攻</span>`;
     const maLine = `${master}　${perMa}`;
-    const indLine = `${ind5}　${indMa600}<br>${indV}<br>${pvw}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}<br>${indL3}<br>${indH120}`;   // 5MA+600MA / VWAP / 昨前VWAP / BB / Pivot / ORB / 關卡觸及 / Risk / L3波段 / L2拉回續攻 各自獨立一行
+    const indLine = `${ind5}　${indMa600}<br>${indV}<br>${pvw}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}<br>${indL3}<br>${indL2pb}`;   // 5MA+600MA / VWAP / 昨前VWAP / BB / Pivot / ORB / 關卡觸及 / Risk / L3波段 / L2拉回續攻 各自獨立一行
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
@@ -1790,10 +1790,10 @@ function wireIndicatorToggles() {
         localStorage.setItem('cu.indL3Legs', state.indL3Legs ? '1' : '0');
         applyL3Legs();
         updateLegend(null);
-      } else if (which === 'h120') {
-        state.indH120 = !state.indH120;
-        localStorage.setItem('cu.indH120', state.indH120 ? '1' : '0');
-        applyH120Markers();
+      } else if (which === 'l2pb') {
+        state.indL2pb = !state.indL2pb;
+        localStorage.setItem('cu.indL2pb', state.indL2pb ? '1' : '0');
+        applyL2pbMarkers();
         updateLegend(null);
       }
     });
@@ -1851,7 +1851,7 @@ async function renderDayStats(date) {
   maybeDrawReview();
   applyTouchMarkers();
   loadSwingLegs(date);
-  loadH120(date);
+  loadL2pb(date);
   const r = (x) => (x == null ? '—' : Math.round(x).toLocaleString());
   const ar = d.avg_range_20 || {};
   const t = d.today;
@@ -2017,7 +2017,7 @@ async function selectItem(i) {
   document.querySelector('.list-row.active')?.scrollIntoView({ block: 'nearest' });
 }
 
-window._afterKline = () => { drawTradeMarkers(window._pendingItem); maybeDrawReview(); applyTouchMarkers(); applyL3Legs(); applyH120Markers(); };
+window._afterKline = () => { drawTradeMarkers(window._pendingItem); maybeDrawReview(); applyTouchMarkers(); applyL3Legs(); applyL2pbMarkers(); };
 
 async function loadList(listId) {
   state.list = await fetchJSON(`/api/lists/${encodeURIComponent(listId)}`);

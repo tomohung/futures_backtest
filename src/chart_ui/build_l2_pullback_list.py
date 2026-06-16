@@ -1,12 +1,12 @@
-"""產生 H120 進場清單（拉回站回 5MA 續攻 L2→L3）給 chart-ui dropdown。
+"""產生 L2 拉回續攻進場清單（拉回站回 5MA 續攻 L2→L3）給 chart-ui dropdown。
 
-重用 services/h120 的 detect_day + simulate（與回測同源），逐交易日掃進場，
+重用 services/l2_pullback 的 detect_day + simulate（causal，與主圖指標同源），逐交易日掃進場，
 每筆帶 stop/target 兩條 levels（點選清單項時主圖即畫停損/目標水平線 + 進出場 marker）。
 
 用法：
-    uv run python src/chart_ui/build_h120_list.py            # 全部
-    uv run python src/chart_ui/build_h120_list.py --side short  # 只空單
-    uv run python src/chart_ui/build_h120_list.py --cutoff 690  # 只 ≤11:30 進場
+    uv run python src/chart_ui/build_l2_pullback_list.py            # 全部
+    uv run python src/chart_ui/build_l2_pullback_list.py --side short  # 只空單
+    uv run python src/chart_ui/build_l2_pullback_list.py --cutoff 690  # 只 ≤11:30 進場
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import duckdb
 from src.chart_ui import paths
 from src.chart_ui.list_writer import write_chart_list
 from src.chart_ui.services.daystats import SYMBOL, _ema20_range
-from src.chart_ui.services.h120 import (
+from src.chart_ui.services.l2_pullback import (
     MIN_DEPTH_FRAC,
     _day_bars,
     _min_to_hhmm,
@@ -86,12 +86,12 @@ def main():
     cut_suffix = f"-le{args.cutoff}" if (args.cutoff and args.cutoff != 720) else ""
     res_suffix = f"-{args.result.lower()}" if args.result else ""
     suffix = (f"-{args.side}" if args.side else "") + res_suffix + cut_suffix
-    list_id = args.id or f"h120-l2-pullback{suffix}"
+    list_id = args.id or f"l2-pullback{suffix}"
     cut_name = f"（≤{_min_to_hhmm(args.cutoff)}）" if (args.cutoff and args.cutoff != 720) else ""
     res_name = {"Win": "（勝）", "Loss": "（敗）", "Open": "（收盤）"}.get(args.result, "")
     name = "L2拉回續攻" + (f"（{args.side}）" if args.side else "") + res_name + cut_name
     path = write_chart_list(list_id, items, name=name,
-                            desc="L2確立→拉回→收盤站回5MA進場；停損=拉回極值往錨靠0.75，目標L3。研究 H120。")
+                            desc="L2確立→拉回→收盤站回5MA進場；停損=拉回極值往錨靠0.75，目標L3。causal 行情參考指標（前身 H120）。")
     wins = sum(1 for it in items if it["result"] == "Win")
     print(f"{len(items)} 筆 → {path}")
     print(f"勝率 {round(100*wins/len(items),1)}%（Win={wins}）" if items else "無資料")
