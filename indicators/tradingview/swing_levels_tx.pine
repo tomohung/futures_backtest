@@ -42,8 +42,9 @@
 //     ★ 對齊重點：第一個站回即消耗本段（淺站回也消耗→該段啞掉），不等後面更深的拉回——
 //       H124 已驗證「等更深拉回才進」(Pine 舊行為) 全窗 tot 1.8% ≪ 此版 16.9%、avgR −0.05，故採此版。
 //   停損：拉回極值往錨點(趨勢起點)靠 alpha=0.75；目標：L3 關卡線。
-//   加碼：依拉回深度(÷L2) 兩階 —— 0.25~0.5 ×1、≥0.5 ×2（0.5 為分水嶺）。
-//   標記：▲多/▼空 進場價 + 加碼倍數 + 停損價(風險) + 目標L3；停損畫實線。Alert 含進場價/停損。
+//   加碼：已移除（一律單口）。舊「深度≥0.5 ×2」來自前視偏誤的假單調；causal 下深度與賠率
+//         非單調（[0.5,0.75) 反而 avgR −0.05、只有 [0.75,1.0) 好），無可靠深度→加碼關係。
+//   標記：▲多/▼空 進場價 + 停損價(風險) + 目標L3；停損畫實線。Alert 含進場價/停損。
 // ============================================================
 //@version=6
 indicator(
@@ -87,7 +88,7 @@ ema5_period = input.int(5, "  站回均線週期", minval=2, maxval=20, group=GR
 pb_floor_c  = input.float(0.05, "  拉回最小深度係數×EMA20", step=0.01, group=GRP_L2PB,
                  tooltip="確立後須回檔 ≥ 此係數×EMA20 才算有效拉回（過濾微回）")
 min_depth_c = input.float(0.25, "  最小拉回深度（×L2，進場過濾）", step=0.05, minval=0, maxval=1, group=GRP_L2PB,
-                 tooltip="進場時拉回深度(前峰−拉回極值)須 ≥ 此係數×L2距離。0.25 濾掉淺拉回(avgR僅0.08,占46%)；0=不過濾。深度同時決定加碼倍數")
+                 tooltip="進場時拉回深度(前峰−拉回極值)須 ≥ 此係數×L2距離。0.25 濾掉淺拉回(causal 下 <0.25 為 tot 0.6% 死重)；0=不過濾。加碼已移除，深度不再決定倉位")
 stop_alpha  = input.float(0.75, "  停損 alpha", step=0.05, minval=0, maxval=1, group=GRP_L2PB,
                  tooltip="停損=拉回極值往錨點靠 alpha 比例。0=拉回極值(緊)、1=趨勢起點(寬)。回測最佳 0.75")
 
@@ -393,16 +394,14 @@ var label[] ent_lbls = array.new<label>()
 var line[]  stop_lns = array.new<line>()
 int ENT_MAX = 60
 
-f_size(dfrac) =>
-    dfrac >= 0.5 ? "×2" : "×1"
-f_entry(px, stop, tgt, isLong, dfrac) =>
+f_entry(px, stop, tgt, isLong) =>
     if show_entry
         risk = math.round(math.abs(px - stop))
         head = isLong ? "▲ 多進 " : "▼ 空進 "
         col  = isLong ? col_bull : col_bear
         sty  = isLong ? label.style_label_up : label.style_label_down
         yloc_px = isLong ? low : high
-        txt = head + str.tostring(math.round(px)) + "  加碼" + f_size(dfrac) + "\nSL " + str.tostring(math.round(stop)) + "（風險 " + str.tostring(risk) + " 點）\n目標L3 " + str.tostring(math.round(tgt))
+        txt = head + str.tostring(math.round(px)) + "\nSL " + str.tostring(math.round(stop)) + "（風險 " + str.tostring(risk) + " 點）\n目標L3 " + str.tostring(math.round(tgt))
         lb = label.new(bar_index, yloc_px, txt, xloc=xloc.bar_index, yloc=yloc.price,
              style=sty, color=col, textcolor=col_white, size=size.small)
         array.push(ent_lbls, lb)
@@ -415,9 +414,9 @@ f_entry(px, stop, tgt, isLong, dfrac) =>
             line.delete(array.shift(stop_lns))
 
 if bull_entry_fire
-    f_entry(b_entry, b_stop, bull_anchor + d3, true, (ext - b_pbext) / d2)
+    f_entry(b_entry, b_stop, bull_anchor + d3, true)
 if bear_entry_fire
-    f_entry(s_entry, s_stop, bear_anchor - d3, false, (s_pbext - ext) / d2)
+    f_entry(s_entry, s_stop, bear_anchor - d3, false)
 
 // ============================================================
 // 當前波段關卡線（即時更新；換錨時跳到新錨）
