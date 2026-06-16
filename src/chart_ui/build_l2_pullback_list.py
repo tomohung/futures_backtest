@@ -64,7 +64,7 @@ def build(side: str | None, cutoff: int | None, result: str | None = None):
                         {"price": e["stop"], "label": "停損"},
                         {"price": e["target"], "label": "目標L3"},
                     ],
-                    "note": (f"{'多' if e['side']=='long' else '空'} 加碼×{e['size']:g}"
+                    "note": (f"{'多' if e['side']=='long' else '空'}"
                              f"｜深度{round(e['depth_frac'],2):g}L2｜錨{int(e['anchor'])}｜拉回{int(e['pb_ext'])}"
                              f"｜風險{e['risk']}點｜目標L3 {int(e['target'])}"),
                 })

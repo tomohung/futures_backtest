@@ -289,7 +289,7 @@ function applyL2pbMarkers() {
       marks.push({
         time: bt, position: isLong ? 'belowBar' : 'aboveBar',
         shape: isLong ? 'arrowUp' : 'arrowDown', color: COLORS.accent,
-        text: `${isLong ? '拉回多' : '拉回空'} ×${e.size} SL${e.risk}`,
+        text: `${isLong ? '拉回多' : '拉回空'} SL${e.risk}`,
       });
       // 停損水平線：進場 → 出場（紅虛線）；出場 marker（停損觸發 or L3 達標）
       const xt = e.exit_time ? nearestBarTime(localToEpoch(`${day} ${e.exit_time}:00`)) : null;

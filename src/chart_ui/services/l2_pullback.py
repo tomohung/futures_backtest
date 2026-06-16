@@ -159,8 +159,13 @@ def detect_day(bars, ema20):
 
 
 def size_mult(dfrac: float) -> float:
-    """拉回深度(÷L2) → 加碼倍數（兩階）。<0.25 過濾不交易；0.25~0.5 ×1、≥0.5 ×2。"""
-    return 2.0 if dfrac >= 0.5 else 1.0
+    """加碼已移除：一律 ×1。
+
+    舊版「深度≥0.5 ×2」來自前視偏誤回測的「深度↑→賠率↑單調」假象。causal 全窗實測
+    depth 與賠率非單調（[0.5,0.75) 反而 avgR −0.05、tot −1.9%，只有 [0.75,1.0) avgR 0.27），
+    故無可靠的深度→加碼關係，停用加碼。保留函式作介面相容/未來 causal 重驗的掛點。
+    """
+    return 1.0
 
 
 def simulate(e, bars):
