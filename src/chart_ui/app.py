@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.chart_ui.paths import STATIC_DIR
-from src.chart_ui.routes import daystats, extension, kline, l2_pullback, lists, risklevels, swing_legs
+from src.chart_ui.routes import daystats, estrange, extension, kline, l2_pullback, lists, risklevels, swing_legs
 
 
 def _asset_version() -> int:
@@ -37,6 +37,7 @@ def create_app() -> FastAPI:
     app.include_router(daystats.router)
     app.include_router(risklevels.router)
     app.include_router(extension.router)
+    app.include_router(estrange.router)
     app.include_router(swing_legs.router)
     app.include_router(l2_pullback.router)
 

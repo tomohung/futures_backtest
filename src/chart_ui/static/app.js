@@ -82,6 +82,11 @@ const RISK_COLORS = { upR: '#ef4444', safeHi: '#ffeb3b', safeLo: '#ff9800', dnR:
 // 點 PL/PH → 由該點延伸 safe 停損線到觸及的 K 並標出場。沿用覆盤多空配色（多橘紅/空綠）。
 const EXIT_PL_COLOR = '#e0623d';   // PL 多單停損延伸線 + 出場 marker
 const EXIT_PH_COLOR = '#3d9e6a';   // PH 空單停損延伸線 + 出場 marker
+// EstRange 預估振幅（移植 est_range_tx.pine）：量加權預估當日振幅 → 預估高/低（100%）。
+// 後端 /api/estrange 算（compute_vol_estimated_range：5分slot、EMA20、結算量×1.9），主圖右軸疊線。
+// 上緣紅、下緣綠（台灣慣例），實線。預設關。
+const ESTR_HIGH_COLOR = COLORS.up;    // 預估高（紅）
+const ESTR_LOW_COLOR = COLORS.down;   // 預估低（綠）
 
 const state = {
   tf: localStorage.getItem('cu.tf') || '1m',
@@ -101,6 +106,7 @@ const state = {
   indRisk: localStorage.getItem('cu.indRisk') !== '0',   // EstRisk 風險/安全價位（預設開）
   indL3Legs: localStorage.getItem('cu.indL3Legs') === '1', // L3 波段斜線（理想最大行情，預設關）
   indL2pb: localStorage.getItem('cu.indL2pb') === '1', // L2拉回續攻 進場(站回5MA續攻L2→L3)箭頭+停損（預設關）
+  indEstRange: localStorage.getItem('cu.indEstRange') === '1', // EstRange 預估振幅高/低（預設關）
   centerDate: null,           // 'YYYY-MM-DD'
   list: null,                 // 目前清單 payload
   listId: null,
@@ -358,6 +364,9 @@ function applyMaVisibility() {
   if (chartState.indMa600Series) chartState.indMa600Series.applyOptions({ visible: state.indMa600 });
   if (chartState.bbUpperSeries) chartState.bbUpperSeries.applyOptions({ visible: state.indBB });
   if (chartState.bbLowerSeries) chartState.bbLowerSeries.applyOptions({ visible: state.indBB });
+  for (const s of [chartState.estHighSeries, chartState.estLowSeries]) {
+    if (s) s.applyOptions({ visible: state.indEstRange });
+  }
 }
 function saveMaOn() {
   localStorage.setItem('cu.maOn2', state.maOn.map((b) => (b ? '1' : '0')).join(''));
@@ -787,6 +796,15 @@ function initChart() {
     crosshairMarkerVisible: false,
     priceFormat: { type: 'price', precision: 0, minMove: 1 },
   });
+  // EstRange 預估振幅：高/低 100% 實線，主圖右軸；資料只在當日 09:00 後逐分鐘。
+  const _estrOpts = (color) => ({
+    color, lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid,
+    priceScaleId: 'right', priceLineVisible: false, lastValueVisible: false,
+    crosshairMarkerVisible: false,
+    priceFormat: { type: 'price', precision: 0, minMove: 1 },
+  });
+  chartState.estHighSeries = chart.addSeries(LightweightCharts.LineSeries, _estrOpts(ESTR_HIGH_COLOR));
+  chartState.estLowSeries = chart.addSeries(LightweightCharts.LineSeries, _estrOpts(ESTR_LOW_COLOR));
   applyMaVisibility();
   chartState.volume = chart.addSeries(
     LightweightCharts.HistogramSeries,
@@ -1182,8 +1200,21 @@ function updateLegend(param) {
     const indL2pb = state.indL2pb
       ? `<span class="ind-toggle" data-toggle="l2pb" style="color:${COLORS.accent}">L2拉回續攻</span>`
       : `<span class="ind-toggle ma-off" data-toggle="l2pb">L2拉回續攻</span>`;
+    // EstRange：開啟時顯示 hover 那根的 預估高/低（100%）與振幅
+    const estr = (chartState.estrMap && chartState.estrMap.get(b.time)) || null;
+    let indEstR;
+    if (!state.indEstRange) {
+      indEstR = `<span class="ind-toggle ma-off" data-toggle="estrange">EstRange</span>`;
+    } else {
+      const head = `<span class="ind-toggle" data-toggle="estrange" style="color:${ESTR_HIGH_COLOR}">EstRange</span>`;
+      indEstR = estr
+        ? head + ` <span style="color:${ESTR_HIGH_COLOR}">高 ${r(estr.est_high)}</span>`
+          + ` · <span style="color:${ESTR_LOW_COLOR}">低 ${r(estr.est_low)}</span>`
+          + ` · 幅 ${r(estr.est_range)}`
+        : head + ` <span class="muted">—</span>`;
+    }
     const maLine = `${master}　${perMa}`;
-    const indLine = `${ind5}　${indMa600}<br>${indV}<br>${pvw}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}<br>${indL3}<br>${indL2pb}`;   // 5MA+600MA / VWAP / 昨前VWAP / BB / Pivot / ORB / 關卡觸及 / Risk / L3波段 / L2拉回續攻 各自獨立一行
+    const indLine = `${ind5}　${indMa600}<br>${indV}<br>${pvw}<br>${indBB}<br>${indPiv}<br>${indOrb}<br>${indTouch}<br>${indRisk}<br>${indL3}<br>${indL2pb}<br>${indEstR}`;   // 5MA+600MA / VWAP / 昨前VWAP / BB / Pivot / ORB / 關卡觸及 / Risk / L3波段 / L2拉回續攻 / EstRange 各自獨立一行
     main.innerHTML =
       `<span class="muted">${tStr}</span>　` +
       `開 <span class="${oc}">${r(b.open)}</span>　高 <span class="${oc}">${r(b.high)}</span>　` +
@@ -1617,6 +1648,7 @@ async function loadKline(centerEpochToFocus) {
   chartState.ma600Arr = ma600Arr;
   chartState.indMa600Series.setData(_toData(ma600Arr));
   loadExtension(state.centerDate);          // 延伸力 EXT 副圖（盤中，按日 fetch）
+  loadEstRange(state.centerDate);           // EstRange 預估振幅 主圖疊線（盤中，按日 fetch）
   focusTime(centerEpochToFocus);
   if (window._afterKline) window._afterKline();        // Task 10 掛 marker
   if (sessionReqUpdate) sessionReqUpdate();            // 觸發盤別分界線重畫
@@ -1661,6 +1693,24 @@ async function loadExtension(centerDate) {
   updateLegend(null);
   // ext setData 可能把主圖視窗推掉（非同步、在 focusTime 之後才回來）→ 重新對焦修正
   if (chartState._focusTarget != null) focusTime(chartState._focusTarget);
+}
+
+// EstRange 預估振幅 主圖疊線：按交易日 fetch /api/estrange，設 高/低 100% + 分數帶四條線。
+// toggle 關 / 日線檢視 / 無資料 → 清空。存 time→值 map 供 legend 用。
+async function loadEstRange(centerDate) {
+  if (!chartState.estHighSeries) return;
+  const series = [chartState.estHighSeries, chartState.estLowSeries];
+  const clear = () => { for (const s of series) s.setData([]); chartState.estrMap = null; };
+  if (!state.indEstRange || !centerDate || state.tf === '1d') { clear(); return; }
+  chartState.estrReqDate = centerDate;                 // race guard：換日後舊回應丟棄
+  let res = null;
+  try { res = await fetchJSON(`/api/estrange?date=${encodeURIComponent(centerDate)}`); } catch (_) { /* noop */ }
+  if (chartState.estrReqDate !== centerDate) return;   // 已換日
+  const bars = (res && res.bars) || [];
+  chartState.estHighSeries.setData(bars.map((b) => ({ time: b.time, value: b.est_high })));
+  chartState.estLowSeries.setData(bars.map((b) => ({ time: b.time, value: b.est_low })));
+  chartState.estrMap = bars.length ? new Map(bars.map((b) => [b.time, b])) : null;
+  updateLegend(null);
 }
 
 // 將視窗置中到某 time（epoch 或 'YYYY-MM-DD'）；找不到就顯示尾段。
@@ -1794,6 +1844,12 @@ function wireIndicatorToggles() {
         state.indL2pb = !state.indL2pb;
         localStorage.setItem('cu.indL2pb', state.indL2pb ? '1' : '0');
         applyL2pbMarkers();
+        updateLegend(null);
+      } else if (which === 'estrange') {
+        state.indEstRange = !state.indEstRange;
+        localStorage.setItem('cu.indEstRange', state.indEstRange ? '1' : '0');
+        applyMaVisibility();
+        loadEstRange(state.centerDate);   // 開啟時才 fetch；關閉時 loadEstRange 內會清空
         updateLegend(null);
       }
     });
