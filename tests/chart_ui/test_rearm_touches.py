@@ -30,13 +30,17 @@ def test_rearm_redraws_same_level_per_swing():
     # L1 兩筆錨價不同：100+10 與 90+10
     l1_prices = sorted(t["price"] for t in bull if t["level"] == "L1")
     assert l1_prices == [100, 110]
-    # 中間下行段點亮空方 L1–L3（錨 140）
+    # 空方＝中間下行段 leg（錨 140）重新上膛，外加基底 session-極值首觸加疊：
+    # 第一段上攻時 run_high 已抬高，低點相對 run_high 的回落產生基底空方首觸
+    # （L1@m1 run_hi110−10=100、L2@m2 run_hi125−20=105），與 leg2（錨 140）合併。
     bear_levels = [t["level"] for t in out["bear"]]
-    assert bear_levels.count("L1") == 1
-    assert bear_levels.count("L3") == 1
-    assert sorted(t["price"] for t in out["bear"] if t["level"] == "L1") == [130]  # 140-10
+    assert bear_levels.count("L1") == 2   # 基底 100 + leg2 140-10=130
+    assert bear_levels.count("L2") == 2   # 基底 105 + leg2 140-20=120
+    assert bear_levels.count("L3") == 1   # 基底與 leg2 同錨同分同價(110) → 去重為一
+    assert sorted(t["price"] for t in out["bear"] if t["level"] == "L1") == [100, 130]
     # 仍按時間昇冪
     assert [t["minute"] for t in bull] == sorted(t["minute"] for t in bull)
+    assert [t["minute"] for t in out["bear"]] == sorted(t["minute"] for t in out["bear"])
 
 
 def test_fallback_single_anchor_when_no_swing():
