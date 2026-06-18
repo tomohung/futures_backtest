@@ -419,22 +419,27 @@ def _running_anchor_touches(bars, levels: list[tuple[str, float]]) -> dict:
 
 
 def _rearm_touches(bars, levels: list[tuple[str, float]], l2_dist: float | None) -> dict:
-    """每個 ≥L2 反轉波段以波段極值為錨點重新上膛 L1–L5（方案 B）。
+    """以當日 running 極值首觸為基底，外加每個 ≥L2 反轉波段以波段極值為錨重新上膛 L1–L5（方案 B）。
 
     bars=[(minute,high,low)] 昇冪。回傳 {bull:[{level,price,time,minute}], bear:[...]}，
-    同一階一天可多筆（不同波段、不同錨價）。無任何 ≥L2 反轉時退回單一 running 錨點。
-    用與 L3 波段相同的 zigzag（反轉門檻=l2_dist，不套 L3 最小幅度）取波段轉折。
+    同一階一天可多筆（不同波段、不同錨價）。
+    基底 _running_anchor_touches（從當日 session 極值起算的自然首觸）一律保留——
+    早盤碰關卡但未形成 ≥L2 波段時，若只靠 leg 視窗會整段遺失（leg 起點之前的觸及無人記錄）。
+    再用與 L3 波段相同的 zigzag（反轉門檻=l2_dist，不套 L3 最小幅度）取波段轉折，逐段重新上膛，
+    與基底合併並去除完全重複（同階、同分、同投射價）。
     """
     out = {"bull": [], "bear": []}
     if not bars:
         return out
+    # 基底：當日 session 極值 running 錨點首觸（方向自然語意，永遠保留）
+    base = _running_anchor_touches(bars, levels)
+    out["bull"].extend(base["bull"])
+    out["bear"].extend(base["bear"])
+
     # 延遲 import 避免 daystats ↔ swing_legs 循環依賴
     from src.chart_ui.services.swing_legs import zigzag_legs
 
     legs = zigzag_legs(bars, threshold=l2_dist) if l2_dist and l2_dist > 0 else []
-    if not legs:
-        return _running_anchor_touches(bars, levels)
-
     for lg in legs:
         sm, em, anchor = lg["start_min"], lg["end_min"], lg["start_price"]
         side = "bull" if lg["dir"] == "up" else "bear"
@@ -450,8 +455,17 @@ def _rearm_touches(bars, levels: list[tuple[str, float]], l2_dist: float | None)
                     price = round(anchor + dist) if side == "bull" else round(anchor - dist)
                     out[side].append({"level": label, "price": price,
                                       "time": _hhmm(m), "minute": m})
-    out["bull"].sort(key=lambda x: x["minute"])
-    out["bear"].sort(key=lambda x: x["minute"])
+
+    # 去除完全重複（基底與 leg 起點常落在同一極值 → 同階同分同價），保留首次出現
+    for side in ("bull", "bear"):
+        seen, uniq = set(), []
+        for x in sorted(out[side], key=lambda x: x["minute"]):
+            key = (x["level"], x["minute"], x["price"])
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq.append(x)
+        out[side] = uniq
     return out
 
 
