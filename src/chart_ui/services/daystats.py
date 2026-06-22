@@ -431,10 +431,12 @@ def _rearm_touches(bars, levels: list[tuple[str, float]], l2_dist: float | None)
     out = {"bull": [], "bear": []}
     if not bars:
         return out
-    # 基底：當日 session 極值 running 錨點首觸（方向自然語意，永遠保留）
+    # 基底：當日 session 極值 running 錨點首觸（方向自然語意，永遠保留，source='base'）
     base = _running_anchor_touches(bars, levels)
-    out["bull"].extend(base["bull"])
-    out["bear"].extend(base["bear"])
+    for side in ("bull", "bear"):
+        for x in base[side]:
+            x["source"] = "base"
+        out[side].extend(base[side])
 
     # 延遲 import 避免 daystats ↔ swing_legs 循環依賴
     from src.chart_ui.services.swing_legs import zigzag_legs
@@ -454,12 +456,14 @@ def _rearm_touches(bars, levels: list[tuple[str, float]], l2_dist: float | None)
                     done.add(label)
                     price = round(anchor + dist) if side == "bull" else round(anchor - dist)
                     out[side].append({"level": label, "price": price,
-                                      "time": _hhmm(m), "minute": m})
+                                      "time": _hhmm(m), "minute": m, "source": "rearm"})
 
-    # 去除完全重複（基底與 leg 起點常落在同一極值 → 同階同分同價），保留首次出現
+    # 去除完全重複（基底與 leg 起點常落在同一極值 → 同階同分同價），保留首次出現。
+    # 排序鍵 source 讓 base 優先於 rearm，重複時保留 base 標記。
+    _src_rank = {"base": 0, "rearm": 1}
     for side in ("bull", "bear"):
         seen, uniq = set(), []
-        for x in sorted(out[side], key=lambda x: x["minute"]):
+        for x in sorted(out[side], key=lambda x: (x["minute"], _src_rank[x["source"]])):
             key = (x["level"], x["minute"], x["price"])
             if key in seen:
                 continue

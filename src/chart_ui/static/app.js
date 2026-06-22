@@ -222,11 +222,11 @@ function applyTouchMarkers() {
   if (state.indTouch && state.tf !== '1d' && d && d.touches && bars && bars.length) {
     for (const t of (d.touches.bull || [])) {
       const bt = nearestBarTime(localToEpoch(`${d.date} ${t.time}:00`));
-      if (bt != null && t.price != null) anchors.push({ time: bt, price: t.price, side: 'bull', label: t.level });
+      if (bt != null && t.price != null) anchors.push({ time: bt, price: t.price, side: 'bull', label: t.level, source: t.source || 'base' });
     }
     for (const t of (d.touches.bear || [])) {
       const bt = nearestBarTime(localToEpoch(`${d.date} ${t.time}:00`));
-      if (bt != null && t.price != null) anchors.push({ time: bt, price: t.price, side: 'bear', label: t.level });
+      if (bt != null && t.price != null) anchors.push({ time: bt, price: t.price, side: 'bear', label: t.level, source: t.source || 'base' });
     }
   }
   chartState.touchAnchors = anchors;
@@ -1466,13 +1466,24 @@ const _touchRenderer = {
         const cx = x * hpr;
         const cy = yLevel * vpr;
         const color = a.side === 'bull' ? TOUCH_BULL_COLOR : TOUCH_BEAR_COLOR;
-        ctx.fillStyle = color;
+        const isRearm = a.source === 'rearm';
+        // base=實心大圓（全日從 session 極值起算的主階梯）；rearm=空心小環（某波段重新上膛）
         ctx.beginPath();
-        ctx.arc(cx, cy, TOUCH_RADIUS * vpr, 0, Math.PI * 2);
-        ctx.fill();
-        // 文字往外側拉開：多→圓點上方、空→圓點下方
+        ctx.arc(cx, cy, (isRearm ? TOUCH_RADIUS - 1 : TOUCH_RADIUS) * vpr, 0, Math.PI * 2);
+        if (isRearm) {
+          ctx.lineWidth = Math.max(1, vpr);
+          ctx.strokeStyle = color;
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = color;
+          ctx.fill();
+        }
+        // 文字往外側拉開：多→圓點上方、空→圓點下方；rearm 文字較暗
+        ctx.globalAlpha = isRearm ? 0.55 : 1;
+        ctx.fillStyle = color;
         ctx.textBaseline = a.side === 'bull' ? 'bottom' : 'top';
         ctx.fillText(a.label, cx, cy + dir * TOUCH_GAP * vpr);
+        ctx.globalAlpha = 1;
       }
       ctx.restore();
     });
