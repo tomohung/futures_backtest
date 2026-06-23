@@ -39,8 +39,8 @@ _NVF_TIER_ICONS = {
     "mid GO": "🟩", "strong GO": "🟧",
 }
 _NVF_TIER_HINTS = {
-    "deep STOP": "窄幅震盪日 — 趨勢停,日內反轉/賣方期權可",
-    "mid STOP":  "方向中性 — 標準操作",
+    "deep STOP": "窄幅震盪日 — 趨勢/反轉雙弱,S001/S002 已 STOP",
+    "mid STOP":  "方向中性 — 標準操作（NVF 門檻邊緣）",
     "mid GO":    "偏多日 — upper bias +9pp,適合 long-trend",
     "strong GO": "高波動 + V 型風險 — 減倉、加大 SL、留意 mean-revert",
 }
