@@ -45,6 +45,16 @@
 //   加碼：已移除（一律單口）。舊「深度≥0.5 ×2」來自前視偏誤的假單調；causal 下深度與賠率
 //         非單調（[0.5,0.75) 反而 avgR −0.05、只有 [0.75,1.0) 好），無可靠深度→加碼關係。
 //   標記：▲多/▼空 進場價 + 停損價(風險) + 目標L3；停損畫實線。Alert 含進場價/停損。
+//
+// 【H126（confirmed 2026-06-24）第二次同向 L2 拉回】
+//   同一日、同方向出現第 2 次（含以上）L2 拉回進場、且 entry∈[09:30,11:30] = 乾淨續攻訊號：
+//   回測證實此「序數子集」從上面 break-even 母體切出正 EV（maxDD −3% vs −16%、連敗 3–7 vs 9–10），
+//   且可瞄更遠——L4/L5/trail 的 OOS Sharpe≈IS、2021–2026 每年 EV 皆正（H127 已證 driver 是序數本身、
+//   非前置延伸/時間/趨勢日 selection 假象）。對應 chart-ui services/l2_pullback.is_h126/h126_variant。
+//   本指標做法：bull_ord/bear_ord 逐日累計同向進場序數（跨段、與 detect_day 同源，不受 cutoff 影響）；
+//   第 2 次起 + 09:30–11:30 → 紫色高亮(▲/▼ 標「2nd」)、停損改錨點(alpha=1.0)、目標改 L4、不套深度/cutoff
+//   濾網；其餘維持 1st 參考行為(L3/alpha 0.75/深度濾網)。開關：「第二次同向高亮+L4」。H126 另有獨立 alert。
+//   詳見 research/archive/confirmed/H126-second-l2-pullback/。
 // ============================================================
 //@version=6
 indicator(
@@ -90,13 +100,16 @@ pb_floor_c  = input.float(0.05, "  拉回最小深度係數×EMA20", step=0.01, 
 min_depth_c = input.float(0.25, "  最小拉回深度（×L2，進場過濾）", step=0.05, minval=0, maxval=1, group=GRP_L2PB,
                  tooltip="進場時拉回深度(前峰−拉回極值)須 ≥ 此係數×L2距離。0.25 濾掉淺拉回(causal 下 <0.25 為 tot 0.6% 死重)；0=不過濾。加碼已移除，深度不再決定倉位")
 stop_alpha  = input.float(0.75, "  停損 alpha", step=0.05, minval=0, maxval=1, group=GRP_L2PB,
-                 tooltip="停損=拉回極值往錨點靠 alpha 比例。0=拉回極值(緊)、1=趨勢起點(寬)。回測最佳 0.75")
+                 tooltip="停損=拉回極值往錨點靠 alpha 比例。0=拉回極值(緊)、1=趨勢起點(寬)。回測最佳 0.75（1st 參考用）")
+show_h126   = input.bool(true, "  第二次同向高亮+L4（H126 confirmed）", group=GRP_L2PB,
+                 tooltip="同向第2次(含以上)L2拉回 且 09:30–11:30 = H126 confirmed 訊號：紫色高亮、停損改錨點(alpha=1.0)、目標改 L4、不套深度濾網。回測 2nd+ 從 break-even 母體切出正 EV（maxDD −3 vs −16，L4/L5 OOS Sharpe≈IS）。")
 
 // 配色（台灣慣例：多/漲=紅，空/跌=綠）
 col_bull   = color.new(#ff5c5c, 0)
 col_bear   = color.new(#22c55e, 0)
 col_white  = color.new(#ffffff, 0)
 col_vline  = color.new(#888888, 25)
+col_h126   = color.new(#a855f7, 0)   // H126 第二次同向(2nd+,09:30-11:30) 高亮（紫）
 
 // ============================================================
 // Time Windows (Asia/Taipei = UTC+8)
@@ -183,6 +196,13 @@ var bool  s_entered = false
 var bool  s_matured = false
 var float s_entry   = na
 var float s_stop    = na
+// H126：同向 L2 拉回進場序數（跨段累計，當日重置）+ 旗標 + 目標
+var int   bull_ord  = 0
+var int   bear_ord  = 0
+var bool  b_is_h126 = false
+var bool  s_is_h126 = false
+var float b_tgt     = na
+var float s_tgt     = na
 
 if entering_session
     trend       := 0
@@ -213,6 +233,10 @@ if entering_session
     s_peak    := na
     s_entered := false
     s_matured := false
+    bull_ord  := 0
+    bear_ord  := 0
+    b_is_h126 := false
+    s_is_h126 := false
 
 if in_session and ready
     run_lo := na(run_lo) ? low  : math.min(run_lo, low)
@@ -286,13 +310,17 @@ if in_session and ready
                 b_pbext := math.min(b_pbext, low)
                 b_reclaim = close[1] < sma5[1] and close > sma5
                 b_overshoot = close >= bull_anchor + d3
-                // 對齊 Python A：第一個站回即消耗本段（淺站回也消耗→該段啞掉，不留到後面更深的拉回）；
-                // peak 用 tracked ext（非凍結）算深度；深度夠才真的進場/畫。
-                if ent_long and b_reclaim and not b_overshoot and _t < ent_cutoff and barstate.isconfirmed
+                // 對齊 Python A：第一個站回即消耗本段（序數跨段累計，與 detect_day 同源，不受 cutoff 影響）。
+                if ent_long and b_reclaim and not b_overshoot and barstate.isconfirmed
                     b_entered := true
-                    if (ext - b_pbext) >= min_depth_c * d2
+                    bull_ord  += 1
+                    is_h = show_h126 and bull_ord >= 2 and _t >= 570 and _t < 690   // H126：2nd+ 且 09:30–11:30
+                    depth_ok = (ext - b_pbext) >= min_depth_c * d2
+                    if is_h or (_t < ent_cutoff and depth_ok)                        // H126 不套深度/cutoff 濾網
+                        b_is_h126 := is_h
                         b_entry   := close
-                        b_stop    := b_pbext - stop_alpha * (b_pbext - bull_anchor)
+                        b_stop    := is_h ? bull_anchor : (b_pbext - stop_alpha * (b_pbext - bull_anchor))
+                        b_tgt     := is_h ? (bull_anchor + d4) : (bull_anchor + d3)   // H126 瞄 L4、否則 L3
                         bull_entry_fire := true
     // ---- 空單 ----
     if trend == -1 and not na(bear_anchor)
@@ -309,12 +337,17 @@ if in_session and ready
                 s_pbext := math.max(s_pbext, high)
                 s_reclaim = close[1] > sma5[1] and close < sma5
                 s_overshoot = close <= bear_anchor - d3
-                // 對齊 Python A：第一個站回即消耗本段；peak 用 tracked ext 算深度；深度夠才進場/畫。
-                if ent_short and s_reclaim and not s_overshoot and _t < ent_cutoff and barstate.isconfirmed
+                // 對齊 Python A：第一個站回即消耗本段（序數跨段累計，與 detect_day 同源，不受 cutoff 影響）。
+                if ent_short and s_reclaim and not s_overshoot and barstate.isconfirmed
                     s_entered := true
-                    if (s_pbext - ext) >= min_depth_c * d2
+                    bear_ord  += 1
+                    is_h = show_h126 and bear_ord >= 2 and _t >= 570 and _t < 690   // H126：2nd+ 且 09:30–11:30
+                    depth_ok = (s_pbext - ext) >= min_depth_c * d2
+                    if is_h or (_t < ent_cutoff and depth_ok)                        // H126 不套深度/cutoff 濾網
+                        s_is_h126 := is_h
                         s_entry   := close
-                        s_stop    := s_pbext + stop_alpha * (bear_anchor - s_pbext)
+                        s_stop    := is_h ? bear_anchor : (s_pbext + stop_alpha * (bear_anchor - s_pbext))
+                        s_tgt     := is_h ? (bear_anchor - d4) : (bear_anchor - d3)   // H126 瞄 L4、否則 L3
                         bear_entry_fire := true
 
 // 只在「當前波段方向」那一側觸發，避免趨勢中對側殘錨誤觸（開盤暫定期兩側皆可）
@@ -394,14 +427,15 @@ var label[] ent_lbls = array.new<label>()
 var line[]  stop_lns = array.new<line>()
 int ENT_MAX = 60
 
-f_entry(px, stop, tgt, isLong) =>
+f_entry(px, stop, tgt, isLong, isH) =>
     if show_entry
         risk = math.round(math.abs(px - stop))
-        head = isLong ? "▲ 多進 " : "▼ 空進 "
-        col  = isLong ? col_bull : col_bear
+        head = (isH ? "2nd " : "") + (isLong ? "▲ 多進 " : "▼ 空進 ")
+        col  = isH ? col_h126 : (isLong ? col_bull : col_bear)
         sty  = isLong ? label.style_label_up : label.style_label_down
         yloc_px = isLong ? low : high
-        txt = head + str.tostring(math.round(px)) + "\nSL " + str.tostring(math.round(stop)) + "（風險 " + str.tostring(risk) + " 點）\n目標L3 " + str.tostring(math.round(tgt))
+        tlbl = isH ? "目標L4 " : "目標L3 "
+        txt = head + str.tostring(math.round(px)) + "\nSL " + str.tostring(math.round(stop)) + "（風險 " + str.tostring(risk) + " 點）\n" + tlbl + str.tostring(math.round(tgt))
         lb = label.new(bar_index, yloc_px, txt, xloc=xloc.bar_index, yloc=yloc.price,
              style=sty, color=col, textcolor=col_white, size=size.small)
         array.push(ent_lbls, lb)
@@ -414,9 +448,9 @@ f_entry(px, stop, tgt, isLong) =>
             line.delete(array.shift(stop_lns))
 
 if bull_entry_fire
-    f_entry(b_entry, b_stop, bull_anchor + d3, true)
+    f_entry(b_entry, b_stop, b_tgt, true, b_is_h126)
 if bear_entry_fire
-    f_entry(s_entry, s_stop, bear_anchor - d3, false)
+    f_entry(s_entry, s_stop, s_tgt, false, s_is_h126)
 
 // ============================================================
 // 當前波段關卡線（即時更新；換錨時跳到新錨）
@@ -564,8 +598,14 @@ if any_touch
 // L2 拉回續攻 進場 alert
 alertcondition(bull_entry_fire, "L2拉回續攻 多單進場", "TX L2拉回續攻 多單進場 站回5MA 價={{close}}")
 alertcondition(bear_entry_fire, "L2拉回續攻 空單進場", "TX L2拉回續攻 空單進場 站回5MA 價={{close}}")
+// H126 專屬 alert（第二次同向、09:30–11:30 的較強訊號）
+bull_h126_fire = bull_entry_fire and b_is_h126
+bear_h126_fire = bear_entry_fire and s_is_h126
+alertcondition(bull_h126_fire, "H126 第二次同向 多單進場", "TX H126 多單(第二次同向,09:30-11:30,目標L4) 進場 價={{close}}")
+alertcondition(bear_h126_fire, "H126 第二次同向 空單進場", "TX H126 空單(第二次同向,09:30-11:30,目標L4) 進場 價={{close}}")
 if bull_entry_fire or bear_entry_fire
     _es = bull_entry_fire ? "多單" : "空單"
     _ep = bull_entry_fire ? b_entry : s_entry
     _sl = bull_entry_fire ? b_stop : s_stop
-    alert("TX L2拉回續攻 " + _es + " 進場 價=" + str.tostring(math.round(_ep)) + " 停損=" + str.tostring(math.round(_sl)), alert.freq_once_per_bar)
+    _h126 = (bull_entry_fire ? b_is_h126 : s_is_h126) ? " [H126第二次同向]" : ""
+    alert("TX L2拉回續攻 " + _es + " 進場" + _h126 + " 價=" + str.tostring(math.round(_ep)) + " 停損=" + str.tostring(math.round(_sl)), alert.freq_once_per_bar)
