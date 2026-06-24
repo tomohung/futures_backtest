@@ -273,6 +273,7 @@ async function loadSwingLegs(date) {
 // L2 拉回續攻指標（獨立，預設關）：當日「拉回後站回 5MA」進場箭頭(金) + 停損水平線(紅虛線，
 // 進場→出場)，停損觸發/達標 L3 的那根標出場 marker（類似 pivot 停損延伸線）。
 const L2PB_STOP_COLOR = '#c0392b';   // 停損線（紅虛線）
+const L2PB_H126_COLOR = '#a855f7';   // H126 第二次同向拉回(2nd+,09:30-11:30) 高亮（紫）
 function clearL2pbStops() {
   if (chartState.l2pbStopSeries) {
     for (const s of chartState.l2pbStopSeries) { try { chartState.chart.removeSeries(s); } catch (_) {} }
@@ -291,11 +292,15 @@ function applyL2pbMarkers() {
       const bt = nearestBarTime(localToEpoch(`${day} ${e.time}:00`));
       if (bt == null) continue;
       const isLong = e.side === 'long';
-      // 進場箭頭（金）
+      // 進場箭頭：1st=金(參考)、H126 第二次同向(2nd+,09:30-11:30)=紫高亮，瞄 L4
+      const h126 = !!e.is_h126;
       marks.push({
         time: bt, position: isLong ? 'belowBar' : 'aboveBar',
-        shape: isLong ? 'arrowUp' : 'arrowDown', color: COLORS.accent,
-        text: `${isLong ? '拉回多' : '拉回空'} SL${e.risk}`,
+        shape: isLong ? 'arrowUp' : 'arrowDown',
+        color: h126 ? L2PB_H126_COLOR : COLORS.accent,
+        text: h126
+          ? `2nd${isLong ? '多' : '空'} SL${e.risk}→L4`
+          : `${isLong ? '拉回多' : '拉回空'} SL${e.risk}`,
       });
       // 停損水平線：進場 → 出場（紅虛線）；出場 marker（停損觸發 or L3 達標）
       const xt = e.exit_time ? nearestBarTime(localToEpoch(`${day} ${e.exit_time}:00`)) : null;
@@ -316,7 +321,8 @@ function applyL2pbMarkers() {
       } else if (xt != null && e.result === 'Win') {
         marks.push({
           time: xt, position: isLong ? 'aboveBar' : 'belowBar',
-          shape: 'circle', color: '#3b82f6', text: 'L3達標',
+          shape: 'circle', color: h126 ? L2PB_H126_COLOR : '#3b82f6',
+          text: `${e.target_label || 'L3'}達標`,
         });
       }
     }

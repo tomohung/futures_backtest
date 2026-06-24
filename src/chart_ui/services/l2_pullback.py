@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
@@ -28,6 +29,13 @@ STOP_ALPHA = 0.75
 EMA5 = 5
 CUTOFF_MIN = 720       # 進場時間上限=12:00（午後尾盤幾乎無 edge）
 MIN_DEPTH_FRAC = 0.25  # 進場最小拉回深度(÷L2)；濾掉淺拉回（avgR僅0.08、占46%）
+
+# H126（confirmed）：同向第 2 次（含以上）L2 拉回 + entry∈[09:30,11:30] = 乾淨續攻訊號。
+# 停損用 alpha=1.0（=錨點，回測單調最佳），目標瞄 L4（非保守 L3）。詳見
+# research/archive/confirmed/H126-second-l2-pullback/。偵測同源 detect_day，僅以 ordinal 切子集。
+H126_WIN_LO, H126_WIN_HI = 570, 690   # 09:30–11:30
+H126_ALPHA = 1.0
+H126_TARGET = "L4"
 
 
 def _sma(seq, n):
@@ -61,6 +69,7 @@ def detect_day(bars, ema20):
     s5 = _sma(closes, EMA5)
     n = len(bars)
     out = []
+    ord_count: dict[str, int] = defaultdict(int)   # 同方向序數（H126）
 
     # ZigZag streaming 狀態
     trend = None
@@ -114,9 +123,11 @@ def detect_day(bars, ema20):
                             target = anchor + L3d if up else anchor - L3d
                             depth = (peak - pb_ext) if up else (pb_ext - peak)
                             dfrac = depth / L2d
+                            side = "long" if up else "short"
+                            ord_count[side] += 1
                             out.append({
                                 "entry_min": m, "entry_i": i,
-                                "side": "long" if up else "short",
+                                "side": side, "ordinal": ord_count[side],
                                 "entry": round(c, 1), "anchor": round(anchor, 1),
                                 "pb_ext": round(pb_ext, 1), "stop": round(stop, 1),
                                 "target": round(target, 1),
@@ -196,8 +207,28 @@ def _day_bars(conn, sel: date):
             for t, o, h, l, c in rows]
 
 
+def is_h126(e: dict) -> bool:
+    """H126 訊號：同向第 2 次（含以上）拉回 + entry∈[09:30,11:30]。"""
+    return e["ordinal"] >= 2 and H126_WIN_LO <= e["entry_min"] < H126_WIN_HI
+
+
+def h126_variant(e: dict, dist: dict) -> dict:
+    """把一筆進場改成 H126 出場規格（停損=錨點 alpha=1.0、目標 L4），回傳新 dict（不改原）。"""
+    up = e["side"] == "long"
+    anchor = e["anchor"]
+    tgt_d = dist[H126_TARGET]
+    stop = anchor                                  # alpha=1.0 → stop = pb_ext − (pb_ext − anchor) = anchor
+    target = anchor + tgt_d if up else anchor - tgt_d
+    return {**e, "stop": round(stop, 1), "target": round(target, 1),
+            "risk": round(abs(e["entry"] - stop))}
+
+
 def compute_l2_pullback_entries(*, date_str: str, db_path: Path | None = None) -> dict:
-    """單日 L2 拉回續攻進場（主圖指標用）。回傳 {entries:[{time,side,entry,stop,target,risk}], l3_dist, ema20}。"""
+    """單日 L2 拉回續攻進場（主圖指標用）。回傳 {entries:[{time,side,entry,ordinal,is_h126,stop,target,...}], ...}。
+
+    1st（=H120 母體，參考用）：沿用既有濾網（≤12:00、深度≥MIN_DEPTH_FRAC）+ L3/alpha0.75 levels。
+    2nd+ 且 09:30–11:30（=H126 confirmed 訊號）：不套深度/時間濾網，改用 H126 levels（停損=錨點、目標 L4）。
+    """
     db_path = Path(db_path) if db_path else paths.DUCKDB_PATH
     sel = date.fromisoformat(date_str)
     with duckdb.connect(str(db_path), read_only=True) as conn:
@@ -210,15 +241,19 @@ def compute_l2_pullback_entries(*, date_str: str, db_path: Path | None = None) -
     entries, dist = detect_day(bars, ema20)
     out = []
     for e in entries:
-        if e["entry_min"] >= CUTOFF_MIN:           # 進場時間上限 12:00
-            continue
-        if e["depth_frac"] < MIN_DEPTH_FRAC:       # 濾掉淺拉回
-            continue
-        exit_min, exit_px, pnl, result = simulate(e, bars)
+        h126 = is_h126(e)
+        if not h126:                               # 1st 參考：沿用既有濾網
+            if e["entry_min"] >= CUTOFF_MIN:
+                continue
+            if e["depth_frac"] < MIN_DEPTH_FRAC:
+                continue
+        es = h126_variant(e, dist) if h126 else e
+        exit_min, exit_px, pnl, result = simulate(es, bars)
         out.append({
             "time": _min_to_hhmm(e["entry_min"]),
-            "side": e["side"], "entry": e["entry"], "stop": e["stop"],
-            "target": e["target"], "risk": e["risk"],
+            "side": e["side"], "ordinal": e["ordinal"], "is_h126": h126,
+            "entry": es["entry"], "stop": es["stop"], "target": es["target"], "risk": es["risk"],
+            "target_label": "L4" if h126 else "L3",
             "depth_frac": round(e["depth_frac"], 2), "size": e["size"],
             "exit_time": _min_to_hhmm(exit_min), "exit": exit_px,
             "pnl": pnl, "result": result,

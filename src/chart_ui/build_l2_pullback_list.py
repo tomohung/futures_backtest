@@ -19,15 +19,20 @@ from src.chart_ui import paths
 from src.chart_ui.list_writer import write_chart_list
 from src.chart_ui.services.daystats import SYMBOL, _ema20_range
 from src.chart_ui.services.l2_pullback import (
+    H126_WIN_HI,
+    H126_WIN_LO,
     MIN_DEPTH_FRAC,
     _day_bars,
     _min_to_hhmm,
     detect_day,
+    h126_variant,
+    is_h126,
     simulate,
 )
 
 
-def build(side: str | None, cutoff: int | None, result: str | None = None):
+def build(side: str | None, cutoff: int | None, result: str | None = None, second: bool = False):
+    """second=True：只收 H126 第二次同向拉回（2nd+、09:30–11:30、無深度濾網、停損=錨點/目標 L4）。"""
     items = []
     with duckdb.connect(str(paths.DUCKDB_PATH), read_only=True) as conn:
         days = [r[0] for r in conn.execute(
@@ -40,33 +45,40 @@ def build(side: str | None, cutoff: int | None, result: str | None = None):
             bars = _day_bars(conn, d)
             if len(bars) < 5:
                 continue
-            entries, _dist = detect_day(bars, ema20)
+            entries, dist = detect_day(bars, ema20)
             for e in entries:
                 if side and e["side"] != side:
                     continue
-                if cutoff and e["entry_min"] >= cutoff:
-                    continue
-                if e["depth_frac"] < MIN_DEPTH_FRAC:   # 濾掉淺拉回（與策略一致）
-                    continue
-                exit_min, exit_px, pnl, res = simulate(e, bars)
+                if second:
+                    if not is_h126(e):              # 只收 2nd+ 且 09:30–11:30
+                        continue
+                    es, tlabel = h126_variant(e, dist), "L4"
+                else:
+                    if cutoff and e["entry_min"] >= cutoff:
+                        continue
+                    if e["depth_frac"] < MIN_DEPTH_FRAC:   # 濾掉淺拉回（與策略一致）
+                        continue
+                    es, tlabel = e, "L3"
+                exit_min, exit_px, pnl, res = simulate(es, bars)
                 if result and res != result:
                     continue
                 items.append({
                     "time": f"{d} {_min_to_hhmm(e['entry_min'])}:00",
                     "exit_time": f"{d} {_min_to_hhmm(exit_min)}:00",
                     "side": e["side"],
-                    "entry": e["entry"],
+                    "entry": es["entry"],
                     "exit": exit_px,
                     "pnl_pts": pnl,
-                    "return_pct": round(pnl / e["entry"] * 100, 3),
+                    "return_pct": round(pnl / es["entry"] * 100, 3),
                     "result": res,
                     "levels": [
-                        {"price": e["stop"], "label": "停損"},
-                        {"price": e["target"], "label": "目標L3"},
+                        {"price": es["stop"], "label": "停損"},
+                        {"price": es["target"], "label": f"目標{tlabel}"},
                     ],
                     "note": (f"{'多' if e['side']=='long' else '空'}"
+                             f"{'｜第'+str(e['ordinal'])+'次' if second else ''}"
                              f"｜深度{round(e['depth_frac'],2):g}L2｜錨{int(e['anchor'])}｜拉回{int(e['pb_ext'])}"
-                             f"｜風險{e['risk']}點｜目標L3 {int(e['target'])}"),
+                             f"｜風險{es['risk']}點｜目標{tlabel} {int(es['target'])}"),
                 })
     return items
 
@@ -78,20 +90,29 @@ def main():
                     help="只收特定結果（Loss=敗單覆盤）")
     ap.add_argument("--cutoff", type=int, default=720,
                     help="只收此分鐘前進場（預設720=12:00；825=全時段）")
+    ap.add_argument("--second", action="store_true",
+                    help="只收 H126 第二次同向拉回（2nd+、09:30–11:30、停損=錨點、目標L4）")
     ap.add_argument("--id", default=None)
     args = ap.parse_args()
 
-    items = build(args.side, args.cutoff, args.result)
-    # 預設 cutoff=720(12:00) 視為標準，不加後綴；非預設才標 -le{cutoff}
-    cut_suffix = f"-le{args.cutoff}" if (args.cutoff and args.cutoff != 720) else ""
+    items = build(args.side, args.cutoff, args.result, second=args.second)
     res_suffix = f"-{args.result.lower()}" if args.result else ""
-    suffix = (f"-{args.side}" if args.side else "") + res_suffix + cut_suffix
-    list_id = args.id or f"l2-pullback{suffix}"
-    cut_name = f"（≤{_min_to_hhmm(args.cutoff)}）" if (args.cutoff and args.cutoff != 720) else ""
-    res_name = {"Win": "（勝）", "Loss": "（敗）", "Open": "（收盤）"}.get(args.result, "")
-    name = "L2拉回續攻" + (f"（{args.side}）" if args.side else "") + res_name + cut_name
-    path = write_chart_list(list_id, items, name=name,
-                            desc="L2確立→拉回→收盤站回5MA進場；停損=拉回極值往錨靠0.75，目標L3。causal 行情參考指標（前身 H120）。")
+    if args.second:
+        list_id = args.id or ("l2-pullback-2nd" + (f"-{args.side}" if args.side else "") + res_suffix)
+        res_name = {"Win": "（勝）", "Loss": "（敗）", "Open": "（收盤）"}.get(args.result, "")
+        name = "L2第二次同向拉回·H126" + (f"（{args.side}）" if args.side else "") + res_name
+        path = write_chart_list(list_id, items, name=name,
+                                desc="H126(confirmed)：同向第2次(含以上)L2拉回+09:30–11:30；停損=錨點(alpha=1.0)，目標L4。causal，detect_day 同源。")
+    else:
+        # 預設 cutoff=720(12:00) 視為標準，不加後綴；非預設才標 -le{cutoff}
+        cut_suffix = f"-le{args.cutoff}" if (args.cutoff and args.cutoff != 720) else ""
+        suffix = (f"-{args.side}" if args.side else "") + res_suffix + cut_suffix
+        list_id = args.id or f"l2-pullback{suffix}"
+        cut_name = f"（≤{_min_to_hhmm(args.cutoff)}）" if (args.cutoff and args.cutoff != 720) else ""
+        res_name = {"Win": "（勝）", "Loss": "（敗）", "Open": "（收盤）"}.get(args.result, "")
+        name = "L2拉回續攻" + (f"（{args.side}）" if args.side else "") + res_name + cut_name
+        path = write_chart_list(list_id, items, name=name,
+                                desc="L2確立→拉回→收盤站回5MA進場；停損=拉回極值往錨靠0.75，目標L3。causal 行情參考指標（前身 H120）。")
     wins = sum(1 for it in items if it["result"] == "Win")
     print(f"{len(items)} 筆 → {path}")
     print(f"勝率 {round(100*wins/len(items),1)}%（Win={wins}）" if items else "無資料")
