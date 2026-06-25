@@ -62,6 +62,7 @@ futures_backtest/
 │   │   ├── download_margin.py / parse_margin.py ← 融資餘額
 │   │   ├── download_econ.py / parse_econ.py ← 景氣對策信號
 │   │   ├── build_indicators.py ← 合成 fg-composite indicators.csv
+│   │   ├── download_stock_min.py / load_stock_min.py ← 個股分K（parquet 落地 → stock_min 表，DCI 校準）
 │   │   └── validate.py         ← 資料正確性驗證
 │   ├── strategies/              ← 回測用策略類別（orb / reversal / exhaustion / est_hl 系列…）
 │   ├── analysis/                ← 早盤簡報、關鍵價格、VIX regime、廣度溫度計、fg-composite 監控
@@ -73,7 +74,13 @@ futures_backtest/
 │   │   ├── analyze.py           ← 交易紀錄分析
 │   │   └── summary_all.py       ← 所有策略跨年度比較總表
 │   └── chart_ui/                ← 行情瀏覽 app（FastAPI + lightweight-charts，uv run chart-ui）
+│       ├── routes/             ← kline / lists / daystats / extension / risklevels / swing_legs / l2_pullback / estrange
+│       └── services/           ← kline_loader / extension / futures_extension / dci_daily / risklevels …
+├── indicators/
+│   ├── tradingview/             ← TradingView Pine Script 指標（est_range / orb / reversal / swing_levels …）
+│   └── xq/                      ← XQ 全球贏家指標
 ├── strategies/live/             ← Confirmed 策略（S001-esthl, S002-reversal, S004-fg-composite）
+├── strategies/retired/          ← 退役策略（S003-exhaustion, S005-l2-pullback）
 ├── research/                    ← 假設驅動研究記錄（active / archive）
 ├── output/                      ← 回測結果 CSV、分析報告（勿納入版控）
 └── notebooks/                   ← Jupyter 探索分析
@@ -246,6 +253,7 @@ conn.execute("""
 | `top_lists` / `concentration_index` | 月度成交前 20 + 集中度寬表（H080） |
 | `taiex_day` / `vixtwn` | 加權指數日線 / 台灣 VIX |
 | `margin_balance` / `econ_signal` | 融資餘額 / 景氣對策信號 |
+| `stock_min` | 全市場個股分K（FinMind，DCI 盤中校準用，獨立兩步 ETL） |
 
 > `taiex_day` / `vixtwn` / `margin_balance` / `econ_signal` 共同支撐 fg-composite（S004）市場情緒綜合指標。
 
@@ -280,7 +288,11 @@ uv run python src/backtest/backtest_estrange_options.py \
 uv run chart-ui            # 啟動，預設 http://127.0.0.1:8888/
 ```
 
-讀 `data/futures.duckdb` 的 `ohlcv_1m`，可瀏覽每日 1 分K，並含延伸力（extension）副圖、NYF（0050期）盤前延伸與 VIX regime 盤前判讀。回測腳本可用 `from src.chart_ui.list_writer import write_chart_list_from_backtesting` 輸出自訂清單。
+讀 `data/futures.duckdb` 的 `ohlcv_1m`，可瀏覽每日 1 分K。主圖支援關卡（risk levels）觸及標記與 swing levels 高亮；副圖含延伸力（extension）、NYF（0050期）盤前延伸與 VIX regime 盤前判讀。回測腳本可用 `from src.chart_ui.list_writer import write_chart_list_from_backtesting` 輸出自訂清單。
+
+```bash
+./run-chart-ui-tailscale.sh   # 綁 tailscale 對外（自動抓 tailscale ip -4）
+```
 
 ## 疑難排解
 
