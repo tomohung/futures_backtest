@@ -43,9 +43,18 @@ def _sma(seq, n):
     return out
 
 
-def detect_l1reset(bars, ema):
-    """回傳每筆進場 dict：entry_i, entry_min, side, entry, anchor, reentry_idx。"""
+def detect_l1reset(bars, ema, *, block_l4=True, cutoff=690, require_l3_exit=True):
+    """回傳每筆進場 dict：entry_i, entry_min, side, entry, anchor, reentry_idx。
+
+    濾網（預設開）：
+      block_l4         — 本相位 running 極值已達 L4 後，不再觸發後續進場（仍消耗拉回相位）。
+      cutoff           — entry_min ≥ cutoff（預設 690=11:30）的訊號濾掉。
+      require_l3_exit  — re-entry 的 reset 必須在「前一筆進場後價格已碰 L3（=前一筆於 L3 出場）」之後
+                         才生效。修正「還沒出場就 reset」的邏輯漏洞（6/11 09:07 reset 早於 09:13 L3 出場）。
+    """
     L1d, L2d = C1 * ema, COEF["L2"] * ema
+    L3d = COEF["L3"] * ema
+    L4d = COEF["L4"] * ema
     L5d = COEF["L5"] * ema
     pb_floor = PB_FLOOR_FRAC * ema
     closes = [b[4] for b in bars]
@@ -60,7 +69,10 @@ def detect_l1reset(bars, ema):
         if trend != 0 and anchor is not None:
             up = trend == 1
             ext = max(ext, h) if up else min(ext, l)
-            if sub == "needL1":
+            if sub == "needL3":                              # 前一筆須先碰 L3（出場）才能 reset
+                if (ext - anchor >= L3d) if up else (anchor - ext >= L3d):
+                    sub = "needL1"
+            elif sub == "needL1":
                 if (l <= anchor + L1d) if up else (h >= anchor - L1d):
                     sub = "touchL2"
             elif sub == "touchL2":
@@ -78,10 +90,13 @@ def detect_l1reset(bars, ema):
                         else (closes[i - 1] > s5[i - 1] and c < s5[i])
                     over = (c >= anchor + L5d) if up else (c <= anchor - L5d)
                     if recl and not over:
-                        ridx += 1
-                        out.append({"entry_i": i, "entry_min": m, "side": "long" if up else "short",
-                                    "entry": round(c, 1), "anchor": round(anchor, 1), "reentry_idx": ridx})
-                        sub = "needL1"
+                        exc = (ext - anchor) if up else (anchor - ext)   # 本相位已實現極值幅度
+                        blocked = (block_l4 and exc >= L4d) or (m >= cutoff)
+                        if not blocked:
+                            ridx += 1
+                            out.append({"entry_i": i, "entry_min": m, "side": "long" if up else "short",
+                                        "entry": round(c, 1), "anchor": round(anchor, 1), "reentry_idx": ridx})
+                        sub = "needL3" if require_l3_exit else "needL1"    # 下一筆須先碰 L3 出場才能 reset
         # zigzag
         if trend == 0:
             up_ref, dn_ref = min(up_ref, l), max(dn_ref, h)
