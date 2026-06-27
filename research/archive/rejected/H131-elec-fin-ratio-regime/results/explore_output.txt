@@ -1,0 +1,90 @@
+# H131 Phase 1 探索結果
+
+樣本：2010-01-04 ~ 2026-06-26，N=3924 交易日
+電子/金融 log 比率 r：mean=-0.891 std=0.263
+
+======================================================================
+## W=10（trailing 窗）
+共線：spearman(ratioER, taiexER)=+0.152 | spearman(ratioER, VIX)=-0.028  (N=3914)
+
+  K=5: spearman(ratioER,fwdER)=-0.021 (N=3909)  五分位median fwdER=[np.float64(0.467), np.float64(0.459), np.float64(0.465), np.float64(0.438), np.float64(0.424)] ✗非單調
+     非重疊(stride=5,N=782) OLS fwdER~z(ratioER)+z(taiexER):
+       ratioER β=+0.0084 t=+0.79 | taiexER β=-0.0290 t=-2.69
+       R² baseline(僅taiexER)=0.0086 → full=0.0094  ΔR²(ratioER增量)=+0.0008
+     雙重排序 median fwdER（列=taiexER, 欄=ratioER）:
+       rb     re低    re中    re高
+       tb                      
+       te低  0.476  0.475  0.481
+       te中  0.465  0.499  0.441
+       te高  0.436  0.393  0.388
+
+  K=10: spearman(ratioER,fwdER)=+0.019 (N=3904)  五分位median fwdER=[np.float64(0.305), np.float64(0.311), np.float64(0.318), np.float64(0.308), np.float64(0.337)] ✗非單調
+     非重疊(stride=10,N=391) OLS fwdER~z(ratioER)+z(taiexER):
+       ratioER β=+0.0038 t=+0.32 | taiexER β=-0.0255 t=-2.17
+       R² baseline(僅taiexER)=0.0118 → full=0.0120  ΔR²(ratioER增量)=+0.0003
+     雙重排序 median fwdER（列=taiexER, 欄=ratioER）:
+       rb     re低    re中    re高
+       tb                      
+       te低  0.311  0.344  0.380
+       te中  0.334  0.317  0.313
+       te高  0.271  0.264  0.293
+
+  K=20: spearman(ratioER,fwdER)=+0.010 (N=3894)  五分位median fwdER=[np.float64(0.217), np.float64(0.236), np.float64(0.227), np.float64(0.207), np.float64(0.252)] ✗非單調
+     非重疊(stride=20,N=195) OLS fwdER~z(ratioER)+z(taiexER):
+       ratioER β=+0.0031 t=+0.25 | taiexER β=-0.0163 t=-1.33
+       R² baseline(僅taiexER)=0.0088 → full=0.0091  ΔR²(ratioER增量)=+0.0003
+     雙重排序 median fwdER（列=taiexER, 欄=ratioER）:
+       rb     re低    re中    re高
+       tb                      
+       te低  0.227  0.252  0.249
+       te中  0.221  0.201  0.234
+       te高  0.217  0.220  0.234
+
+  (A) 方向（dir=sign(r-SMA10)）→ forward TAIEX 報酬:
+     K=5: 電子領先 median=+0.45% (N=413) | 金融領先 median=+0.20% (N=369)
+     K=10: 電子領先 median=+0.82% (N=205) | 金融領先 median=+0.33% (N=186)
+     K=20: 電子領先 median=+1.76% (N=105) | 金融領先 median=+0.41% (N=90)
+
+======================================================================
+## W=20（trailing 窗）
+共線：spearman(ratioER, taiexER)=+0.118 | spearman(ratioER, VIX)=-0.017  (N=3904)
+
+  K=5: spearman(ratioER,fwdER)=-0.002 (N=3899)  五分位median fwdER=[np.float64(0.454), np.float64(0.458), np.float64(0.447), np.float64(0.468), np.float64(0.428)] ✗非單調
+     非重疊(stride=5,N=780) OLS fwdER~z(ratioER)+z(taiexER):
+       ratioER β=+0.0054 t=+0.51 | taiexER β=-0.0175 t=-1.62
+       R² baseline(僅taiexER)=0.0032 → full=0.0035  ΔR²(ratioER增量)=+0.0003
+     雙重排序 median fwdER（列=taiexER, 欄=ratioER）:
+       rb     re低    re中    re高
+       tb                      
+       te低  0.448  0.442  0.490
+       te中  0.493  0.473  0.469
+       te高  0.440  0.415  0.408
+
+  K=10: spearman(ratioER,fwdER)=+0.017 (N=3894)  五分位median fwdER=[np.float64(0.303), np.float64(0.308), np.float64(0.325), np.float64(0.321), np.float64(0.321)] ✗非單調
+     非重疊(stride=10,N=390) OLS fwdER~z(ratioER)+z(taiexER):
+       ratioER β=+0.0055 t=+0.46 | taiexER β=-0.0261 t=-2.15
+       R² baseline(僅taiexER)=0.0113 → full=0.0119  ΔR²(ratioER增量)=+0.0005
+     雙重排序 median fwdER（列=taiexER, 欄=ratioER）:
+       rb     re低    re中    re高
+       tb                      
+       te低  0.317  0.311  0.330
+       te中  0.318  0.333  0.347
+       te高  0.273  0.318  0.281
+
+  K=20: spearman(ratioER,fwdER)=+0.048 (N=3884)  五分位median fwdER=[np.float64(0.207), np.float64(0.224), np.float64(0.219), np.float64(0.24), np.float64(0.252)] ✗非單調
+     非重疊(stride=20,N=195) OLS fwdER~z(ratioER)+z(taiexER):
+       ratioER β=+0.0047 t=+0.37 | taiexER β=-0.0265 t=-2.11
+       R² baseline(僅taiexER)=0.0219 → full=0.0226  ΔR²(ratioER增量)=+0.0007
+     雙重排序 median fwdER（列=taiexER, 欄=ratioER）:
+       rb     re低    re中    re高
+       tb                      
+       te低  0.241  0.218  0.279
+       te中  0.201  0.244  0.256
+       te高  0.204  0.217  0.219
+
+  (A) 方向（dir=sign(r-SMA20)）→ forward TAIEX 報酬:
+     K=5: 電子領先 median=+0.52% (N=442) | 金融領先 median=+0.16% (N=338)
+     K=10: 電子領先 median=+0.82% (N=217) | 金融領先 median=+0.46% (N=173)
+     K=20: 電子領先 median=+1.67% (N=109) | 金融領先 median=+0.80% (N=86)
+
+圖：/Users/tomohung/Projects/futures_backtest/research/active/H131-elec-fin-ratio-regime/results/ratioER_vs_fwdER.png
