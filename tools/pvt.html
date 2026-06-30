@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>PVT 反應疲勞快測</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --green: #2ea043;
+    --yellow: #d29922;
+    --red: #f85149;
+    --accent: #58a6ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overflow: hidden;
+  }
+  #stage {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center; padding: 24px;
+    transition: background-color 0.08s;
+  }
+  /* 測試狀態配色 */
+  #stage.waiting  { background: #11161d; cursor: default; }
+  #stage.stimulus { background: var(--red); cursor: pointer; }
+  #stage.feedback { background: #11161d; }
+
+  h1 { font-size: 1.6rem; margin-bottom: 12px; }
+  p.lead { color: var(--muted); font-size: 1.05rem; line-height: 1.7; max-width: 520px; }
+  .big-key {
+    display: inline-block; margin: 22px 0;
+    padding: 14px 28px; border: 1px solid #30363d; border-radius: 12px;
+    background: var(--panel); font-size: 1.1rem;
+  }
+  .hint { color: var(--muted); font-size: 0.9rem; margin-top: 8px; }
+
+  /* 等待 / 刺激 中央顯示 */
+  .center-msg { font-size: 1.8rem; color: var(--muted); }
+  .counter { font-size: 5rem; font-weight: 700; font-variant-numeric: tabular-nums; color: #fff; }
+  .stim-sub { color: rgba(255,255,255,0.85); font-size: 1.1rem; margin-top: 10px; }
+  .fb-rt { font-size: 4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .fb-false { font-size: 2.4rem; font-weight: 700; color: var(--yellow); }
+
+  /* 倒數計時（右上） */
+  #remaining {
+    position: fixed; top: 14px; right: 18px;
+    font-size: 0.95rem; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  #stage.stimulus #remaining { color: rgba(255,255,255,0.8); }
+
+  /* 結果畫面 */
+  .result-card {
+    background: var(--panel); border: 1px solid #30363d; border-radius: 16px;
+    padding: 26px 28px; max-width: 480px; width: 100%;
+  }
+  .verdict {
+    font-size: 2rem; font-weight: 700; margin-bottom: 6px;
+  }
+  .verdict-sub { color: var(--muted); margin-bottom: 22px; font-size: 1.05rem; }
+  .verdict.green  { color: var(--green); }
+  .verdict.yellow { color: var(--yellow); }
+  .verdict.red    { color: var(--red); }
+  .verdict.invalid { color: var(--accent); }
+
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 22px; }
+  .metric {
+    background: #0e1116; border: 1px solid #21262d; border-radius: 10px; padding: 14px;
+  }
+  .metric .label { color: var(--muted); font-size: 0.82rem; margin-bottom: 4px; }
+  .metric .value { font-size: 1.7rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .metric .unit { font-size: 0.85rem; color: var(--muted); font-weight: 400; }
+  .metric.primary { grid-column: span 1; }
+
+  .secondary { color: var(--muted); font-size: 0.9rem; line-height: 1.8; margin-bottom: 22px; }
+
+  .btn-row { display: flex; gap: 12px; }
+  button.again, button.copy {
+    flex: 1; padding: 14px; border: none; border-radius: 12px;
+    font-size: 1.05rem; font-weight: 600; cursor: pointer;
+  }
+  button.again { background: var(--accent); color: #04121f; }
+  button.copy { background: var(--panel); color: var(--text); border: 1px solid #30363d; }
+  button.again:active, button.copy:active { opacity: 0.85; }
+
+  /* 歷史 */
+  .history { margin-top: 24px; text-align: left; }
+  .history h3 { font-size: 0.88rem; color: var(--muted); font-weight: 600; margin-bottom: 10px; }
+  svg.spark { width: 100%; height: 54px; display: block; margin-bottom: 12px; }
+  .hist-list { list-style: none; font-size: 0.85rem; }
+  .hist-list li {
+    display: flex; justify-content: space-between; padding: 5px 0;
+    border-bottom: 1px solid #21262d; font-variant-numeric: tabular-nums;
+  }
+  .hist-list li .when { color: var(--muted); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: middle; }
+  .dot.green { background: var(--green); } .dot.yellow { background: var(--yellow); }
+  .dot.red { background: var(--red); } .dot.invalid { background: var(--accent); }
+  .hist-actions { display: flex; gap: 10px; margin-top: 12px; }
+  .hist-actions button {
+    flex: 1; padding: 9px; font-size: 0.85rem; border-radius: 8px;
+    border: 1px solid #30363d; background: transparent; color: var(--muted); cursor: pointer;
+  }
+  .hist-actions button:active { opacity: 0.7; }
+  .last-glance { margin-top: 16px; color: var(--muted); font-size: 0.92rem; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="remaining" style="display:none"></div>
+
+<script>
+/* ===================== CONFIG ===================== */
+const CONFIG = {
+  durationSec: 120,        // 測試總長（秒），固定 2 分鐘
+  warmupDrops: 1,          // 統計時排除開頭幾筆（暖身效應）
+  isiMinMs: 1000,         // 刺激間隔下限
+  isiMaxMs: 4000,         // 刺激間隔上限
+  lapseMs: 500,           // RT > 此值算一次 lapse（斷線）
+  feedbackMs: 700,        // 每次反應後顯示 RT 的停留時間
+  falseStartGraceMs: 100, // 刺激出現後 < 此值的反應視為搶快/預判（false start）
+
+  // 判定門檻（通用文獻粗估，非個人基線；要調改這裡）
+  medianYellowMs: 300,    // 中位 RT >= 此 → 至少黃燈
+  medianRedMs: 350,       // 中位 RT >  此 → 紅燈
+  lapseYellow: 1,         // lapse >= 此 → 至少黃燈
+  lapseRed: 2,            // lapse >= 此 → 紅燈
+  maxFalseStarts: 2,      // false starts > 此 → 資料作廢，建議重測
+  minValidResponses: 3,   // 有效反應 < 此 → 樣本太少，建議重測
+};
+/* ================================================= */
+
+const stage = document.getElementById('stage');
+const remainingEl = document.getElementById('remaining');
+
+let state = 'idle';     // idle | waiting | stimulus | feedback | done
+let rts = [];           // 有效反應時間（ms）
+let falseStarts = 0;
+let testStartTime = 0;  // 第一個 ISI 開始的時間
+let stimulusStart = 0;  // 本輪刺激出現時間
+let isiTimer = null;
+let feedbackTimer = null;
+let rafId = null;
+
+function now() { return performance.now(); }
+
+function fmtDur(sec) {
+  if (sec >= 120 && sec % 60 === 0) return (sec / 60) + ' 分鐘';
+  return sec + ' 秒';
+}
+
+/* ===================== 歷史（localStorage） ===================== */
+const HISTORY_KEY = 'pvt_history';
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; }
+  catch (e) { return []; }
+}
+function addSession(rec) {
+  const h = loadHistory();
+  h.push(rec);
+  if (h.length > 500) h.splice(0, h.length - 500); // 保留最近 500 筆
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } catch (e) {}
+}
+function clearHistory() {
+  try { localStorage.removeItem(HISTORY_KEY); } catch (e) {}
+}
+
+function sparkline(vals) {
+  const W = 320, H = 54, pad = 7;
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const span = (max - min) || 1;
+  const pts = vals.map((v, i) => {
+    const x = pad + (W - 2 * pad) * (vals.length === 1 ? 0 : i / (vals.length - 1));
+    const y = pad + (H - 2 * pad) * (1 - (v - min) / span);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <text x="2" y="11" fill="#8b949e" font-size="9">${Math.round(max)}</text>
+    <text x="2" y="${H - 3}" fill="#8b949e" font-size="9">${Math.round(min)}</text>
+    <polyline fill="none" stroke="#58a6ff" stroke-width="2" vector-effect="non-scaling-stroke" points="${pts}"/>
+  </svg>`;
+}
+
+function exportHistory() {
+  const data = JSON.stringify(loadHistory(), null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const d = new Date(); const p = n => String(n).padStart(2, '0');
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `pvt_history_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function renderHistory(el) {
+  const h = loadHistory();
+  if (!h.length) { el.innerHTML = ''; return; }
+  const valid = h.filter(r => r.cls !== 'invalid' && r.medianRt != null);
+  const spark = valid.length >= 2
+    ? sparkline(valid.slice(-20).map(r => r.medianRt))
+    : `<div class="hint">趨勢累積中（需 ≥2 筆有效）</div>`;
+  const recent = h.slice(-8).reverse().map(r =>
+    `<li>
+      <span class="when"><span class="dot ${r.cls}"></span>${r.ts.slice(5)}</span>
+      <span>${r.medianRt ?? '—'}ms · ${r.lapses}L</span>
+    </li>`).join('');
+  el.innerHTML = `
+    <div class="history">
+      <h3>歷史（${h.length} 筆）· 中位 RT 趨勢</h3>
+      ${spark}
+      <ul class="hist-list">${recent}</ul>
+      <div class="hist-actions">
+        <button id="exportBtn">匯出 JSON</button>
+        <button id="clearBtn">清除歷史</button>
+      </div>
+    </div>`;
+  el.querySelector('#exportBtn').addEventListener('click', (e) => {
+    e.stopPropagation(); exportHistory();
+  });
+  el.querySelector('#clearBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (confirm('確定清除所有歷史？無法復原。')) { clearHistory(); renderHistory(el); }
+  });
+}
+
+function renderIdle() {
+  state = 'idle';
+  stage.className = '';
+  remainingEl.style.display = 'none';
+  const h = loadHistory();
+  const last = h.length ? h[h.length - 1] : null;
+  const glance = last
+    ? `<p class="last-glance"><span class="dot ${last.cls}"></span>上次 ${last.ts.slice(5)}　中位 ${last.medianRt ?? '—'}ms · ${last.lapses}L</p>`
+    : '';
+  stage.innerHTML = `
+    <h1>反應疲勞快測 · PVT</h1>
+    <p class="lead">
+      畫面變紅、出現數字時，<strong>立刻按空白鍵或點畫面</strong>。<br>
+      紅色出現前不要按（會記為搶快）。<br>
+      測試 ${fmtDur(CONFIG.durationSec)}，全程專心。
+    </p>
+    <div class="big-key">按 <strong>空白鍵</strong> 或點畫面開始</div>
+    ${glance}
+    <p class="hint">建議固定條件：同一裝置、同一輸入、起床後喝咖啡因前</p>
+  `;
+}
+
+function startTest() {
+  rts = [];
+  falseStarts = 0;
+  testStartTime = now();
+  remainingEl.style.display = 'block';
+  scheduleNextStimulus();
+  tickRemaining();
+}
+
+function scheduleNextStimulus() {
+  // 測試時間到 → 收尾
+  if (now() - testStartTime >= CONFIG.durationSec * 1000) {
+    finish();
+    return;
+  }
+  state = 'waiting';
+  stage.className = 'waiting';
+  stage.innerHTML = `<div class="center-msg">準備…</div>`;
+  const isi = CONFIG.isiMinMs + Math.random() * (CONFIG.isiMaxMs - CONFIG.isiMinMs);
+  isiTimer = setTimeout(showStimulus, isi);
+}
+
+function showStimulus() {
+  state = 'stimulus';
+  stage.className = 'stimulus';
+  stage.innerHTML = `
+    <div class="counter" id="counter">0</div>
+    <div class="stim-sub">按！</div>
+  `;
+  stimulusStart = now();
+  const counterEl = document.getElementById('counter');
+  const animate = () => {
+    if (state !== 'stimulus') return;
+    counterEl.textContent = Math.round(now() - stimulusStart);
+    rafId = requestAnimationFrame(animate);
+  };
+  rafId = requestAnimationFrame(animate);
+}
+
+function handleResponse() {
+  if (state === 'waiting') {
+    // 刺激還沒出現就按 → false start
+    clearTimeout(isiTimer);
+    falseStarts++;
+    showFeedback({ falseStart: true });
+  } else if (state === 'stimulus') {
+    cancelAnimationFrame(rafId);
+    const rt = now() - stimulusStart;
+    if (rt < CONFIG.falseStartGraceMs) {
+      // 反應快到不合理 → 視為搶快
+      falseStarts++;
+      showFeedback({ falseStart: true });
+    } else {
+      rts.push(rt);
+      showFeedback({ rt });
+    }
+  }
+  // idle / feedback / done 狀態的輸入交給各自處理
+}
+
+function showFeedback({ rt, falseStart }) {
+  state = 'feedback';
+  stage.className = 'feedback';
+  if (falseStart) {
+    stage.innerHTML = `<div class="fb-false">太早了 ⚡</div>`;
+  } else {
+    const cls = rt > CONFIG.lapseMs ? 'yellow' : '';
+    stage.innerHTML = `<div class="fb-rt ${cls}">${Math.round(rt)} <span style="font-size:1.5rem">ms</span></div>`;
+  }
+  feedbackTimer = setTimeout(scheduleNextStimulus, CONFIG.feedbackMs);
+}
+
+function tickRemaining() {
+  if (state === 'done' || state === 'idle') return;
+  const left = Math.max(0, CONFIG.durationSec * 1000 - (now() - testStartTime));
+  remainingEl.textContent = `剩 ${Math.ceil(left / 1000)} 秒`;
+  setTimeout(tickRemaining, 200);
+}
+
+/* ===================== 結果 ===================== */
+function median(arr) {
+  if (arr.length === 0) return null;
+  const s = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+function computeVerdict(medianRt, lapses, validN) {
+  // 品質閘優先
+  if (falseStarts > CONFIG.maxFalseStarts) {
+    return { cls: 'invalid', label: '資料不可信', sub: `搶快 ${falseStarts} 次（>${CONFIG.maxFalseStarts}）— 請靜下來重測，別讓這筆污染判斷。` };
+  }
+  if (validN < CONFIG.minValidResponses) {
+    return { cls: 'invalid', label: '樣本太少', sub: `只有 ${validN} 次有效反應 — 請重測。` };
+  }
+  // 速度層 / 斷線層取較嚴重者
+  const speedRed = medianRt > CONFIG.medianRedMs;
+  const speedYellow = medianRt >= CONFIG.medianYellowMs;
+  const lapseRed = lapses >= CONFIG.lapseRed;
+  const lapseYellow = lapses >= CONFIG.lapseYellow;
+
+  if (speedRed || lapseRed) {
+    return { cls: 'red', label: '🔴 疲勞', sub: '反應明顯下降，謹慎決策、考慮降量或先別進場。' };
+  }
+  if (speedYellow || lapseYellow) {
+    return { cls: 'yellow', label: '🟡 注意', sub: '反應略鈍，放慢節奏、避免衝動單。' };
+  }
+  return { cls: 'green', label: '🟢 良好', sub: '反應正常。' };
+}
+
+function finish() {
+  state = 'done';
+  stage.className = '';
+  remainingEl.style.display = 'none';
+  clearTimeout(isiTimer);
+  clearTimeout(feedbackTimer);
+  cancelAnimationFrame(rafId);
+
+  // 排除暖身（開頭幾筆）
+  const dropped = Math.min(CONFIG.warmupDrops, rts.length);
+  const counted = rts.slice(dropped);
+
+  const validN = counted.length;
+  const medRt = median(counted);
+  const lapses = counted.filter(rt => rt > CONFIG.lapseMs).length;
+  const meanRt = validN ? counted.reduce((a, b) => a + b, 0) / validN : null;
+  const fastest = validN ? Math.min(...counted) : null;
+
+  const v = computeVerdict(medRt ?? Infinity, lapses, validN);
+
+  const fmt = x => x == null ? '—' : Math.round(x);
+
+  // 給交易日誌的純文字摘要（含時間戳）
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  const ts = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  const journalText = [
+    `PVT ${ts} ｜ ${v.label}`,
+    `中位 RT ${fmt(medRt)}ms ｜ Lapses ${lapses} ｜ 有效 ${validN} 次`,
+    `平均 ${fmt(meanRt)}ms ｜ 最快 ${fmt(fastest)}ms ｜ 搶快 ${falseStarts} ｜ 暖身排除 ${dropped} ｜ ${fmtDur(CONFIG.durationSec)}`,
+  ].join('\n');
+
+  // 存歷史（每次測完自動寫入）
+  addSession({
+    iso: d.toISOString(),
+    ts,
+    cls: v.cls,
+    medianRt: medRt == null ? null : Math.round(medRt),
+    lapses,
+    validN,
+    falseStarts,
+    meanRt: meanRt == null ? null : Math.round(meanRt),
+    fastest: fastest == null ? null : Math.round(fastest),
+    dropped,
+    durationSec: CONFIG.durationSec,
+  });
+
+  stage.innerHTML = `
+    <div class="result-card">
+      <div class="verdict ${v.cls}">${v.label}</div>
+      <div class="verdict-sub">${v.sub}</div>
+
+      <div class="metrics">
+        <div class="metric primary">
+          <div class="label">中位數 RT</div>
+          <div class="value">${fmt(medRt)} <span class="unit">ms</span></div>
+        </div>
+        <div class="metric primary">
+          <div class="label">Lapses（>${CONFIG.lapseMs}ms）</div>
+          <div class="value">${lapses}</div>
+        </div>
+      </div>
+
+      <div class="secondary">
+        有效反應：${validN} 次　·　搶快：${falseStarts} 次<br>
+        平均 RT：${fmt(meanRt)} ms　·　最快：${fmt(fastest)} ms<br>
+        <span style="font-size:0.82rem">已排除暖身 ${dropped} 筆　·　測試 ${fmtDur(CONFIG.durationSec)}</span>
+      </div>
+
+      <div class="btn-row">
+        <button class="copy" id="copyBtn">複製結果</button>
+        <button class="again" id="againBtn">再測一次</button>
+      </div>
+
+      <div id="history"></div>
+    </div>
+  `;
+  renderHistory(document.getElementById('history'));
+  const copyBtn = document.getElementById('copyBtn');
+  copyBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    copyText(journalText, copyBtn);
+  });
+  document.getElementById('againBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    renderIdle();
+  });
+}
+
+function copyText(text, btn) {
+  const done = () => {
+    const orig = btn.textContent;
+    btn.textContent = '已複製 ✓';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+
+function fallbackCopy(text, done) {
+  // file:// 等非安全環境下 navigator.clipboard 可能不可用
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  try { document.execCommand('copy'); done(); } catch (err) { /* 無聲失敗 */ }
+  document.body.removeChild(ta);
+}
+
+/* ===================== 輸入 ===================== */
+function onInput(e) {
+  // 空白鍵
+  if (e.type === 'keydown') {
+    if (e.code !== 'Space') return;
+    e.preventDefault();
+    if (e.repeat) return;
+  }
+  if (state === 'idle') {
+    startTest();
+  } else if (state === 'waiting' || state === 'stimulus') {
+    handleResponse();
+  }
+  // feedback / done：忽略（done 的「再測」用按鈕）
+}
+
+window.addEventListener('keydown', onInput);
+stage.addEventListener('mousedown', (e) => {
+  // 結果畫面的按鈕自行處理，避免點按鈕也觸發
+  if (state === 'done') return;
+  onInput(e);
+});
+stage.addEventListener('touchstart', (e) => {
+  if (state === 'done') return;
+  e.preventDefault();
+  onInput(e);
+}, { passive: false });
+
+renderIdle();
+</script>
+</body>
+</html>
