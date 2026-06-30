@@ -17,9 +17,9 @@ const BB_BAND_COLOR = '#c678dd';
 // MA Turn（移植 5-ma-turn-from-deduction.pine）：另開副圖，柱狀 = 現價 − 扣抵值（close − close[period]）。
 // 在固定較高週期 MATURN_TF 分上算（仿原 pine 的 request.security 5分）；過零 = 該週期 SMA 轉向，
 // 柱高 = 現價還要再移動多少均線才翻向。正值(均線上彎=偏多)台灣慣例 → 紅，負值(下彎) → 綠。
-// 註：MA Turn 副圖已移除（改為延伸力 EXT 副圖）；MATURN_TF/PERIOD 仍供 600分MA 疊線沿用（maTurnCompute 回傳 ma600）。
-const MATURN_TF = 5;            // 600MA 的 bucket 週期（分鐘）
-const MATURN_PERIOD = 120;     // 600MA = MATURN_TF×PERIOD = 600 分
+// 副圖在延伸力 EXT 下方（pane 5）；同基準的 600分MA 疊線畫主圖（maTurnCompute 同時回傳 hist/ma）。
+const MATURN_TF = 5;            // 扣抵值/600MA 的 bucket 週期（分鐘）
+const MATURN_PERIOD = 120;     // SMA 期數；600MA = MATURN_TF×PERIOD = 600 分
 const MATURN_ZERO_COLOR = '#888';
 // 延伸力 EXT 強門檻（看盤參考線）：H111 ext_long top~20%≈+0.10、H112 ext_short(z-sum) top~20%≈+1.33（全窗重校）。
 const EXT_STRONG_LONG = 0.10;
@@ -895,10 +895,22 @@ function initChart() {
     lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '0' });
   chartState.extLongAnchor.createPriceLine({ price: EXT_STRONG_LONG, color: COLORS.up, lineWidth: 1,
     lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '強' });
-  // 副圖高度：主圖放大、量/%B/延伸力副圖縮小（pane 0 主圖佔大宗）。
+  // MA Turn 副圖（pane 5）：現價 − 扣抵值柱狀，過零 = MATURN_TF 分 SMA(period) 轉向。0 軸虛線。
+  //   正值(均線上彎=偏多)台灣慣例 → 紅，負值(下彎) → 綠；柱高 = 還要再移動多少才翻向。
+  chartState.maTurn = chart.addSeries(
+    LightweightCharts.HistogramSeries,
+    { priceScaleId: 'maturn', priceLineVisible: false, lastValueVisible: false,
+      priceFormat: { type: 'price', precision: 0, minMove: 1 } },
+    5,
+  );
+  chartState.maTurn.createPriceLine({ price: 0, color: MATURN_ZERO_COLOR, lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false });
+  chart.priceScale('maturn').applyOptions({ scaleMargins: { top: 0.2, bottom: 0.1 } });
+  // 副圖高度：主圖放大、量/%B/延伸力/MA Turn 副圖縮小（pane 0 主圖佔大宗）。
+  //   延伸力多/空特意壓低（1.6），讓出空間給新加回的 MA Turn。
   try {
     const panes = chart.panes();
-    const stretch = [12, 2, 2.5, 2.5, 2.5];   // main, vol, bb, extLong, extShort
+    const stretch = [12, 2, 2.5, 1.6, 1.6, 2.5];   // main, vol, bb, extLong, extShort, maTurn
     panes.forEach((p, i) => { if (stretch[i] != null) p.setStretchFactor(stretch[i]); });
   } catch (_) { /* 舊版 lib 無 panes API 則略過 */ }
   chart.subscribeCrosshairMove((param) => updateLegend(param));
@@ -909,6 +921,7 @@ function initChart() {
     positionPaneLegend(document.getElementById('bb-legend'), 2);
     positionPaneLegend(document.getElementById('extlong-legend'), 3);
     positionPaneLegend(document.getElementById('extshort-legend'), 4);
+    positionPaneLegend(document.getElementById('maturn-legend'), 5);
   }).observe(wrap);
 }
 
@@ -1115,8 +1128,9 @@ function updateLegend(param) {
   const bb = document.getElementById('bb-legend');
   const extL = document.getElementById('extlong-legend');
   const extS = document.getElementById('extshort-legend');
+  const maturn = document.getElementById('maturn-legend');
   const bars = chartState.bars || [];
-  if (!bars.length) { for (const e of [main, vol, bb, extL, extS]) if (e) e.innerHTML = ''; return; }
+  if (!bars.length) { for (const e of [main, vol, bb, extL, extS, maturn]) if (e) e.innerHTML = ''; return; }
   let idx = param && param.time != null ? bars.findIndex((b) => b.time === param.time) : -1;
   if (idx < 0) idx = bars.length - 1;
   const b = bars[idx];
@@ -1270,6 +1284,14 @@ function updateLegend(param) {
       + `<span class="${cls}">${v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2)}${strong ? ' 強空' : ''}</span>`
       + (up == null ? '' : `　漲<span style="color:${COLORS.up}">${up}</span>`
         + `/跌<span style="color:${COLORS.down}">${dn}</span>`);
+  }
+  if (maturn) {
+    positionPaneLegend(maturn, 5);
+    const mv = chartState.maTurnArr ? chartState.maTurnArr[idx] : null;
+    const cls = mv == null ? 'muted' : (mv >= 0 ? 'up' : 'down');
+    const arrow = mv == null ? '' : (mv >= 0 ? ' ↑' : ' ↓');
+    maturn.innerHTML = `<span class="muted">MA Turn(${MATURN_TF}分,${MATURN_PERIOD})</span> `
+      + `<span class="${cls}">${mv == null ? '—' : (mv >= 0 ? '+' : '') + r(mv) + arrow}</span>`;
   }
 }
 
@@ -1660,10 +1682,14 @@ async function loadKline(centerEpochToFocus) {
   chartState.bbMarkersHandle = chartState.bbMarkersHandle
     ? (chartState.bbMarkersHandle.setMarkers(bbMarks), chartState.bbMarkersHandle)
     : LightweightCharts.createSeriesMarkers(chartState.bb, bbMarks);
-  // 600分MA 疊線（沿用 maTurnCompute 回傳的 ma；MA Turn 柱已移除）。
-  const { ma: ma600Arr } = maTurnCompute(bars, MATURN_PERIOD);
+  // MA Turn 柱狀（現價 − 扣抵值）：正(上彎)紅、負(下彎)綠；同基準的 600分MA 畫主圖。
+  const { hist: maTurnArr, ma: ma600Arr } = maTurnCompute(bars, MATURN_PERIOD);
+  chartState.maTurnArr = maTurnArr;
   chartState.ma600Arr = ma600Arr;
   chartState.indMa600Series.setData(_toData(ma600Arr));
+  chartState.maTurn.setData(bars.flatMap((b, i) => (maTurnArr[i] != null
+    ? [{ time: b.time, value: maTurnArr[i], color: maTurnArr[i] >= 0 ? COLORS.up : COLORS.down }]
+    : [])));
   loadExtension(state.centerDate);          // 延伸力 EXT 副圖（盤中，按日 fetch）
   loadEstRange(state.centerDate);           // EstRange 預估振幅 主圖疊線（盤中，按日 fetch）
   focusTime(centerEpochToFocus);
