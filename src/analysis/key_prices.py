@@ -294,7 +294,9 @@ def get_key_prices():
                     COUNT(*) OVER (
                         ORDER BY ts
                         ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
-                    ) AS window_size
+                    ) AS window_size,
+                    -- 扣底：最新 20MA 窗口中最舊那根 close（下一根 MA 將扣掉它）
+                    LAG(close, 19) OVER (ORDER BY ts) AS deduct
                 FROM bars_30m
             ),
             with_lag AS (
@@ -302,12 +304,14 @@ def get_key_prices():
                     ts,
                     ma20,
                     window_size,
+                    deduct,
                     LAG(ma20) OVER (ORDER BY ts) AS prev_ma20
                 FROM ma_calc
             )
             SELECT
                 ROUND(ma20)::INT AS ma20,
-                ma20 > prev_ma20 AS is_up
+                ma20 > prev_ma20 AS is_up,
+                ROUND(deduct)::INT AS deduct
             FROM with_lag
             WHERE window_size = 20
             ORDER BY ts DESC
@@ -474,6 +478,7 @@ def get_key_prices():
         "vwap": vwap,
         "ma30_20": ma_row[0] if ma_row else None,
         "ma30_20_up": ma_row[1] if ma_row else None,
+        "ma30_20_deduct": ma_row[2] if ma_row else None,
         "macd_1h": macd_1h,
         "bars_15m_pre10": bars_15m_pre10,
         "night_vol_filter": night_vol_filter,
@@ -554,6 +559,13 @@ def print_report(data):
     else:
         reversal_risk = "-"
 
+    # 30分K 20MA 方向：扣抵法（夜收 vs 均線最新窗口扣底 → 預判均線轉向）
+    ded = d.get("ma30_20_deduct")
+    if ref is not None and ded is not None:
+        ma_trend = f"{'↑ up' if ref > ded else '↓ down'}（夜收 {n(ref)} vs 扣底 {n(ded)}）"
+    else:
+        ma_trend = "-"
+
     print()
     print(f"### 評估")
     print(f"| 項目                      | 結果 |")
@@ -561,7 +573,7 @@ def print_report(data):
     print(f"| 夜收 vs 昨成本 {n(vwap_last)} | {ud(ref, vwap_last)} |")
     print(f"| 夜收 vs 前天成本 {n(vwap_prev)} | {ud(ref, vwap_prev)} |")
     print(f"| 二日高低突破              | {two_day} |")
-    print(f"| 30分K 20MA 方向           | {ma_dir} |")
+    print(f"| 30分K 20MA 方向           | {ma_trend} |")
     print(f"| 均線轉向風險              | {reversal_risk} |")
 
     # 夜盤波動 — H092 4-tier 分類 + H075 binary STOP/GO 濾網
@@ -574,70 +586,6 @@ def print_report(data):
         tier_icon = _NVF_TIER_ICONS.get(tier, "")
         tier_hint = _NVF_TIER_HINTS.get(tier, "")
         print(f"| 夜盤波動 tier (H092)      | {tier_icon} **{tier}** (norm={norm:.2f}) — {tier_hint} |")
-
-    # ── 方向加分（多空計分）─────────────────────────────
-    rows = []  # (label, reading, side)  side ∈ {'long','short','neutral'}
-
-    # 1) 1-hr MACD 方向（hist>=0 為多）
-    macd = d.get("macd_1h")
-    if macd:
-        side = "long" if macd["up"] else "short"
-        rows.append(("1-hr MACD 方向",
-                     f"{'↑ up' if macd['up'] else '↓ down'}（hist {macd['hist']:+.0f}）", side))
-
-    # 2) 30分K 20MA 方向
-    if d.get("ma30_20_up") is not None:
-        up = d["ma30_20_up"]
-        rows.append(("30分K 20MA 方向",
-                     f"{'↑ up' if up else '↓ down'}（MA {n(ma)}）",
-                     "long" if up else "short"))
-
-    # 3) 週幾早盤勝率
-    ws = d.get("weekday_stats")
-    if ws:
-        wd_names = {0: "一", 1: "二", 2: "三", 3: "四", 4: "五"}
-        twd = ws["today_wd"]
-        m = ws["stats"][twd]["morning"]
-        tot = m["up"] + m["down"]
-        if tot:
-            pct = m["up"] / tot * 100
-            side = "long" if pct > 50 else ("short" if pct < 50 else "neutral")
-            rows.append((f"週{wd_names[twd]} 早盤勝率",
-                         f"{m['up']}漲/{m['down']}跌 {pct:.0f}%", side))
-
-    # 4) 夜盤位置 vs 昨/前成本（優先二日突破，其次昨成本）
-    if ref is not None:
-        dh, dl = d["day"]["high"], d["day"]["low"]
-        if ref > dh:
-            side, txt = "long", f"創二日新高（>{n(dh)}）"
-        elif ref < dl:
-            side, txt = "short", f"創二日新低（<{n(dl)}）"
-        elif vwap_last is not None and ref > vwap_last:
-            side, txt = "long", f"昨成本之上（>{n(vwap_last)}）"
-        elif vwap_last is not None and ref < vwap_last:
-            side, txt = "short", f"昨成本之下（<{n(vwap_last)}）"
-        else:
-            side, txt = "neutral", "貼近昨成本"
-        rows.append(("夜盤位置 vs 昨/前成本", txt, side))
-
-    if rows:
-        longs = sum(1 for _, _, s in rows if s == "long")
-        shorts = sum(1 for _, _, s in rows if s == "short")
-        if longs > shorts:
-            verdict = f"偏多（多 {longs} / 空 {shorts}）"
-        elif shorts > longs:
-            verdict = f"偏空（空 {shorts} / 多 {longs}）"
-        else:
-            verdict = f"中性（多 {longs} / 空 {shorts}）"
-        print()
-        print("### 方向加分（多空計分）")
-        print("| 依據 | 多方 | 空方 | 今日讀數 |")
-        print("|------|:--:|:--:|------|")
-        for label, txt, side in rows:
-            lm = "🟥" if side == "long" else ""
-            sm = "🟩" if side == "short" else ""
-            print(f"| {label} | {lm} | {sm} | {txt} |")
-        print(f"\n**合計：{verdict}**")
 
     # ── VIX regime（因果：盤前只有昨日 VIX;H117）────────────
     try:
@@ -700,6 +648,71 @@ def print_report(data):
             marker = " ◀" if wd == today_wd else ""
             label = f"週{wd_names[wd]}{marker}"
             print(f"| {label:4s} | {_fmt(s['day']):16s} | {_fmt(s['morning']):16s} | {_fmt(s['night']):16s} |")
+
+    # ── 方向加分（多空計分）─────────────────────────────
+    rows = []  # (label, reading, side)  side ∈ {'long','short','neutral'}
+
+    # 1) 1-hr MACD 方向（hist>=0 為多）
+    macd = d.get("macd_1h")
+    if macd:
+        side = "long" if macd["up"] else "short"
+        rows.append(("1-hr MACD 方向",
+                     f"{'↑ up' if macd['up'] else '↓ down'}（hist {macd['hist']:+.0f}）", side))
+
+    # 2) 30分K 20MA 方向（夜盤收 vs 均線扣底 → 預判均線轉向）
+    ded = d.get("ma30_20_deduct")
+    if ref is not None and ded is not None:
+        up = ref > ded
+        rows.append(("30分K 20MA 方向",
+                     f"{'↑ up' if up else '↓ down'}（夜收 {n(ref)} {'>' if up else '<'} 扣底 {n(ded)}）",
+                     "long" if up else "short"))
+
+    # 3) 週幾早盤勝率
+    ws = d.get("weekday_stats")
+    if ws:
+        wd_names = {0: "一", 1: "二", 2: "三", 3: "四", 4: "五"}
+        twd = ws["today_wd"]
+        m = ws["stats"][twd]["morning"]
+        tot = m["up"] + m["down"]
+        if tot:
+            pct = m["up"] / tot * 100
+            side = "long" if pct > 50 else ("short" if pct < 50 else "neutral")
+            rows.append((f"週{wd_names[twd]} 早盤勝率",
+                         f"{m['up']}漲/{m['down']}跌 {pct:.0f}%", side))
+
+    # 4) 夜盤位置 vs 昨/前成本（優先二日突破，其次昨成本）
+    if ref is not None:
+        dh, dl = d["day"]["high"], d["day"]["low"]
+        if ref > dh:
+            side, txt = "long", f"創二日新高（>{n(dh)}）"
+        elif ref < dl:
+            side, txt = "short", f"創二日新低（<{n(dl)}）"
+        elif vwap_last is not None and ref > vwap_last:
+            side, txt = "long", f"昨成本之上（>{n(vwap_last)}）"
+        elif vwap_last is not None and ref < vwap_last:
+            side, txt = "short", f"昨成本之下（<{n(vwap_last)}）"
+        else:
+            side, txt = "neutral", "貼近昨成本"
+        rows.append(("夜盤位置 vs 昨/前成本", txt, side))
+
+    if rows:
+        longs = sum(1 for _, _, s in rows if s == "long")
+        shorts = sum(1 for _, _, s in rows if s == "short")
+        if longs > shorts:
+            verdict = f"偏多（多 {longs} / 空 {shorts}）"
+        elif shorts > longs:
+            verdict = f"偏空（空 {shorts} / 多 {longs}）"
+        else:
+            verdict = f"中性（多 {longs} / 空 {shorts}）"
+        print()
+        print("### 方向加分（多空計分）")
+        print("| 依據 | 多方 | 空方 | 今日讀數 |")
+        print("|------|:--:|:--:|------|")
+        for label, txt, side in rows:
+            lm = "🟥" if side == "long" else ""
+            sm = "🟩" if side == "short" else ""
+            print(f"| {label} | {lm} | {sm} | {txt} |")
+        print(f"\n**合計：{verdict}**")
 
 
 def get_30m_bars(n_days=20):
