@@ -147,6 +147,35 @@ def _compute_night_vol_filter(last_day, tonight_range):
     }
 
 
+def _ema_series(arr, period):
+    """逐點 EMA（adjust=False，種子=首值），回傳同長度 float 陣列。"""
+    arr = np.asarray(arr, dtype=float)
+    out = np.full_like(arr, np.nan)
+    if len(arr) == 0:
+        return out
+    alpha = 2.0 / (period + 1)
+    out[0] = arr[0]
+    for i in range(1, len(arr)):
+        out[i] = arr[i] * alpha + out[i - 1] * (1 - alpha)
+    return out
+
+
+def _compute_1h_macd(closes, fast=12, slow=26, signal=9):
+    """1H MACD(12,26,9)。回傳最新 macd / signal / hist 與方向（hist>=0 為多）。"""
+    closes = np.asarray(closes, dtype=float)
+    if len(closes) < slow:
+        return None
+    macd_line = _ema_series(closes, fast) - _ema_series(closes, slow)
+    signal_line = _ema_series(macd_line, signal)
+    hist = macd_line - signal_line
+    return {
+        "macd": float(macd_line[-1]),
+        "signal": float(signal_line[-1]),
+        "hist": float(hist[-1]),
+        "up": bool(hist[-1] >= 0),
+    }
+
+
 def get_key_prices():
     with duckdb.connect(str(DB_PATH), read_only=True) as conn:
         # 最新有日盤資料的交易日（= 昨天）
@@ -431,6 +460,12 @@ def get_key_prices():
         }
     }
 
+    # 1H MACD 方向（因果：get_1h_bars 只到盤前可得的夜盤收盤）
+    macd_1h = None
+    bars_1h = get_1h_bars(20)
+    if bars_1h:
+        macd_1h = _compute_1h_macd([r[4] for r in bars_1h])
+
     result = {
         "last_day": last_day,
         "prev_day": prev_day,
@@ -439,6 +474,7 @@ def get_key_prices():
         "vwap": vwap,
         "ma30_20": ma_row[0] if ma_row else None,
         "ma30_20_up": ma_row[1] if ma_row else None,
+        "macd_1h": macd_1h,
         "bars_15m_pre10": bars_15m_pre10,
         "night_vol_filter": night_vol_filter,
         "weekday_stats": weekday_stats,
@@ -538,6 +574,70 @@ def print_report(data):
         tier_icon = _NVF_TIER_ICONS.get(tier, "")
         tier_hint = _NVF_TIER_HINTS.get(tier, "")
         print(f"| 夜盤波動 tier (H092)      | {tier_icon} **{tier}** (norm={norm:.2f}) — {tier_hint} |")
+
+    # ── 方向加分（多空計分）─────────────────────────────
+    rows = []  # (label, reading, side)  side ∈ {'long','short','neutral'}
+
+    # 1) 1-hr MACD 方向（hist>=0 為多）
+    macd = d.get("macd_1h")
+    if macd:
+        side = "long" if macd["up"] else "short"
+        rows.append(("1-hr MACD 方向",
+                     f"{'↑ up' if macd['up'] else '↓ down'}（hist {macd['hist']:+.0f}）", side))
+
+    # 2) 30分K 20MA 方向
+    if d.get("ma30_20_up") is not None:
+        up = d["ma30_20_up"]
+        rows.append(("30分K 20MA 方向",
+                     f"{'↑ up' if up else '↓ down'}（MA {n(ma)}）",
+                     "long" if up else "short"))
+
+    # 3) 週幾早盤勝率
+    ws = d.get("weekday_stats")
+    if ws:
+        wd_names = {0: "一", 1: "二", 2: "三", 3: "四", 4: "五"}
+        twd = ws["today_wd"]
+        m = ws["stats"][twd]["morning"]
+        tot = m["up"] + m["down"]
+        if tot:
+            pct = m["up"] / tot * 100
+            side = "long" if pct > 50 else ("short" if pct < 50 else "neutral")
+            rows.append((f"週{wd_names[twd]} 早盤勝率",
+                         f"{m['up']}漲/{m['down']}跌 {pct:.0f}%", side))
+
+    # 4) 夜盤位置 vs 昨/前成本（優先二日突破，其次昨成本）
+    if ref is not None:
+        dh, dl = d["day"]["high"], d["day"]["low"]
+        if ref > dh:
+            side, txt = "long", f"創二日新高（>{n(dh)}）"
+        elif ref < dl:
+            side, txt = "short", f"創二日新低（<{n(dl)}）"
+        elif vwap_last is not None and ref > vwap_last:
+            side, txt = "long", f"昨成本之上（>{n(vwap_last)}）"
+        elif vwap_last is not None and ref < vwap_last:
+            side, txt = "short", f"昨成本之下（<{n(vwap_last)}）"
+        else:
+            side, txt = "neutral", "貼近昨成本"
+        rows.append(("夜盤位置 vs 昨/前成本", txt, side))
+
+    if rows:
+        longs = sum(1 for _, _, s in rows if s == "long")
+        shorts = sum(1 for _, _, s in rows if s == "short")
+        if longs > shorts:
+            verdict = f"偏多（多 {longs} / 空 {shorts}）"
+        elif shorts > longs:
+            verdict = f"偏空（空 {shorts} / 多 {longs}）"
+        else:
+            verdict = f"中性（多 {longs} / 空 {shorts}）"
+        print()
+        print("### 方向加分（多空計分）")
+        print("| 依據 | 多方 | 空方 | 今日讀數 |")
+        print("|------|:--:|:--:|------|")
+        for label, txt, side in rows:
+            lm = "🟥" if side == "long" else ""
+            sm = "🟩" if side == "short" else ""
+            print(f"| {label} | {lm} | {sm} | {txt} |")
+        print(f"\n**合計：{verdict}**")
 
     # ── VIX regime（因果：盤前只有昨日 VIX;H117）────────────
     try:
@@ -712,18 +812,8 @@ def plot_sr_chart(data, n_days=20):
     ref    = (data["night"] or {}).get("close") or data["day"]["close"]
 
     # ── MACD (12, 26, 9) ─────────────────────────────────
-    def _ema(arr, period):
-        out = np.full_like(arr, np.nan)
-        alpha = 2.0 / (period + 1)
-        out[0] = arr[0]
-        for i in range(1, len(arr)):
-            out[i] = arr[i] * alpha + out[i - 1] * (1 - alpha)
-        return out
-
-    ema12 = _ema(closes, 12)
-    ema26 = _ema(closes, 26)
-    macd_line = ema12 - ema26
-    signal_line = _ema(macd_line, 9)
+    macd_line = _ema_series(closes, 12) - _ema_series(closes, 26)
+    signal_line = _ema_series(macd_line, 9)
     macd_hist = macd_line - signal_line
 
     _setup_font()
