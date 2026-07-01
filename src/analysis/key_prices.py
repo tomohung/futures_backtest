@@ -534,14 +534,10 @@ def print_report(data):
         norm = nvf["night_norm"]
         ema = nvf["ema20"]
         nr = nvf["night_range"]
-        thr = nvf["threshold"]
         tier = nvf.get("tier", "?")
         tier_icon = _NVF_TIER_ICONS.get(tier, "")
         tier_hint = _NVF_TIER_HINTS.get(tier, "")
         print(f"| 夜盤波動 tier (H092)      | {tier_icon} **{tier}** (norm={norm:.2f}) — {tier_hint} |")
-        binary = "✅ GO" if nvf["pass"] else "🚫 STOP"
-        op = "≥" if nvf["pass"] else "<"
-        print(f"| S001/S002 NVF (H075)      | {binary}  夜盤 {nr}pt / EMA20 {ema}pt = {norm:.2f} {op} {thr:.2f} |")
 
     # ── VIX regime（因果：盤前只有昨日 VIX;H117）────────────
     try:
