@@ -46,6 +46,16 @@
   }
   .hint { color: var(--muted); font-size: 0.9rem; margin-top: 8px; }
 
+  /* 時長選擇 */
+  .dur-picker { display: flex; gap: 8px; justify-content: center; align-items: center; flex-wrap: wrap; margin: 4px 0 18px; }
+  .dur-picker .dur-label { color: var(--muted); font-size: 0.85rem; margin-right: 2px; }
+  .dur-picker button {
+    padding: 9px 16px; border-radius: 10px; border: 1px solid #30363d;
+    background: var(--panel); color: var(--muted); font-size: 0.95rem; cursor: pointer;
+    font-variant-numeric: tabular-nums;
+  }
+  .dur-picker button.active { border-color: var(--accent); color: var(--text); background: #182635; }
+
   /* 等待 / 刺激 中央顯示 */
   .center-msg { font-size: 1.8rem; color: var(--muted); }
   .counter { font-size: 5rem; font-weight: 700; font-variant-numeric: tabular-nums; color: #fff; }
@@ -124,7 +134,8 @@
 <script>
 /* ===================== CONFIG ===================== */
 const CONFIG = {
-  durationSec: 120,        // 測試總長（秒），固定 2 分鐘
+  durationSec: 120,        // 測試總長（秒），預設 2 分鐘（可於首頁切換）
+  durationOptions: [15, 90, 120, 180],  // 可選時長（秒）
   warmupDrops: 1,          // 統計時排除開頭幾筆（暖身效應）
   isiMinMs: 1000,         // 刺激間隔下限
   isiMaxMs: 4000,         // 刺激間隔上限
@@ -160,6 +171,21 @@ function fmtDur(sec) {
   if (sec >= 120 && sec % 60 === 0) return (sec / 60) + ' 分鐘';
   return sec + ' 秒';
 }
+
+/* ===================== 時長選擇（localStorage） ===================== */
+const DURATION_KEY = 'pvt_duration';
+
+function loadDuration() {
+  try {
+    const v = parseInt(localStorage.getItem(DURATION_KEY), 10);
+    if (CONFIG.durationOptions.includes(v)) return v;
+  } catch (e) {}
+  return CONFIG.durationSec;
+}
+function saveDuration(v) {
+  try { localStorage.setItem(DURATION_KEY, String(v)); } catch (e) {}
+}
+let selectedDurationSec = loadDuration();
 
 /* ===================== 歷史（localStorage） ===================== */
 const HISTORY_KEY = 'pvt_history';
@@ -246,17 +272,35 @@ function renderIdle() {
   const glance = last
     ? `<p class="last-glance"><span class="dot ${last.cls}"></span>上次 ${last.ts.slice(5)}　中位 ${last.medianRt ?? '—'}ms · ${last.lapses}L</p>`
     : '';
+  const durBtns = CONFIG.durationOptions.map(s =>
+    `<button data-dur="${s}" class="${s === selectedDurationSec ? 'active' : ''}">${fmtDur(s)}</button>`
+  ).join('');
   stage.innerHTML = `
     <h1>反應疲勞快測 · PVT</h1>
     <p class="lead">
       畫面變紅、出現數字時，<strong>立刻按空白鍵或點畫面</strong>。<br>
       紅色出現前不要按（會記為搶快）。<br>
-      測試 ${fmtDur(CONFIG.durationSec)}，全程專心。
+      測試 ${fmtDur(selectedDurationSec)}，全程專心。
     </p>
+    <div class="dur-picker" id="durPicker"><span class="dur-label">時長</span>${durBtns}</div>
     <div class="big-key">按 <strong>空白鍵</strong> 或點畫面開始</div>
     ${glance}
     <p class="hint">建議固定條件：同一裝置、同一輸入、起床後喝咖啡因前</p>
   `;
+  const picker = document.getElementById('durPicker');
+  if (picker) {
+    picker.querySelectorAll('button').forEach(b => {
+      const stop = e => e.stopPropagation();
+      b.addEventListener('mousedown', stop);
+      b.addEventListener('touchstart', stop, { passive: true });
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectedDurationSec = parseInt(b.dataset.dur, 10);
+        saveDuration(selectedDurationSec);
+        renderIdle();
+      });
+    });
+  }
 }
 
 function startTest() {
@@ -270,7 +314,7 @@ function startTest() {
 
 function scheduleNextStimulus() {
   // 測試時間到 → 收尾
-  if (now() - testStartTime >= CONFIG.durationSec * 1000) {
+  if (now() - testStartTime >= selectedDurationSec * 1000) {
     finish();
     return;
   }
@@ -333,7 +377,7 @@ function showFeedback({ rt, falseStart }) {
 
 function tickRemaining() {
   if (state === 'done' || state === 'idle') return;
-  const left = Math.max(0, CONFIG.durationSec * 1000 - (now() - testStartTime));
+  const left = Math.max(0, selectedDurationSec * 1000 - (now() - testStartTime));
   remainingEl.textContent = `剩 ${Math.ceil(left / 1000)} 秒`;
   setTimeout(tickRemaining, 200);
 }
@@ -398,7 +442,7 @@ function finish() {
   const journalText = [
     `PVT ${ts} ｜ ${v.label}`,
     `中位 RT ${fmt(medRt)}ms ｜ Lapses ${lapses} ｜ 有效 ${validN} 次`,
-    `平均 ${fmt(meanRt)}ms ｜ 最快 ${fmt(fastest)}ms ｜ 搶快 ${falseStarts} ｜ 暖身排除 ${dropped} ｜ ${fmtDur(CONFIG.durationSec)}`,
+    `平均 ${fmt(meanRt)}ms ｜ 最快 ${fmt(fastest)}ms ｜ 搶快 ${falseStarts} ｜ 暖身排除 ${dropped} ｜ ${fmtDur(selectedDurationSec)}`,
   ].join('\n');
 
   // 存歷史（每次測完自動寫入）
@@ -413,7 +457,7 @@ function finish() {
     meanRt: meanRt == null ? null : Math.round(meanRt),
     fastest: fastest == null ? null : Math.round(fastest),
     dropped,
-    durationSec: CONFIG.durationSec,
+    durationSec: selectedDurationSec,
   });
 
   stage.innerHTML = `
@@ -435,7 +479,7 @@ function finish() {
       <div class="secondary">
         有效反應：${validN} 次　·　搶快：${falseStarts} 次<br>
         平均 RT：${fmt(meanRt)} ms　·　最快：${fmt(fastest)} ms<br>
-        <span style="font-size:0.82rem">已排除暖身 ${dropped} 筆　·　測試 ${fmtDur(CONFIG.durationSec)}</span>
+        <span style="font-size:0.82rem">已排除暖身 ${dropped} 筆　·　測試 ${fmtDur(selectedDurationSec)}</span>
       </div>
 
       <div class="btn-row">
