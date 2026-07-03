@@ -161,18 +161,26 @@ def _ema_series(arr, period):
 
 
 def _compute_1h_macd(closes, fast=12, slow=26, signal=9):
-    """1H MACD(12,26,9)。回傳最新 macd / signal / hist 與方向（hist>=0 為多）。"""
+    """1H MACD(12,26,9)。回傳最新 macd / signal / hist、交叉方向與 hist 動能。
+
+    cross_up = hist>=0（MACD 在 signal 之上）；rising = hist 較前一根遞增。
+    方向票須兩者一致（交叉向上且 hist 遞增才算多）；不一致 → even。
+    """
     closes = np.asarray(closes, dtype=float)
     if len(closes) < slow:
         return None
     macd_line = _ema_series(closes, fast) - _ema_series(closes, slow)
     signal_line = _ema_series(macd_line, signal)
     hist = macd_line - signal_line
+    hist_prev = float(hist[-2]) if len(hist) >= 2 else float(hist[-1])
     return {
         "macd": float(macd_line[-1]),
         "signal": float(signal_line[-1]),
         "hist": float(hist[-1]),
-        "up": bool(hist[-1] >= 0),
+        "hist_prev": hist_prev,
+        "cross_up": bool(hist[-1] >= 0),
+        "rising": bool(hist[-1] > hist_prev),
+        "up": bool(hist[-1] >= 0),  # 保留舊欄位（相容）
     }
 
 
@@ -699,12 +707,23 @@ def print_report(data):
     # ── 方向加分（多空計分）─────────────────────────────
     rows = []  # (label, reading, side)  side ∈ {'long','short','neutral'}
 
-    # 1) 1-hr MACD 方向（hist>=0 為多）
+    # 1) 1-hr MACD 方向（交叉方向 + hist 動能 兩者一致才投方向票，否則 even）
     macd = d.get("macd_1h")
     if macd:
-        side = "long" if macd["up"] else "short"
-        rows.append(("1-hr MACD 方向",
-                     f"{'↑ up' if macd['up'] else '↓ down'}（hist {macd['hist']:+.0f}）", side))
+        cross_up = macd["cross_up"]
+        rising = macd["rising"]
+        cross_txt = "交叉↑" if cross_up else "交叉↓"
+        hist_txt = "hist遞增" if rising else "hist遞減"
+        if cross_up and rising:
+            side = "long"
+        elif (not cross_up) and (not rising):
+            side = "short"
+        else:
+            side = "neutral"  # 交叉與動能背離 → even
+        reading = f"{cross_txt} + {hist_txt}（hist {macd['hist']:+.0f}）"
+        if side == "neutral":
+            reading += " → even"
+        rows.append(("1-hr MACD 方向", reading, side))
 
     # 2) 30分K 20MA 方向（夜盤收 vs 均線扣底 → 預判均線轉向）
     ded = d.get("ma30_20_deduct")
