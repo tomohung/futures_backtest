@@ -176,6 +176,48 @@ def _compute_1h_macd(closes, fast=12, slow=26, signal=9):
     }
 
 
+def _compute_structural_gate(ref):
+    """H137 結構位階閘門（Confirmed，風控/regime tile）。
+
+    閘開 = 開盤(adj) > 日MA60 且 MA60 斜率向上(20交易日)。
+    100% 因果：MA60 用到昨日為止的日盤收盤；盤前無今日開盤，故以「夜收」當
+    開盤 proxy（與其餘 scorecard tile 一致），並轉 adj 空間與 MA60 同尺度比較。
+    回測見 research/archive/confirmed/H137-structural-long-gate：閘開日盤做多
+    Sharpe 0.67 vs 無條件 0.05，OOS 0.93，2022/2025 崩盤覆蓋 89–100%。
+    用途：閘開→多方票；閘關→中性（不投空票，H136 已示反手日內會翻號）。
+    """
+    if ref is None:
+        return None
+    with duckdb.connect(str(DB_PATH), read_only=True) as conn:
+        rows = conn.execute("""
+            WITH daily AS (
+                SELECT timestamp::DATE AS d,
+                       arg_max(adj_close, timestamp) AS adj_close,
+                       arg_max(adjustment, timestamp) AS adjustment
+                FROM ohlcv_1m
+                WHERE symbol = ?
+                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+                GROUP BY d
+            )
+            SELECT d, adj_close, adjustment FROM daily ORDER BY d
+        """, [SYMBOL]).fetchall()
+    if len(rows) < 80:
+        return None
+    closes = np.array([float(r[1]) for r in rows])
+    last_adj = float(rows[-1][2])          # 最新交易日 Panama 調整量
+    ma60_now = float(closes[-60:].mean())          # 至昨日的 MA60（因果）
+    ma60_20ago = float(closes[-80:-20].mean())     # 20 交易日前的 MA60
+    ref_adj = ref + last_adj                        # 夜收 → adj 空間
+    above = ref_adj > ma60_now
+    slope_up = ma60_now > ma60_20ago
+    return {
+        "ref_adj": round(ref_adj), "ma60": round(ma60_now),
+        "ma60_20ago": round(ma60_20ago),
+        "above": above, "slope_up": slope_up,
+        "gate_on": bool(above and slope_up),
+    }
+
+
 def get_key_prices():
     with duckdb.connect(str(DB_PATH), read_only=True) as conn:
         # 最新有日盤資料的交易日（= 昨天）
@@ -470,6 +512,10 @@ def get_key_prices():
     if bars_1h:
         macd_1h = _compute_1h_macd([r[4] for r in bars_1h])
 
+    # H137 結構位階閘門（盤前用夜收當今日開盤 proxy；無夜盤則用日盤收盤）
+    ref_for_gate = night[2] if has_night else day[2]
+    structural_gate = _compute_structural_gate(ref_for_gate)
+
     result = {
         "last_day": last_day,
         "prev_day": prev_day,
@@ -480,6 +526,7 @@ def get_key_prices():
         "ma30_20_up": ma_row[1] if ma_row else None,
         "ma30_20_deduct": ma_row[2] if ma_row else None,
         "macd_1h": macd_1h,
+        "structural_gate": structural_gate,
         "bars_15m_pre10": bars_15m_pre10,
         "night_vol_filter": night_vol_filter,
         "weekday_stats": weekday_stats,
@@ -666,6 +713,19 @@ def print_report(data):
         rows.append(("30分K 20MA 方向",
                      f"{'↑ up' if up else '↓ down'}（夜收 {n(ref)} {'>' if up else '<'} 扣底 {n(ded)}）",
                      "long" if up else "short"))
+
+    # 2b) H137 結構位階（開盤>MA60 且 MA60↑ → 做多開；閘關→中性不投空）
+    sg = d.get("structural_gate")
+    if sg is not None:
+        pos = "上" if sg["above"] else "下"
+        slope = "↑" if sg["slope_up"] else "↓"
+        if sg["gate_on"]:
+            rows.append(("結構位階 (H137)",
+                         f"開盤>MA60({sg['ma60']:,}) 且 MA60{slope} → 做多開", "long"))
+        else:
+            reason = f"開盤在MA60({sg['ma60']:,})之{pos}" if not sg["above"] else f"MA60 斜率{slope}"
+            rows.append(("結構位階 (H137)",
+                         f"閘關（{reason}）→ 中性，降做多強度", "neutral"))
 
     # 3) 週幾早盤勝率
     ws = d.get("weekday_stats")
