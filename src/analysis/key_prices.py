@@ -502,8 +502,14 @@ def get_key_prices():
                 "avg_chg": float(round(avg_chg)),
                 "avg_range": float(round(avg_range))}
 
+    # 今天的交易日星期：從 next_day 起跳過週末（週五收盤後 next_day=週六，
+    # 真正下一個交易日是週一）。避免 weekday()=5/6 造成 stats 查無 key。
+    _next_trade = next_day
+    while _next_trade.weekday() >= 5:
+        _next_trade += timedelta(days=1)
+
     weekday_stats = {
-        "today_wd": next_day.weekday(),  # next_day = 今天的交易日
+        "today_wd": _next_trade.weekday(),  # 下一個交易日的星期（0=Mon..4=Fri）
         "stats": {
             wd: {
                 "day": _agg(wd_data[wd]["day"]),
