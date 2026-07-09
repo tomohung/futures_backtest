@@ -248,6 +248,19 @@ def get_key_prices():
               AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
         """, [SYMBOL, last_day]).fetchone()
 
+        # 日盤 20 日平均振幅（high-low，用於「收相對高/低」門檻 = 1/10 平均振幅）
+        avg_range_20 = conn.execute("""
+            SELECT AVG(rng) FROM (
+                SELECT MAX(high) - MIN(low) AS rng
+                FROM ohlcv_1m
+                WHERE symbol = ?
+                  AND timestamp::TIME BETWEEN '08:45:00' AND '13:45:00'
+                GROUP BY timestamp::DATE
+                ORDER BY timestamp::DATE DESC
+                LIMIT 20
+            )
+        """, [SYMBOL]).fetchone()[0]
+
         # 夜盤：last_day 15:00 ~ (last_day+1) 05:00（from ticks，跨日，主力合約）
         next_day = last_day + timedelta(days=1)
         night = conn.execute("""
@@ -535,6 +548,7 @@ def get_key_prices():
         "prev_day": prev_day,
         "day": {"high": day[0], "low": day[1], "close": day[2]},
         "night": {"high": night[0], "low": night[1], "close": night[2]} if has_night else None,
+        "avg_range_20": float(avg_range_20) if avg_range_20 is not None else None,
         "vwap": vwap,
         "ma30_20": ma_row[0] if ma_row else None,
         "ma30_20_up": ma_row[1] if ma_row else None,
@@ -765,30 +779,51 @@ def print_report(data):
             rows.append((f"週{wd_names[twd]} 早盤勝率",
                          f"{m['up']}漲/{m['down']}跌 {pct:.0f}%", side))
 
-    # 4) 夜盤位置 vs 昨/前成本（優先二日突破，其次昨成本）
-    if ref is not None:
-        dh, dl = d["day"]["high"], d["day"]["low"]
-        if ref > dh:
-            side, txt = "long", f"創二日新高（>{n(dh)}）"
-        elif ref < dl:
-            side, txt = "short", f"創二日新低（<{n(dl)}）"
-        elif vwap_last is not None and ref > vwap_last:
-            side, txt = "long", f"昨成本之上（>{n(vwap_last)}）"
-        elif vwap_last is not None and ref < vwap_last:
-            side, txt = "short", f"昨成本之下（<{n(vwap_last)}）"
+    # 4) 夜盤位置 vs 昨/前成本（雙門檻：同時站上兩成本才多、同時跌破才空、區間 even）
+    if ref is not None and vwap_last is not None and vwap_prev is not None:
+        hi_cost = max(vwap_last, vwap_prev)
+        lo_cost = min(vwap_last, vwap_prev)
+        if ref > hi_cost:
+            side, txt = "long", f"站上昨/前成本（>{n(hi_cost)}）"
+        elif ref < lo_cost:
+            side, txt = "short", f"跌破昨/前成本（<{n(lo_cost)}）"
         else:
-            side, txt = "neutral", "貼近昨成本"
+            side, txt = "neutral", f"夾在昨/前成本間（{n(lo_cost)}~{n(hi_cost)}）"
         rows.append(("夜盤位置 vs 昨/前成本", txt, side))
+
+    # 5) 收相對高/低（反轉假設：收貼夜高→可能A轉偏空、收貼夜低→可能V轉偏多）
+    #    門檻 = 1/10 日盤20MA平均振幅
+    avg_range = d.get("avg_range_20")
+    if ref is not None and night is not None and avg_range:
+        nh, nl = night["high"], night["low"]
+        thr = avg_range / 10
+        d_hi, d_lo = nh - ref, ref - nl
+        if d_hi < thr:
+            side, txt = "short", f"收貼夜高→A轉風險（距 {d_hi:.0f} < {thr:.0f}）"
+        elif d_lo < thr:
+            side, txt = "long", f"收貼夜低→V轉機會（距 {d_lo:.0f} < {thr:.0f}）"
+        else:
+            side, txt = "neutral", f"區間中段（距高 {d_hi:.0f}／距低 {d_lo:.0f}，門檻 {thr:.0f}）"
+        rows.append(("收相對高/低", txt, side))
 
     if rows:
         longs = sum(1 for _, _, s in rows if s == "long")
         shorts = sum(1 for _, _, s in rows if s == "short")
-        if longs > shorts:
-            verdict = f"偏多（多 {longs} / 空 {shorts}）"
-        elif shorts > longs:
-            verdict = f"偏空（空 {shorts} / 多 {longs}）"
+        evens = sum(1 for _, _, s in rows if s == "neutral")
+        # even 各記 0.5 給多與空
+        long_score = longs + evens * 0.5
+        short_score = shorts + evens * 0.5
+        total = long_score + short_score
+        long_pct = long_score / total * 100 if total else 0
+        short_pct = short_score / total * 100 if total else 0
+        tally = (f"多 {long_score:g} / 空 {short_score:g}"
+                 f"（多 {long_pct:.0f}% / 空 {short_pct:.0f}%）")
+        if long_score > short_score:
+            verdict = f"偏多（{tally}）"
+        elif short_score > long_score:
+            verdict = f"偏空（{tally}）"
         else:
-            verdict = f"中性（多 {longs} / 空 {shorts}）"
+            verdict = f"中性（{tally}）"
         print()
         print("### 方向加分（多空計分）")
         print("| 依據 | 多方 | 空方 | 今日讀數 |")
