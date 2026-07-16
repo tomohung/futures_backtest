@@ -334,6 +334,38 @@ def _compute_market_temperature():
     }
 
 
+def _temp_reading(mt: dict) -> str:
+    """把當日溫度數字翻成一句白話讀法（近月 vs 近5日 vs 基準 + 方向）。"""
+    b = mt["base_anyL4"]
+    w5 = mt["windows"][5]["anyL4"]
+    w20 = mt["windows"][20]["anyL4"]
+
+    def _lvl(v):
+        if b <= 0:
+            return "約平"
+        r = v / b
+        return "偏熱" if r >= 1.15 else ("偏冷" if r <= 0.85 else "約平")
+
+    if w5 <= w20 * 0.85:
+        recent = "近5日急凍"
+    elif w5 >= w20 * 1.15:
+        recent = "近5日轉熱"
+    else:
+        recent = "近5日持平"
+
+    parts = [f"近月{_lvl(w20)}（L4 {w20*100:.0f}% vs 基準 {b*100:.0f}%）", recent]
+
+    ds20, dsb = mt["windows"][20]["deep_stop"], mt["base_deep_stop"]
+    if ds20 is not None and dsb:
+        if ds20 >= dsb * 1.15:
+            parts.append(f"夜盤偏靜（{ds20*100:.0f}% vs {dsb*100:.0f}%）")
+        elif ds20 <= dsb * 0.85:
+            parts.append(f"夜盤偏活（{ds20*100:.0f}% vs {dsb*100:.0f}%）")
+
+    arrow = "升溫 ▲" if mt["rv_up"] else "降溫 ▽"
+    return "、".join(parts) + f" → {arrow}"
+
+
 def get_key_prices():
     with duckdb.connect(str(DB_PATH), read_only=True) as conn:
         # 最新有日盤資料的交易日（= 昨天）
@@ -795,6 +827,8 @@ def print_report(data):
             return f"{v*100:.0f}%" if v is not None else "—"
         print()
         print("### 市場溫度（現狀｜近期已實現，非預測）")
+        print("> 數字＝該視窗「碰到深關卡」的交易日比例："
+              "anyL4≈開盤拉開 1×近20日均幅的大單邊、L5 更深(1.23×)、deep-STOP=特別安靜的夜盤；對比全史基準看冷熱")
         print("| 視窗    | anyL4 達成 | anyL5 | deep-STOP 夜 |")
         print("|---------|-----------|:-----:|:-----------:|")
         for W in _TEMP_WINDOWS:
@@ -804,6 +838,7 @@ def print_report(data):
         print(f"| 全史基準 | {_pct(mt['base_anyL4'])} | {_pct(mt['base_anyL5'])} | {_pct(mt['base_deep_stop'])} |")
         arrow = "升溫 ▲" if mt["rv_up"] else "降溫 ▽"
         print(f"\n溫度方向：日振幅 EMA5 {mt['rv_e5']:,} vs EMA20 {mt['rv_e20']:,} → **{arrow}**")
+        print(f"讀法：{_temp_reading(mt)}")
         # 與 ladder regime 對照（現狀 vs 前瞻期望；一致/背離）
         try:
             from src.analysis.vix_regime import get_regime
