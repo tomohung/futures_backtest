@@ -226,6 +226,114 @@ def _compute_structural_gate(ref):
     }
 
 
+# ── 市場溫度（現狀，H139）─────────────────────────────────────
+# ladder 係數沿用 daystats LVL_QUANTILES（open-anchor、EMA20-relative）。
+_TEMP_C_L4, _TEMP_C_L5 = 0.977, 1.225
+_TEMP_WINDOWS = (5, 10, 20)
+EMA_SPAN = 20
+
+
+def _compute_market_temperature():
+    """近期已實現「溫度」= trailing L4/L5 達成率 + deep-STOP 夜盤頻率 + 溫度方向。
+
+    描述性看盤（非預測）：H139 已驗證 trailing 溫度對未來深 reach 無 vix_regime 之外的預判力
+    （regime 分層內增量≈0/負、極端冷桶到 H=5 revert 回基準）。故本段只答「現在多冷/多熱」，
+    深 reach 期望仍以上方 ladder regime tile 為準。
+
+    reach 100% 因果：open-anchor excursion（high−open / open−low）≥ c×causalEMA20(日振幅,不含當日)。
+    deep-STOP 沿用 NVF（night_range/causalEMA20 < 0.8）。base = 全史平均。
+    """
+    import pandas as _pd
+
+    with duckdb.connect(str(DB_PATH), read_only=True) as conn:
+        day = conn.execute("""
+            SELECT CAST(timestamp AS DATE) d,
+                   arg_min(open, timestamp) AS open,
+                   MAX(high) AS hi, MIN(low) AS lo
+            FROM ohlcv_1m
+            WHERE symbol = ? AND CAST(timestamp AS TIME) BETWEEN TIME '08:45:00' AND TIME '13:45:00'
+            GROUP BY 1 ORDER BY 1
+        """, [SYMBOL]).df()
+
+        # deep-STOP 歷史序列（沿用 key_prices NVF：ohlcv_1m 夜盤，grouped 到次一交易日）
+        day_dates = _pd.to_datetime(day["d"]).tolist()
+        day_arr = np.array(day_dates, dtype="datetime64[ns]")
+        nraw = conn.execute("""
+            SELECT timestamp, high, low FROM ohlcv_1m
+            WHERE symbol = ?
+              AND (CAST(timestamp AS TIME) >= TIME '15:00:00' OR CAST(timestamp AS TIME) < TIME '05:00:00')
+            ORDER BY timestamp
+        """, [SYMBOL]).df()
+
+    if len(day) < EMA_SPAN + 5:
+        return None
+
+    for c in ("open", "hi", "lo"):
+        day[c] = day[c].astype(float)
+    day["d"] = _pd.to_datetime(day["d"])
+    day["rng"] = day["hi"] - day["lo"]
+    ema20 = day["rng"].ewm(span=EMA_SPAN, adjust=False).mean().shift(1)  # causal
+    thr4, thr5 = _TEMP_C_L4 * ema20, _TEMP_C_L5 * ema20
+    up_ex, dn_ex = day["hi"] - day["open"], day["open"] - day["lo"]
+    day["up_L4"] = (up_ex >= thr4).astype(float)
+    day["dn_L4"] = (dn_ex >= thr4).astype(float)
+    day["anyL4"] = ((up_ex >= thr4) | (dn_ex >= thr4)).astype(float)
+    day["anyL5"] = ((up_ex >= thr5) | (dn_ex >= thr5)).astype(float)
+    day.loc[ema20.isna(), ["up_L4", "dn_L4", "anyL4", "anyL5"]] = np.nan
+    valid = day.dropna(subset=["anyL4"]).reset_index(drop=True)
+    if len(valid) < max(_TEMP_WINDOWS):
+        return None
+
+    # deep-STOP 序列
+    ds_by_date = {}
+    ds_base = None
+    if not nraw.empty:
+        nraw["timestamp"] = _pd.to_datetime(nraw["timestamp"])
+        ts = nraw["timestamp"]
+        search = ts.dt.normalize().mask(ts.dt.hour >= 15, (ts + _pd.Timedelta(days=1)).dt.normalize())
+        idx = np.searchsorted(day_arr, search.values, side="left")
+        ok = idx < len(day_arr)
+        nraw["td"] = _pd.Series(np.where(ok, day_arr[np.where(ok, idx, 0)], np.datetime64("NaT")),
+                                index=nraw.index)
+        nraw = nraw.dropna(subset=["td"])
+        night = nraw.groupby("td").agg(nh=("high", "max"), nl=("low", "min"), nb=("high", "count"))
+        night["nr"] = night["nh"] - night["nl"]
+        night = night[night["nb"] >= 100].sort_index()
+        nema = night["nr"].ewm(span=EMA_SPAN, adjust=False).mean().shift(1)
+        night["deep_stop"] = (night["nr"] / nema < _NVF_TIER_CUTS[0]).astype(float)
+        night.loc[nema.isna(), "deep_stop"] = np.nan
+        nds = night.dropna(subset=["deep_stop"])
+        ds_base = float(nds["deep_stop"].mean()) if len(nds) else None
+        ds_by_date = {d: float(v) for d, v in night["deep_stop"].dropna().items()}
+
+    def _ds_window(dates):
+        vals = [ds_by_date[d] for d in dates if d in ds_by_date]
+        return (sum(vals) / len(vals)) if vals else None
+
+    windows = {}
+    for W in _TEMP_WINDOWS:
+        sub = valid.tail(W)
+        windows[W] = {
+            "anyL4": float(sub["anyL4"].mean()),
+            "up_L4": float((sub["up_L4"] > 0).mean()),
+            "dn_L4": float((sub["dn_L4"] > 0).mean()),
+            "anyL5": float(sub["anyL5"].mean()),
+            "deep_stop": _ds_window(list(sub["d"])),
+        }
+
+    e5 = float(day["rng"].ewm(span=5, adjust=False).mean().iloc[-1])
+    e20 = float(day["rng"].ewm(span=EMA_SPAN, adjust=False).mean().iloc[-1])
+
+    return {
+        "windows": windows,
+        "base_anyL4": float(valid["anyL4"].mean()),
+        "base_anyL5": float(valid["anyL5"].mean()),
+        "base_deep_stop": ds_base,
+        "rv_e5": round(e5), "rv_e20": round(e20),
+        "rv_up": e5 >= e20,
+    }
+
+
 def get_key_prices():
     with duckdb.connect(str(DB_PATH), read_only=True) as conn:
         # 最新有日盤資料的交易日（= 昨天）
@@ -555,6 +663,7 @@ def get_key_prices():
         "ma30_20_deduct": ma_row[2] if ma_row else None,
         "macd_1h": macd_1h,
         "structural_gate": structural_gate,
+        "market_temp": _compute_market_temperature(),
         "bars_15m_pre10": bars_15m_pre10,
         "night_vol_filter": night_vol_filter,
         "weekday_stats": weekday_stats,
@@ -678,6 +787,36 @@ def print_report(data):
         print(f"| 動作 | {regime_note(vr['regime'], vr['level'], vr['extreme'])} |")
     except Exception:
         pass
+
+    # ── 市場溫度（現狀，H139：描述性、非預測）──────────────
+    mt = d.get("market_temp")
+    if mt:
+        def _pct(v):
+            return f"{v*100:.0f}%" if v is not None else "—"
+        print()
+        print("### 市場溫度（現狀｜近期已實現，非預測）")
+        print("| 視窗    | anyL4 達成 | anyL5 | deep-STOP 夜 |")
+        print("|---------|-----------|:-----:|:-----------:|")
+        for W in _TEMP_WINDOWS:
+            w = mt["windows"][W]
+            l4 = f"{_pct(w['anyL4'])} (多{w['up_L4']*100:.0f}/空{w['dn_L4']*100:.0f})"
+            print(f"| 近{W:>2d}日 | {l4} | {_pct(w['anyL5'])} | {_pct(w['deep_stop'])} |")
+        print(f"| 全史基準 | {_pct(mt['base_anyL4'])} | {_pct(mt['base_anyL5'])} | {_pct(mt['base_deep_stop'])} |")
+        arrow = "升溫 ▲" if mt["rv_up"] else "降溫 ▽"
+        print(f"\n溫度方向：日振幅 EMA5 {mt['rv_e5']:,} vs EMA20 {mt['rv_e20']:,} → **{arrow}**")
+        # 與 ladder regime 對照（現狀 vs 前瞻期望；一致/背離）
+        try:
+            from src.analysis.vix_regime import get_regime
+            _reg = get_regime()["regime"]
+            _cool = not mt["rv_up"]
+            if (_reg == "降壓" and _cool) or (_reg == "升壓" and not _cool):
+                _cmp = "與 regime 一致"
+            else:
+                _cmp = "與 regime 背離（現狀 vs 前瞻期望，勿過度解讀）"
+            print(f"↔ 對照 ladder regime【{_reg}】：{_cmp}")
+        except Exception:
+            pass
+        print("（現狀描述「最近多熱」，不預測明日；深reach 期望以上方 ladder regime 為準 — H139）")
 
     # ── H103 跳空下方遠做多（觀察，H103 Inconclusive）───────
     try:
