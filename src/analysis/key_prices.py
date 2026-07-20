@@ -829,6 +829,7 @@ def print_report(data):
         print("### 市場溫度（現狀｜近期已實現，非預測）")
         print("> 數字＝該視窗「碰到深關卡」的交易日比例："
               "anyL4≈開盤拉開 1×近20日均幅的大單邊、L5 更深(1.23×)、deep-STOP=特別安靜的夜盤；對比全史基準看冷熱")
+        print()
         print("| 視窗    | anyL4 達成 | anyL5 | deep-STOP 夜 |")
         print("|---------|-----------|:-----:|:-----------:|")
         for W in _TEMP_WINDOWS:
