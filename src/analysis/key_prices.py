@@ -1153,6 +1153,16 @@ def plot_sr_chart(data, n_days=20):
         ax.plot([i, i], [lows[i], body_lo], color=color, linewidth=0.8, zorder=2)
         ax.plot([i, i], [body_hi, highs[i]], color=color, linewidth=0.8, zorder=2)
 
+    # ── 日盤／夜盤分隔虛線 ────────────────────────────────
+    # 日盤 bar 落在 08–13 時，夜盤在 15 時以後或隔日 00–05 時；
+    # session 切換處（前後兩根 bar 分屬不同盤別）畫垂直虛線。
+    def _is_day_bar(ts):
+        return 8 <= ts.hour <= 13
+    for i in range(1, n):
+        if _is_day_bar(ts_list[i]) != _is_day_bar(ts_list[i - 1]):
+            ax.axvline(i - 0.5, color=COLOR_TEXT_MUTED, linewidth=0.9,
+                       linestyle=(0, (5, 4)), alpha=0.7, zorder=1)
+
     # ── 均線 5/21/65/130/233 ──────────────────────────────
     ma_periods = [5, 21, 65, 130, 233]
     ma_colors  = [COLOR_UP, COLOR_ACCENT_GOLD, COLOR_DOWN, COLOR_ACCENT_BLUE, COLOR_ACCENT_PURPLE]
@@ -1391,6 +1401,12 @@ def plot_30m_chart(data, n_days=20):
         ))
         ax.plot([i, i], [lows_d[i], body_lo], color=color, linewidth=0.8, zorder=2)
         ax.plot([i, i], [body_hi, highs_d[i]], color=color, linewidth=0.8, zorder=2)
+
+    # ── 交易日分隔虛線（每天日盤區塊之間）─────────────────
+    for i in range(1, nd):
+        if ts_disp[i].date() != ts_disp[i - 1].date():
+            ax.axvline(i - 0.5, color=COLOR_TEXT_MUTED, linewidth=0.9,
+                       linestyle=(0, (5, 4)), alpha=0.7, zorder=1)
 
     # 20MA
     valid = ~np.isnan(ma20_d)
