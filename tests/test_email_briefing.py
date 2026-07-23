@@ -1,6 +1,8 @@
 """Tests for email_briefing orchestration (no real subprocess / no real send)."""
 import base64
+import io
 import types
+import urllib.error
 
 import src.analysis.email_briefing as eb
 
@@ -55,3 +57,80 @@ def test_send_skips_without_api_key(monkeypatch):
     rc = eb.send("<div>x</div>", [], "2026-07-24")
     assert rc == 0
     assert called["urlopen"] is False
+
+
+def test_send_returns_0_on_success(monkeypatch):
+    monkeypatch.setenv("RESEND_API_KEY", "fake-key")
+    called = {"urlopen": False}
+
+    class FakeResponse:
+        def __enter__(self):
+            called["urlopen"] = True
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+        def read(self):
+            return b'{"id":"abc"}'
+
+    monkeypatch.setattr(eb.urllib.request, "urlopen", lambda *a, **k: FakeResponse())
+
+    rc = eb.send("<div>x</div>", [], "2026-07-24")
+
+    assert rc == 0
+    assert called["urlopen"] is True
+
+
+def test_send_returns_1_on_http_error(monkeypatch):
+    monkeypatch.setenv("RESEND_API_KEY", "fake-key")
+
+    def raise_http_error(*a, **k):
+        raise urllib.error.HTTPError(
+            url="https://api.resend.com/emails",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=io.BytesIO(b"blocked"),
+        )
+
+    monkeypatch.setattr(eb.urllib.request, "urlopen", raise_http_error)
+
+    rc = eb.send("<div>x</div>", [], "2026-07-24")
+
+    assert rc == 1
+
+
+def test_send_returns_1_on_url_error(monkeypatch):
+    monkeypatch.setenv("RESEND_API_KEY", "fake-key")
+
+    def raise_url_error(*a, **k):
+        raise urllib.error.URLError("no route")
+
+    monkeypatch.setattr(eb.urllib.request, "urlopen", raise_url_error)
+
+    rc = eb.send("<div>x</div>", [], "2026-07-24")
+
+    assert rc == 1
+
+
+def test_build_email_multiple_charts_get_unique_cids(monkeypatch, tmp_path):
+    png_a = tmp_path / "sr_chart.png"
+    png_a.write_bytes(b"\x89PNG\r\n\x1a\nFAKE_A")
+    png_b = tmp_path / "30m_chart.png"
+    png_b.write_bytes(b"\x89PNG\r\n\x1a\nFAKE_B")
+    monkeypatch.setattr(eb, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(
+        eb,
+        "SECTIONS",
+        [("key_prices.py", [("sr_chart.png", "支撐壓力"), ("30m_chart.png", "30 分 K")])],
+    )
+    monkeypatch.setattr(eb, "run_section", lambda script: "# 關鍵價格\n\n內容")
+
+    html, attachments = eb.build_email("2026-07-24")
+
+    assert len(attachments) == 2
+    cids = [att["content_id"] for att in attachments]
+    assert len(set(cids)) == 2
+    for cid in cids:
+        assert f'src="cid:{cid}"' in html
