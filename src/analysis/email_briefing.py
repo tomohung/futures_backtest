@@ -43,12 +43,17 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
 
 
 def run_section(script: str) -> str:
-    """跑 src/analysis/<script>，回傳過濾雜訊後的 stdout（markdown）。"""
+    """跑 src/analysis/<script>，回傳過濾雜訊後的 stdout（markdown）。
+
+    強制 matplotlib 非互動 Agg backend（MPLBACKEND=Agg）：腳本內的 plt.show()
+    在寄信流程不該彈出 GUI 視窗阻塞；Agg 下 show() 為 no-op，savefig 照常運作。
+    """
     proc = subprocess.run(
         [sys.executable, str(ANALYSIS_DIR / script)],
         capture_output=True,
         text=True,
         cwd=str(PROJECT_ROOT),
+        env={**os.environ, "MPLBACKEND": "Agg"},
     )
     lines = [
         ln for ln in proc.stdout.splitlines()

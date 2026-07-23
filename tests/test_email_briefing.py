@@ -10,7 +10,7 @@ import src.analysis.email_briefing as eb
 def test_run_section_filters_noise(monkeypatch):
     fake_stdout = "# 標題\n\n內容行\n圖表已儲存：output/x.png\n已複製到剪貼簿，可貼上"
 
-    def fake_run(cmd, capture_output, text, cwd):
+    def fake_run(cmd, capture_output, text, cwd, env=None):
         return types.SimpleNamespace(stdout=fake_stdout, returncode=0)
 
     monkeypatch.setattr(eb.subprocess, "run", fake_run)
@@ -18,6 +18,20 @@ def test_run_section_filters_noise(monkeypatch):
     assert "標題" in md and "內容行" in md
     assert "圖表已儲存" not in md
     assert "已複製到剪貼簿" not in md
+
+
+def test_run_section_forces_agg_backend(monkeypatch):
+    """寄信流程不該彈出 GUI 圖窗：run_section 必須以 MPLBACKEND=Agg 跑子程序。"""
+    captured = {}
+
+    def fake_run(cmd, capture_output, text, cwd, env=None):
+        captured["env"] = env
+        return types.SimpleNamespace(stdout="", returncode=0)
+
+    monkeypatch.setattr(eb.subprocess, "run", fake_run)
+    eb.run_section("daily_range.py")
+    assert captured["env"] is not None
+    assert captured["env"].get("MPLBACKEND") == "Agg"
 
 
 def test_build_email_embeds_chart_and_attachment(monkeypatch, tmp_path):
