@@ -115,3 +115,7 @@ https://www.taifex.com.tw/file/taifex/Dailydownload/Dailydownload/Daily_YYYY_MM_
 ```
 
 （cron 時間為 UTC，台灣 09:00 = UTC 01:00）
+
+## 部署（launchd）
+
+實際排程改用 launchd（`deploy/com.tomo.futures-daily.plist`），透過 `deploy/deploy.sh` 部署：`RESEND_API_KEY=... bash deploy/deploy.sh` 會把 repo 內 plist 模板的 `__RESEND_API_KEY__` 佔位符替換成真實金鑰，寫進 `~/Library/LaunchAgents` 的複本後 `plutil -lint` 驗證並重載。真實金鑰只存在於該複本，不會進版控。
