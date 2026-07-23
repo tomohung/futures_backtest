@@ -20,6 +20,22 @@ def test_run_section_filters_noise(monkeypatch):
     assert "已複製到剪貼簿" not in md
 
 
+def test_run_section_flags_nonzero_exit(monkeypatch, capsys):
+    def fake_run(cmd, capture_output, text, cwd, env=None):
+        return types.SimpleNamespace(stdout="部分內容", stderr="Traceback...", returncode=1)
+
+    monkeypatch.setattr(eb.subprocess, "run", fake_run)
+    md = eb.run_section("key_prices.py")
+
+    assert "產生失敗" in md
+    assert "key_prices.py" in md
+    assert "部分內容" in md
+
+    captured = capsys.readouterr()
+    assert "key_prices.py" in captured.err
+    assert "exit 1" in captured.err
+
+
 def test_run_section_forces_agg_backend(monkeypatch):
     """寄信流程不該彈出 GUI 圖窗：run_section 必須以 MPLBACKEND=Agg 跑子程序。"""
     captured = {}
@@ -50,6 +66,7 @@ def test_build_email_embeds_chart_and_attachment(monkeypatch, tmp_path):
     att = attachments[0]
     assert att["filename"] == "sr_chart.png"
     assert att["content_id"]
+    assert att["content_type"] == "image/png"
     assert base64.b64decode(att["content"]) == b"\x89PNG\r\n\x1a\nFAKE"
     assert f'src="cid:{att["content_id"]}"' in html
 

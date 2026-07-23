@@ -59,7 +59,16 @@ def run_section(script: str) -> str:
         ln for ln in proc.stdout.splitlines()
         if not any(noise in ln for noise in _NOISE)
     ]
-    return "\n".join(lines).strip()
+    text = "\n".join(lines).strip()
+
+    if proc.returncode != 0:
+        print(
+            f"⚠ {script} 非零退出 (exit {proc.returncode}): {(proc.stderr or '')[-500:]}",
+            file=sys.stderr,
+        )
+        return f"> ⚠️ 本段（{script}）產生失敗（exit {proc.returncode}），內容可能不完整。\n\n{text}"
+
+    return text
 
 
 def _chart_html(cid: str, caption: str) -> str:
@@ -91,6 +100,7 @@ def build_email(target: str) -> tuple[str, list[dict]]:
                 "filename": filename,
                 "content": base64.b64encode(path.read_bytes()).decode(),
                 "content_id": cid,
+                "content_type": "image/png",
             })
             body.append(_chart_html(cid, caption))
 

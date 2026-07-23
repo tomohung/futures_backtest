@@ -627,15 +627,15 @@ Expected: 終端印 `✓ 已寄出早盤簡報 → tomohung@gmail.com (...)`；�
 		<string>re_實際金鑰填這裡</string>
 ```
 
-- [ ] **Step 5: 驗證 plist 格式並重載 launchd**
+- [ ] **Step 5: 用 deploy.sh 部署（勿直接 cp）**
+
+> ⚠️ 不可直接 `cp deploy/com.tomo.futures-daily.plist ~/Library/LaunchAgents/...`——repo 內 plist 的 `RESEND_API_KEY` 只是佔位符 `__RESEND_API_KEY__`，直接複製會把佔位字串當成真的 key 裝進 launchd 環境。真實金鑰只能存在於 `~/Library/LaunchAgents` 的複本，絕不可進版控。
 
 ```bash
-plutil -lint deploy/com.tomo.futures-daily.plist
-cp deploy/com.tomo.futures-daily.plist ~/Library/LaunchAgents/com.tomo.futures-daily.plist
-launchctl unload ~/Library/LaunchAgents/com.tomo.futures-daily.plist 2>/dev/null || true
-launchctl load ~/Library/LaunchAgents/com.tomo.futures-daily.plist
+RESEND_API_KEY=... bash deploy/deploy.sh
 ```
-Expected: `plutil` 印 `OK`；`launchctl load` 無錯誤。
+`deploy/deploy.sh` 會把 `__RESEND_API_KEY__` 替換成真實金鑰、`plutil -lint` 驗證、並 unload/load 重載 launchd。
+Expected: `plutil` 印 `OK`；`launchctl load` 無錯誤；輸出 `✓ 已部署 com.tomo.futures-daily → ...`。
 （可選冒煙測試：`launchctl start com.tomo.futures-daily` 手動觸發一次，看 `logs/launchd/daily.log` 是否印出寄信行——注意會真的跑 ETL。）
 
 - [ ] **Step 6: Commit**
