@@ -14,6 +14,9 @@
 		<string>/Users/tomohung/.asdf/shims:/Users/tomohung/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 		<key>FINMIND_API_KEY</key>
 		<string>eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wNC0wOSAyMDowODoxNSIsInVzZXJfaWQiOiJ0b21vaHVuZyIsImVtYWlsIjoidG9tb2h1bmdAZ21haWwuY29tIiwiaXAiOiIxLjE3MS42NC4yMDMifQ.5aiu36M0M1dvn7uhAaUQyTMVNL1QIeIv8q1eyIIfgsU</string>
+		<!-- 部署時以真實金鑰替換此佔位符（見 deploy/deploy.sh）；佔位符不進版控歷史 -->
+		<key>RESEND_API_KEY</key>
+		<string>__RESEND_API_KEY__</string>
 	</dict>
 	<key>ProcessType</key>
 	<string>Background</string>

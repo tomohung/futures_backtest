@@ -37,5 +37,13 @@ fi
 uv run python src/etl/daily_update.py "$@"
 status=$?
 
+# 早盤簡報 email：只在早上跑（ETL 剛完成故 --skip-update），失敗不影響 ETL job。
+hour=$(date '+%H')
+if [ "$status" -eq 0 ] && [ "$hour" -lt 12 ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 寄送早盤簡報 email…"
+    uv run python src/analysis/email_briefing.py --skip-update || \
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠ email 寄送失敗（已忽略）"
+fi
+
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 更新結束 (exit=$status)"
 exit $status
