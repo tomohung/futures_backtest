@@ -76,9 +76,9 @@ Subject：`[台指早盤] YYYY-MM-DD 關鍵價格簡報`（日期取今天）。
 ## 資料流
 
 ```
-launchd (平日 06:00)
-  └─ email_briefing.py
-       ├─ daily_update.py                (ETL)
+launchd 平日 06:00 → run-daily-update.sh
+  ├─ daily_update.py                     (ETL，唯一 DuckDB 寫入者)
+  └─ (若早上) email_briefing.py --skip-update
        ├─ key_prices.py     → stdout markdown + sr_chart.png, 30m_chart.png
        ├─ daily_range.py    → daily_range.png
        ├─ breadth_...py     → stdout markdown + breadth_thermometer.png
@@ -87,15 +87,24 @@ launchd (平日 06:00)
        └─ Resend POST (HTML + 4 CID 附件)
 ```
 
-### 3. launchd plist
+### 3. 排程整合（沿用現有 launchd，不新增 plist）
 
-`com.futures.email-briefing.plist`：
-- `StartCalendarInterval` 陣列，`Hour 6 Minute 0`，`Weekday 1`~`5`（週一～五各一項）。
-- `ProgramArguments`：於專案目錄跑 `uv run python src/analysis/email_briefing.py`。
-- `WorkingDirectory`：專案根目錄。
-- `EnvironmentVariables`：`RESEND_API_KEY`（或依現有 launchd 慣例從 shell env 帶入）。
-- `StandardOutPath`/`StandardErrorPath`：log 檔便於除錯。
-- 提供檔案 + `launchctl load` 指令；不自動載入（使用者手動決定啟用）。
+現況：`com.tomo.futures-daily` plist 已在**平日 06:00 與 17:00** 跑 `run-daily-update.sh`，
+內含 `.daily_update.lock`（mkdir 原子鎖）防兩次 ETL 重疊。
+
+**若另開一個 06:00 email plist 跑自己的 `daily_update.py`，會是第二個寫入者**
+（該 Python 呼叫不走 shell 的 `.daily_update.lock`）→ DuckDB 單寫鎖衝突崩潰。
+
+正確做法：**把 email 併入 `run-daily-update.sh` 的早上那次執行**：
+- ETL（`daily_update.py`）跑完後，判斷 `$(date +%H) -lt 12`（只早上）→ 跑
+  `uv run python src/analysis/email_briefing.py --skip-update`（ETL 剛完成，故 skip）。
+- 以 `|| true` 包住，email 失敗不影響 ETL job 退出碼。
+- 沿用既有 06:00 平日 launchd 排程與鎖，**不新增 plist**，順序決定性、零 race。
+- `RESEND_API_KEY` 需在 launchd 環境可見：加進 `com.tomo.futures-daily.plist` 的
+  `EnvironmentVariables`（比照現有 `FINMIND_API_KEY` 作法）。
+
+`email_briefing.py` 本身仍支援獨立手動執行（不帶 `--skip-update` 時會自己先跑 ETL），
+供 ad-hoc 重寄；pipeline 走 `--skip-update` 路徑。
 
 ## 元件邊界檢查
 
@@ -103,7 +112,7 @@ launchd (平日 06:00)
 |---|---|---|---|
 | `md_to_email_html.render` | markdown 段 → inline-styled HTML | `render(md) -> str` | 無（純函式） |
 | `email_briefing.py` | 跑分析、收圖、組信、寄信 | `uv run python .../email_briefing.py [--skip-update]` | 4 個分析腳本、renderer、Resend API、env vars |
-| launchd plist | 平日 06:00 觸發 | `launchctl load` | `email_briefing.py` |
+| `run-daily-update.sh`（改） | ETL 後早上叫 email | 現有 launchd 06:00 觸發 | `email_briefing.py` |
 
 ## 測試
 
