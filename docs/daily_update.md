@@ -83,7 +83,7 @@ https://www.taifex.com.tw/file/taifex/Dailydownload/Dailydownload/Daily_YYYY_MM_
 | Step | 腳本 | 說明 | 可跳過 |
 |------|------|------|--------|
 | 0 | `download.py` | 下載 zip 檔 | `--skip-download` |
-| 1 | `parse_rpt.py` | zip → ticks 表 | — |
+| 1 | `parse_rpt.py` | zip → ticks 表（含日盤缺口自癒） | — |
 | 2 | `build_1m.py` | ticks → ohlcv_1m 表 | — |
 | 3 | `build_continuous.py` | 換倉 + Panama adj_close | — |
 | 4 | `validate.py` | 資料驗證 | `--skip-validate` |
@@ -105,6 +105,20 @@ https://www.taifex.com.tw/file/taifex/Dailydownload/Dailydownload/Daily_YYYY_MM_
 
 - `download.py`：若目標 zip 已存在則 `'skipped'`，不重複下載
 - ETL steps 1–3：各自支援增量匯入（已匯入的 trade_date 跳過）
+
+## 日盤缺口自癒（`parse_rpt.py`，預設開啟）
+
+**問題**：06:00 排程下載到「只有昨夜夜盤」的半成品 `Daily_D.zip` 先入庫並記檔名，
+之後完整版（含日盤）重下載卻因 `ingested_zips` 依**檔名**判斷「已處理」被跳過 →
+該日日盤（08:45–13:45）永遠補不上。平常 `--reimport-recent 2` 會滾動修好前 1–2 天，
+但**只要有幾天沒跑 daily_update，缺口就滑出窗口、再也修不回**（非 24h 常開的機器易中）。
+
+**自癒**：每次 parse 前 `find_day_session_gaps()` 掃描「平日、有夜盤 tick、缺整段日盤，
+且磁碟 zip 內確實含日盤」的交易日（用 zip 內容區分**真缺口 vs 真休市**，holiday 不誤判），
+把最舊缺口折進 reimport 起點 `k`，乾淨重建。預設回看 180 天。
+
+- 關閉：`--no-heal-gaps`；調整回看：`--heal-lookback-days N`
+- 因為 `build_1m` / `build_continuous` 皆增量，parse 補回 ticks 後下游會自動處理
 - 可安全重複執行整個 pipeline
 
 ## 建議排程（cron）

@@ -161,6 +161,65 @@ def date_from_zip(path: Path) -> date | None:
     return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
 
+def zip_has_day_session(zip_path: Path, d: date) -> bool:
+    """該 zip 內是否含 file_date=d 的日盤(08:45~13:45) TX 記錄。
+
+    自癒用：據此區分「不完整入庫留下的真缺口」與「真休市」。
+    trim 後的 trade_time 為零填充 'HH:MM:SS'，字串比較即等價時間比較。
+    """
+    if zip_path is None or not zip_path.exists():
+        return False
+    df = parse_zip(zip_path)
+    if df.empty:
+        return False
+    m = (
+        (df["trade_date"] == d)
+        & (df["trade_time"] >= "08:45:00")
+        & (df["trade_time"] <= "13:45:00")
+    )
+    return bool(m.any())
+
+
+def find_day_session_gaps(conn, lookback_days: int = 180, zip_checker=None) -> list[date]:
+    """偵測「有夜盤 tick、但缺整段日盤」且磁碟 zip 內確實含日盤的交易日。
+
+    成因：06:00 排程下載到「只有昨夜夜盤」的半成品 zip 先入庫並記檔名，之後完整版
+    重下載卻因「檔名已處理」被跳過，日盤永遠補不上（只要那幾天沒被 reimport 窗口涵蓋）。
+    holiday（zip 內本就無日盤）不會被誤判——因 zip_checker 會回 False。
+
+    回傳需修復的日期（升冪）；呼叫端把最舊者折進 reimport 的 k 即可乾淨重建。
+    """
+    if zip_checker is None:
+        zip_by_name = {p.name: p for p in find_all_zips()}
+
+        def zip_checker(d: date) -> bool:
+            return zip_has_day_session(zip_by_name.get(f"Daily_{d:%Y_%m_%d}.zip"), d)
+
+    rows = conn.execute(
+        """
+        WITH per AS (
+            SELECT trade_date AS d,
+                   COUNT(*) FILTER (
+                       WHERE trade_time BETWEEN TIME '08:45:00' AND TIME '13:45:00'
+                   ) AS day_ticks,
+                   COUNT(*) AS all_ticks
+            FROM ticks
+            WHERE symbol = 'TX'
+            GROUP BY trade_date
+        )
+        SELECT d FROM per
+        WHERE day_ticks = 0
+          AND all_ticks >= 1000
+          AND dayofweek(d) BETWEEN 1 AND 5          -- 平日（0=Sun..6=Sat）
+          AND d >= (SELECT MAX(trade_date) FROM ticks WHERE symbol = 'TX')
+                   - (? * INTERVAL '1 day')
+        ORDER BY d
+        """,
+        [lookback_days],
+    ).fetchall()
+    return [r[0] for r in rows if zip_checker(r[0])]
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Step 1: zip → ticks 表")
     parser.add_argument(
@@ -175,6 +234,20 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="清空 ticks 與 ingested_zips，從所有 zip 全量重建（修復歷史重複/缺漏）",
     )
+    parser.add_argument(
+        "--no-heal-gaps",
+        dest="heal_gaps",
+        action="store_false",
+        help="關閉日盤缺口自癒掃描（預設開啟：自動補回 zip 有日盤但 DB 缺的交易日）",
+    )
+    parser.add_argument(
+        "--heal-lookback-days",
+        type=int,
+        default=180,
+        metavar="N",
+        help="自癒掃描回看天數（預設 180；只掃最近 N 天的缺口）",
+    )
+    parser.set_defaults(heal_gaps=True)
     return parser.parse_args()
 
 
@@ -189,13 +262,28 @@ def main() -> None:
             print("全量重建：清空 ticks 與 ingested_zips")
             conn.execute("DELETE FROM ticks")
             conn.execute("DELETE FROM ingested_zips")
-        elif args.reimport_recent > 0:
-            # 重新匯入最新 N 個 zip。trade_date X 的晚盤(15:00+)落在 Daily_(X+1)，
-            # 故除了刪 trade_date >= K，還要刪 K-1 的晚盤（它在 Daily_K 內），
-            # 才能在重處理 Daily_K 時乾淨還原、不重複。
-            recent = sorted(get_recent_zip_dates(args.reimport_recent))
-            if recent:
-                k = recent[0]
+        else:
+            # 決定重匯入起點 k（取兩來源最舊者）：
+            #   (a) 最新 N 個 zip（滾動修好前 1~2 天的半成品）
+            #   (b) 自癒掃描出的日盤缺口（zip 有日盤但 DB 缺；可能是很久以前漏的）
+            # trade_date X 的晚盤(15:00+)落在 Daily_(X+1)，故除了刪 trade_date >= K，
+            # 還要刪 K-1 的晚盤（它在 Daily_K 內），才能在重處理 Daily_K 時乾淨還原、不重複。
+            k_candidates: list[date] = []
+            if args.reimport_recent > 0:
+                recent = sorted(get_recent_zip_dates(args.reimport_recent))
+                if recent:
+                    k_candidates.append(recent[0])
+            if args.heal_gaps:
+                gaps = find_day_session_gaps(conn, args.heal_lookback_days)
+                if gaps:
+                    print(
+                        f"[heal] 偵測到 {len(gaps)} 個日盤缺口（zip 有日盤、DB 缺）："
+                        + ", ".join(str(g) for g in gaps)
+                    )
+                    k_candidates.append(min(gaps))
+
+            if k_candidates:
+                k = min(k_candidates)
                 ndel = conn.execute(
                     "SELECT COUNT(*) FROM ticks "
                     "WHERE trade_date >= ? OR (trade_date = ? AND trade_time >= TIME '15:00:00')",
@@ -207,7 +295,7 @@ def main() -> None:
                     [k, k - timedelta(days=1)],
                 )
                 conn.execute("DELETE FROM ingested_zips WHERE file_date >= ?", [k])
-                print(f"重新匯入最新 {args.reimport_recent} 個 zip：刪除 trade_date >= {k} 的 {ndel:,} 筆")
+                print(f"重新匯入 trade_date >= {k}：刪除 {ndel:,} 筆待重建")
 
         ingested = get_ingested_zips(conn)
 
