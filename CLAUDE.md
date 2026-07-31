@@ -174,7 +174,7 @@ futures_backtest/
 │   │   ├── vix_regime.py        ← VIX regime 判讀（升壓/降壓 + ladder reach 期望）✅
 │   │   ├── regime_health.py     ← Regime 健康快報（已驗證無交易濾網效果，已從 morning_briefing 移除）
 │   │   ├── daily_range.py       ← 日盤波動 + VIX 圖表 ✅
-│   │   ├── breadth_thermometer.py ← H079 漲停萎縮溫度計（觀察用 alert）✅
+│   │   ├── breadth_thermometer.py ← H079 漲停萎縮溫度計 + H140 相對溫度 pct1y（觀察用 alert）✅
 │   │   └── fg_composite_monitor.py ← S004 fg-composite 每日監控（comp_z + 觸發狀態 + 4 指標分項）✅
 │   ├── backtest/
 │   │   ├── runner.py            ← 資料載入、TrendMA/ADX 計算 ✅
