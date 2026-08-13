@@ -13,6 +13,8 @@
 //   空單：Close < OR Low （向下跌破）— 多方鏡像
 //   ⚠️ 空方為未驗證的鏡像邏輯：原 EstHL / S001 策略只做多，ORB 上下突破的
 //      統計特性未必對稱。實際使用前建議先跑分佈探索。可用「方向」群組關閉。
+//   訊號時點：barstate.isconfirmed —— 該根 K 棒收盤定案後才判定，盤中價格
+//      暫時穿越 OR 邊界不出訊號（避免 label 閃爍／收回的假訊號）。
 //
 // 停損資訊（僅標示，不執行出場）：
 //   多 SL = 進場價 − sl_fraction × EmaHL
@@ -145,7 +147,11 @@ if entering_or
     entry_px   := na
     stop_px    := na
 
-base_can_enter = or_done and in_entry_win and not na(ema_hl_sess) and not na(or_high) and not na(or_low)
+// barstate.isconfirmed：只在 K 棒收盤定案後才成立，盤中價格暫時穿越不算，
+// 避免訊號在該根 K 棒內反覆出現／消失（label 閃爍、假訊號）。
+// 歷史 bar 上恆為 true，故不影響回看時的訊號位置。
+base_can_enter = or_done and in_entry_win and barstate.isconfirmed and
+                 not na(ema_hl_sess) and not na(or_high) and not na(or_low)
 long_signal    = ent_long  and base_can_enter and not long_done  and close > or_high
 short_signal   = ent_short and base_can_enter and not short_done and close < or_low
 
