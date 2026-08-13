@@ -1,0 +1,257 @@
+// ============================================================
+// ORB Entry TX — 進場訊號簡化版 v1
+// 台指期（TAIFEX TX）ORB 突破進場（多空雙向，只標進場，不含出場邏輯）
+//
+// 源自 orb_est_hl_tx.pine，做以下簡化：
+//   - 移除全部出場邏輯（SatZone 兩段式 / Dow Theory 追蹤停損 / 強制平倉）
+//   - 移除全部進場濾網：5m 120MA 方向、OR 寬度、週四/週五、SatZone 未觸及、VWAP
+//   - 連帶移除 SatZone / EstRange 的 volume profile 計算與結算日量校正、
+//     日盤 VWAP 累計、5m 的 request.security 呼叫
+//
+// 進場邏輯（08:45–08:57 OR，08:58–09:15 進場窗口，多空各至多一次/日）：
+//   多單：Close > OR High（向上突破）— 唯一條件
+//   空單：Close < OR Low （向下跌破）— 多方鏡像
+//   ⚠️ 空方為未驗證的鏡像邏輯：原 EstHL / S001 策略只做多，ORB 上下突破的
+//      統計特性未必對稱。實際使用前建議先跑分佈探索。可用「方向」群組關閉。
+//
+// 停損資訊（僅標示，不執行出場）：
+//   多 SL = 進場價 − sl_fraction × EmaHL
+//   空 SL = 進場價 + sl_fraction × EmaHL
+//   EmaHL = 20 日 EMA（前一日「日盤」H-L range，自行累計，不用 request.security("D")
+//           以避免夜盤混入）
+//
+// 訊號標記（參考 swing_levels_tx.pine 的進場 label 樣式）：
+//   ▲ 多進 <進場價> / ▼ 空進 <進場價>
+//   SL <停損價>（風險 N 點）
+//   並在進場那根往右畫一段停損實線。配色：多=紅、空=綠（台灣慣例）。
+//
+// 線條顏色說明：
+//   Teal    ── OR High（開盤區間高點 08:45–08:57）
+//   Orange  ── OR Low （開盤區間低點）
+//   Red     ── 停損線（進場那根往右延伸）
+//
+// 底色說明：
+//   黃色  = OR 窗口（08:45–08:57）
+//   藍色  = 進場窗口（08:58–09:15）
+// ============================================================
+//@version=6
+indicator(
+    title   = "ORB Entry TX (進場訊號簡化版)",
+    overlay = true,
+    max_lines_count  = 100,
+    max_labels_count = 200
+)
+
+// ============================================================
+// Inputs
+// ============================================================
+var string GRP_DIR = "方向"
+var string GRP_SL  = "停損"
+var string GRP_VIZ = "顯示"
+
+ent_long       = input.bool (true, "多單（突破 OR High）", group=GRP_DIR)
+ent_short      = input.bool (true, "空單（跌破 OR Low）",  group=GRP_DIR,
+                  tooltip="空方為多方鏡像，尚未經回測驗證；原 EstHL 策略只做多")
+sl_fraction    = input.float(0.25, "SL = EmaHL ×", step=0.05, minval=0.05, group=GRP_SL,
+                  tooltip="停損 = 進場價 ∓ sl_fraction × EmaHL（僅標示，不執行出場）")
+show_or        = input.bool (true, "OR 高低線", group=GRP_VIZ)
+show_bg        = input.bool (true, "時段底色", group=GRP_VIZ)
+show_entry_lbl = input.bool (true, "進場 Label（進場價 + 停損）", group=GRP_VIZ)
+show_stop_line = input.bool (true, "停損線", group=GRP_VIZ)
+show_or_pct    = input.bool (true, "OR% Label", group=GRP_VIZ)
+show_diag      = input.bool (true, "EmaHL 診斷 Label", group=GRP_VIZ)
+
+// 配色（台灣慣例：多/漲=紅）
+col_bull  = color.new(#ff5c5c, 0)
+col_bear  = color.new(#22c55e, 0)
+col_white = color.new(#ffffff, 0)
+
+// ============================================================
+// Time Windows (Asia/Taipei = UTC+8)
+// ============================================================
+t_or_start    = timestamp("Asia/Taipei", year, month, dayofmonth,  8, 45)
+t_or_end      = timestamp("Asia/Taipei", year, month, dayofmonth,  8, 57)
+t_entry_start = timestamp("Asia/Taipei", year, month, dayofmonth,  8, 58)
+t_entry_end   = timestamp("Asia/Taipei", year, month, dayofmonth,  9, 15)
+t_day_end     = timestamp("Asia/Taipei", year, month, dayofmonth, 13, 45)
+
+in_or_window = time >= t_or_start    and time <= t_or_end
+in_entry_win = time >= t_entry_start and time <= t_entry_end
+in_session   = time >= t_or_start    and time <  t_day_end
+
+// ============================================================
+// OR Window Transitions
+// ============================================================
+var bool prev_in_or = false
+entering_or = in_or_window     and not prev_in_or
+leaving_or  = not in_or_window and prev_in_or
+prev_in_or := in_or_window
+
+// ============================================================
+// Opening Range (08:45–08:57)
+// ============================================================
+var float or_high  = na
+var float or_low   = na
+var float day_open = na
+var bool  or_done  = false
+
+if entering_or
+    or_high  := na
+    or_low   := na
+    day_open := open
+    or_done  := false
+
+if in_or_window
+    or_high := na(or_high) ? high : math.max(or_high, high)
+    or_low  := na(or_low)  ? low  : math.min(or_low,  low)
+
+if leaving_or
+    or_done := true
+
+// ============================================================
+// EmaHL — self-computed from DAY SESSION only
+//
+// ⚠️  request.security("D", high-low) includes the night session
+//     on TAIFEX continuous contracts.  We track it ourselves.
+//     Updated at each entering_or using the PREVIOUS day's range.
+// ============================================================
+var float ema_hl_sess = na   // 20-day EMA of day-session H-L range
+var float sess_high   = na
+var float sess_low    = na
+
+if entering_or
+    if not na(sess_high) and not na(sess_low) and sess_high > sess_low
+        prev_hl      = sess_high - sess_low
+        ema_hl_sess := na(ema_hl_sess) ? prev_hl : ema_hl_sess + (2.0/21.0) * (prev_hl - ema_hl_sess)
+    sess_high := na
+    sess_low  := na
+
+if in_session
+    sess_high := na(sess_high) ? high : math.max(sess_high, high)
+    sess_low  := na(sess_low)  ? low  : math.min(sess_low,  low)
+
+// ============================================================
+// Entry Condition（每日至多一次）
+// ============================================================
+// 多空各自一組旗標：同一日多空最多各進一次（不互斥，可能兩邊都出現）
+var bool  long_done  = false
+var bool  short_done = false
+var float entry_px   = na    // 最近一次進場價（多空共用，供 alert 取值）
+var float stop_px    = na
+
+if entering_or
+    long_done  := false
+    short_done := false
+    entry_px   := na
+    stop_px    := na
+
+base_can_enter = or_done and in_entry_win and not na(ema_hl_sess) and not na(or_high) and not na(or_low)
+long_signal    = ent_long  and base_can_enter and not long_done  and close > or_high
+short_signal   = ent_short and base_can_enter and not short_done and close < or_low
+
+if long_signal
+    long_done := true
+    entry_px  := close
+    stop_px   := close - sl_fraction * ema_hl_sess          // 多單停損在下方
+else if short_signal
+    short_done := true
+    entry_px   := close
+    stop_px    := close + sl_fraction * ema_hl_sess         // 空單停損在上方
+
+// ============================================================
+// 進場標記（▲ 多進 / ▼ 空進 + 進場價 + 停損價/風險點數）+ 停損線
+// ============================================================
+var label[] ent_lbls = array.new<label>()
+var line[]  stop_lns = array.new<line>()
+int ENT_MAX = 60
+
+f_entry(px, stop, isLong) =>
+    risk = math.round(math.abs(px - stop))
+    col  = isLong ? col_bull : col_bear
+    if show_entry_lbl
+        txt = (isLong ? "▲ 多進 " : "▼ 空進 ") + str.tostring(math.round(px)) +
+              "\nSL " + str.tostring(math.round(stop)) + "（風險 " + str.tostring(risk) + " 點）"
+        lb = label.new(bar_index, isLong ? low : high, txt, xloc=xloc.bar_index, yloc=yloc.price,
+             style=isLong ? label.style_label_up : label.style_label_down,
+             color=col, textcolor=col_white, size=size.small)
+        array.push(ent_lbls, lb)
+        if array.size(ent_lbls) > ENT_MAX
+            label.delete(array.shift(ent_lbls))
+    if show_stop_line
+        ln = line.new(bar_index, stop, bar_index + 12, stop, xloc=xloc.bar_index,
+             color=color.new(col, 10), style=line.style_solid, width=2)
+        array.push(stop_lns, ln)
+        if array.size(stop_lns) > ENT_MAX
+            line.delete(array.shift(stop_lns))
+
+if long_signal
+    f_entry(entry_px, stop_px, true)
+if short_signal
+    f_entry(entry_px, stop_px, false)
+
+// ============================================================
+// OR% Label + 濾網診斷
+// ============================================================
+var label live_lbl = na
+
+or_pct_ok = not na(or_high) and not na(or_low) and not na(day_open) and day_open > 0
+
+if show_or_pct and in_or_window and or_pct_ok
+    live_pct = (or_high - or_low) / day_open * 100
+    label.delete(live_lbl)
+    live_lbl := label.new(bar_index, or_high,
+        str.format("OR {0,number,#.##}%…", live_pct),
+        style=label.style_label_down, size=size.small,
+        color=color.new(color.yellow, 40), textcolor=color.black)
+
+if leaving_or and or_pct_ok
+    label.delete(live_lbl)   // 一律清掉即時 label（避免關閉開關後殘留）
+    if show_or_pct
+        fin_pct = (or_high - or_low) / day_open * 100
+        label.new(bar_index, or_high,
+            str.format("OR {0,number,#.##}%", fin_pct),
+            style=label.style_label_down, size=size.small,
+            color=color.teal, textcolor=color.white)
+
+    if show_diag and not na(ema_hl_sess)
+        label.new(bar_index, or_low,
+            str.format("EmaHL={0,number,#}  SL距離={1,number,#}",
+                ema_hl_sess, sl_fraction * ema_hl_sess),
+            style=label.style_label_up, size=size.tiny,
+            color=color.new(color.black, 30), textcolor=color.white)
+
+// ============================================================
+// Plots
+// ============================================================
+// ── 時段底色 ─────────────────────────────────────────────
+bgcolor(show_bg and in_or_window ? color.new(color.yellow, 88) : na, title="OR 窗口（黃）")
+bgcolor(show_bg and in_entry_win ? color.new(color.blue,   92) : na, title="進場窗口（藍）")
+
+// ── OR 高低線（OR 窗口 + 進場窗口，進場窗口結束後隱藏）──
+show_or_line = show_or and not na(or_high) and (in_or_window or (or_done and in_entry_win))
+plot(show_or_line ? or_high : na, "OR High (Teal)",
+     color=color.teal,   linewidth=2, style=plot.style_linebr)
+plot(show_or_line ? or_low  : na, "OR Low (Orange)",
+     color=color.orange, linewidth=2, style=plot.style_linebr)
+
+// ── 進場箭頭（多=紅 ▲、空=綠 ▼）─────────────────────────
+plotshape(long_signal,
+          title="Entry ▲ 多", style=shape.triangleup,
+          location=location.belowbar, size=size.small,
+          color=col_bull, text="IN", textcolor=col_bull)
+plotshape(short_signal,
+          title="Entry ▼ 空", style=shape.triangledown,
+          location=location.abovebar, size=size.small,
+          color=col_bear, text="IN", textcolor=col_bear)
+
+// ============================================================
+// Alerts
+// ============================================================
+alertcondition(long_signal,  title="ORB Entry 多單", message="ORB Entry TX — 多單進場 ({{ticker}} {{close}})")
+alertcondition(short_signal, title="ORB Entry 空單", message="ORB Entry TX — 空單進場 ({{ticker}} {{close}})")
+if long_signal or short_signal
+    _side = long_signal ? "多單" : "空單"
+    alert("ORB Entry TX " + _side + "進場 價=" + str.tostring(math.round(entry_px)) +
+          " 停損=" + str.tostring(math.round(stop_px)) +
+          "（風險 " + str.tostring(math.round(math.abs(entry_px - stop_px))) + " 點）",
+          alert.freq_once_per_bar)
