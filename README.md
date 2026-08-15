@@ -1,318 +1,181 @@
-# 台指期回測系統
+# futures-backtest
 
-台指期（TX）當沖策略回測系統，從期交所原始 tick 資料到策略回測的完整工具鏈。支援期貨與選擇權（TXO）資料。
+A research toolchain for Taiwan index futures (TX) intraday strategies — raw TAIFEX
+tick archives → DuckDB → backtests, plus a daily automated ETL and a pre-market
+briefing email.
 
-## 前置需求
+**But the system is not the interesting part. The research log is.**
 
-- macOS
-- [asdf](https://asdf-vm.com/)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)（需有 Anthropic API 或 Pro/Max 訂閱）
+> 140 hypotheses tested. **71 rejected.** 4 inconclusive. 52 confirmed.
+> Every one of them is still in this repository, including the ones that failed.
 
-## 安裝
+*繁體中文完整說明（含安裝與操作手冊）→ [README.zh-TW.md](README.zh-TW.md)*
+
+---
+
+## Why the rejections are the point
+
+Working with an LLM makes producing a plausible-looking result nearly free. Write a
+prompt, get a chart, get a number that supports what you already believed. The
+bottleneck in research stops being *generation* and becomes *rejection* — and
+rejection is the part that has no dopamine attached to it.
+
+So the workflow in this repo is built around one rule, enforced before any code runs:
+
+> **Step 1.4 — Invalidation criteria: what result would mean this hypothesis is wrong?**
+> *(must be defined before starting)*
+> — [`.claude/skills/new-hypothesis/SKILL.md`](.claude/skills/new-hypothesis/SKILL.md)
+
+You write down what would falsify the idea *first*. Then exploration runs. Then a
+GATE decision — and the backtest skill refuses to run on a hypothesis that has not
+passed its GATE. The result is `research/archive/rejected/`: 71 directories of ideas
+that looked good in my head and did not survive contact with the data.
+
+That ratio — 71 rejected to 52 confirmed — is the number I would want a reviewer to
+look at. A research log with no failures in it is not a research log.
+
+## The research loop
+
+Six [Claude Code skills](.claude/skills/) implement the lifecycle. Each one writes to
+the filesystem, so the state of every hypothesis is a directory you can read, diff and
+review — not conversation history.
+
+```
+  /new-hypothesis   →  research/active/HXXX-name/
+                       proposal.md  ← intuition, testable claim, INVALIDATION CRITERIA
+                       tasks.md
+                              │
+  /explore          →  Phase 1: distribution study on historical data
+                       distribution.md + GATE verdict
+                              │
+                       ┌──────┴──────┐
+                    GATE fail     GATE pass
+                       │              │
+                       │       /backtest  →  Phase 2: walk-forward, parameter
+                       │                     sensitivity, drawdown, losing streaks
+                       │                     backtest.md + Verdict
+                       │              │
+  /archive          ←──┴──────────────┘
+        │
+        ├─ research/archive/confirmed/      (52)  ──/ship──→  strategies/live/  (4)
+        ├─ research/archive/rejected/       (71)                     │
+        └─ research/archive/inconclusive/    (4)                     ↓
+                                                     indicators/tradingview/*.pine (14)
+  /status  →  overview of everything in flight
+```
+
+Rules the skills enforce, not just suggest:
+
+- Invalidation criteria must exist before Phase 1 starts.
+- No backtest without a passing GATE.
+- Every numeric conclusion must carry its sample size.
+- Parameter optimisation requires out-of-sample validation before `Confirmed`.
+- Exploration and backtest scripts are committed alongside the write-up — a result
+  you cannot re-run is not a result.
+
+## What you can run right now
+
+Market data is not in this repository (it is ~27 GB and belongs to the exchanges).
+The test suite deliberately does not need any of it:
 
 ```bash
-# 1. Clone 專案
-git clone <your-repo-url>
-cd futures_backtest
-
-# 2. 安裝 Python 與 uv（透過 asdf）
-asdf plugin add python
-asdf plugin add uv
-asdf install  # 自動讀取 .tool-versions
-
-# 3. 安裝依賴
+asdf install        # Python 3.14.3t + uv, pinned in .tool-versions
 uv sync
+uv run pytest       # 197 tests, no market data required
 ```
 
-`.tool-versions` 鎖定版本：
-```
-python 3.14.3t
-uv 0.10.7
-```
+All fixtures are synthesised in [`tests/synthetic.py`](tests/synthetic.py). The tests
+worth reading first:
 
-## 專案結構
-
-```
-futures_backtest/
-├── CLAUDE.md              ← Claude Code 的專案說明
-├── README.md
-├── pyproject.toml
-├── .tool-versions         ← asdf 版本鎖定
-├── data/
-│   ├── raw/               ← 期貨 zip 檔（依年份分目錄）
-│   │   ├── 2021/
-│   │   │   └── Daily_2021_MM_DD.zip
-│   │   ├── 2022/ ...
-│   │   └── 2026/
-│   ├── raw_options/       ← 選擇權 zip 檔（依年份分目錄）
-│   │   ├── 2025/
-│   │   │   └── OptionsDaily_2025_MM_DD.zip
-│   │   └── 2026/
-│   └── futures.duckdb     ← 自動產生，勿納入版控
-├── src/
-│   ├── etl/                     ← 資料下載與處理（詳見 CLAUDE.md「ETL 執行順序」）
-│   │   ├── download.py / download_options.py ← 下載期貨 / 選擇權每日 zip
-│   │   ├── daily_update.py     ← 一鍵更新（下載 + 全 ETL，Step 0–10）
-│   │   ├── parse_rpt.py / parse_options_rpt.py ← zip/rpt → ticks / ticks_options
-│   │   ├── build_1m.py         ← ticks → ohlcv_1m（1分K）
-│   │   ├── build_continuous.py ← Panama 換倉調整
-│   │   ├── build_aux_futures.py ← raw zip → aux_futures_1m（NYF=0050期）
-│   │   ├── download_stock_market.py / parse_stock_market.py ← TWSE/TPEX → market_breadth + stock_day
-│   │   ├── download_taiex.py / build_vixtwn.py ← TAIEX 指數 / 台灣 VIX
-│   │   ├── download_margin.py / parse_margin.py ← 融資餘額
-│   │   ├── download_econ.py / parse_econ.py ← 景氣對策信號
-│   │   ├── build_indicators.py ← 合成 fg-composite indicators.csv
-│   │   ├── download_stock_min.py / load_stock_min.py ← 個股分K（parquet 落地 → stock_min 表，DCI 校準）
-│   │   └── validate.py         ← 資料正確性驗證
-│   ├── strategies/              ← 回測用策略類別（orb / reversal / exhaustion / est_hl 系列…）
-│   ├── analysis/                ← 早盤簡報、關鍵價格、VIX regime、廣度溫度計、fg-composite 監控
-│   ├── backtest/
-│   │   ├── runner.py            ← 資料載入、TrendMA/ADX 計算
-│   │   ├── estimate_hl.py       ← EstRange 計算（volume-weighted estimated range）
-│   │   ├── backtest_estrange_options.py ← EstRange 選擇權 Credit Spread 回測
-│   │   ├── optimize*.py / explore_*.py ← 各階段優化 / 探索性分析
-│   │   ├── analyze.py           ← 交易紀錄分析
-│   │   └── summary_all.py       ← 所有策略跨年度比較總表
-│   └── chart_ui/                ← 行情瀏覽 app（FastAPI + lightweight-charts，uv run chart-ui）
-│       ├── routes/             ← kline / lists / daystats / extension / risklevels / swing_legs / l2_pullback / estrange
-│       └── services/           ← kline_loader / extension / futures_extension / dci_daily / risklevels …
-├── indicators/
-│   ├── tradingview/             ← TradingView Pine Script 指標（est_range / orb / reversal / swing_levels …）
-│   └── xq/                      ← XQ 全球贏家指標
-├── strategies/live/             ← Confirmed 策略（S001-esthl, S002-reversal, S004-fg-composite）
-├── strategies/retired/          ← 退役策略（S003-exhaustion, S005-l2-pullback）
-├── research/                    ← 假設驅動研究記錄（active / archive）
-├── output/                      ← 回測結果 CSV、分析報告（勿納入版控）
-└── notebooks/                   ← Jupyter 探索分析
-```
-
-## 資料格式
-
-### 期貨（TX）
-
-期交所每日 zip 檔，解壓後為 `.rpt`（CSV 格式）：
-
-```
-成交日期,商品代號,到期月份(週別),成交時間,成交價格,成交數量(B+S),近月價格,遠月價格,開盤集合競價
-20251231,TX     ,202601     ,084530,23150,2,-,-,
-```
-
-- 每個 zip 對應一個日曆日（含非交易日，非交易日為 HTML 頁面，自動跳過）
-- 價差合約（合約代號含 `/`）自動過濾
-
-### 選擇權（TXO）
-
-選擇權 zip 檔格式類似，額外包含履約價格與買賣權別：
-
-```
-成交日期,商品代號,履約價格,到期月份(週別),買賣權別,成交時間,成交價格,成交數量(B or S),開盤集合競價
-20260105,TXO    ,23000,202601     ,P,090703,3.1,1,
-```
-
-- 僅匯入 TXO（台指選擇權），過濾 Flex 合約（含 `F`）
-- 合約代號：`202601` = 月選，`202601W1` = 週選
-
-## 快速開始
-
-### 1. 下載初始資料
-
-> **注意**：期交所網站只保留最近 **30 個交易日**的資料。超過 30 天的歷史資料可從以下 Google Drive 取得：
->
-> - [台指期貨（TX）](https://drive.google.com/drive/folders/1mLvxQdqEQUty9EOeUQ33BoQcqxToM-SE) — 下載後放入 `data/raw/<年份>/`
-> - [台指選擇權（TXO）](https://drive.google.com/drive/folders/13IRRQqYpsQ8Au-X0XAjOaPrxgGlKHx0n) — 下載後放入 `data/raw_options/<年份>/`
-
-```bash
-# 自動下載（期交所通常於 18:30 前更新當日資料）
-uv run python src/etl/download.py
-
-# 或指定範圍
-uv run python src/etl/download.py --start 2025-01-01 --end 2025-12-31
-```
-
-### 2. 建立資料庫
-
-```bash
-# 期貨資料
-uv run python src/etl/parse_rpt.py        # zip/rpt → ticks
-uv run python src/etl/build_1m.py         # ticks → 1分K
-uv run python src/etl/build_continuous.py # Panama 換倉調整
-uv run python src/etl/validate.py         # 驗證
-
-# 選擇權資料（需先將 zip 放入 data/raw_options/）
-uv run python src/etl/parse_options_rpt.py # zip/rpt → ticks_options
-```
-
-### 3. 用 Claude Code 開發策略
-
-```bash
-claude
-
-# 範例對話：
-# > 幫我寫一個策略：日盤開盤後30分鐘內突破高低點就進場，
-# >   用15分鐘K的ATR當停損，收盤前5分鐘強制平倉。
-# >   回測近2年的TX資料。
-```
-
-## 每日更新資料
-
-`daily_update.py` 是一鍵 pipeline，除期貨 / 選擇權外，也會更新 TWSE/TPEX 廣度、TAIEX、台灣 VIX、融資餘額、景氣信號與 fg-composite 指標（輔助資料源失敗為 warn-only，不中斷）。各 step 對照表見 `CLAUDE.md`。
-
-```bash
-# 一鍵更新：自動下載最新 zip + 跑完整 ETL（Step 0–10）
-uv run python src/etl/daily_update.py
-
-# 只下載，不跑 ETL
-uv run python src/etl/download.py
-
-# 已有 zip，只跑 ETL
-uv run python src/etl/daily_update.py --skip-download
-
-# 跳過驗證加速
-uv run python src/etl/daily_update.py --skip-validate
-```
-
-### 設定自動排程（macOS launchd）
-
-建立 `~/Library/LaunchAgents/com.futures-backtest.daily-update.plist`，每天 18:30 自動執行：
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.futures-backtest.daily-update</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/YOUR_NAME/.asdf/shims/uv</string>
-        <string>run</string>
-        <string>python</string>
-        <string>src/etl/daily_update.py</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>/Users/YOUR_NAME/Projects/futures_backtest</string>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key><integer>18</integer>
-        <key>Minute</key><integer>30</integer>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>/Users/YOUR_NAME/Projects/futures_backtest/logs/daily_update.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/YOUR_NAME/Projects/futures_backtest/logs/daily_update.err</string>
-    <key>RunAtLoad</key><false/>
-</dict>
-</plist>
-```
-
-載入排程：
-
-```bash
-mkdir -p logs
-launchctl load ~/Library/LaunchAgents/com.futures-backtest.daily-update.plist
-```
-
-## 常用查詢
-
-```python
-import duckdb
-
-conn = duckdb.connect("data/futures.duckdb")
-
-# 拉取 1 分 K（含 Panama 調整後的連續合約價格）
-df_1m = conn.execute("""
-    SELECT timestamp, open, high, low, close, adj_close, volume
-    FROM ohlcv_1m
-    WHERE symbol = 'TX' AND timestamp >= '2024-01-01'
-    ORDER BY timestamp
-""").df()
-
-# 合成 15 分 K
-df_15m = df_1m.resample('15min', on='timestamp').agg({
-    'open': 'first', 'high': 'max',
-    'low': 'min', 'close': 'last',
-    'adj_close': 'last', 'volume': 'sum'
-}).dropna()
-
-# 查換倉紀錄
-conn.execute("""
-    SELECT * FROM rollover_log WHERE symbol = 'TX' ORDER BY rollover_date
-""").df()
-```
-
-## 資料說明
-
-| 表 | 說明 |
+| File | What it pins down |
 |---|---|
-| `ticks` | 期貨原始 tick，single source of truth |
-| `ohlcv_1m` | 1分K，日盤 08:45~13:45，含 `adj_close` |
-| `rollover_log` | 每月換倉記錄，Panama 價差 |
-| `ticks_options` | 選擇權原始 tick（TXO），含履約價、買賣權別 |
-| `aux_futures_1m` | 輔助期貨 1 分K（NYF=0050ETF期等），chart-ui 盤前延伸力用 |
-| `market_breadth` / `stock_day` | TWSE/TPEX 大盤廣度 + 全市場個股日 OHLCV |
-| `top_lists` / `concentration_index` | 月度成交前 20 + 集中度寬表（H080） |
-| `taiex_day` / `vixtwn` | 加權指數日線 / 台灣 VIX |
-| `margin_balance` / `econ_signal` | 融資餘額 / 景氣對策信號 |
-| `stock_min` | 全市場個股分K（FinMind，DCI 盤中校準用，獨立兩步 ETL） |
+| [`tests/test_lookahead.py`](tests/test_lookahead.py) | **Look-ahead detection.** Perturbs every bar *after* a decision point and asserts the feature value at that point does not move. Also checks feature *semantics* — whether a "10-day moving average" is really 10 days. |
+| [`tests/test_pipeline_invariants.py`](tests/test_pipeline_invariants.py) | Contracts that are otherwise only comments: indicators must be computed on full history *before* date filtering; warm-up must be `NaN` and never `0`; OHLC columns must not be positionally swapped. |
+| [`tests/test_orb_long_rules.py`](tests/test_orb_long_rules.py) | Entry/exit rules driven through the real engine on synthetic days. Verified by mutation testing — eight strategy parameters were perturbed and every mutation was caught. |
+| [`tests/test_runner_pure.py`](tests/test_runner_pure.py) | Settlement-date arithmetic, Wilder smoothing, volume adjustment. |
 
-> `taiex_day` / `vixtwn` / `margin_balance` / `econ_signal` 共同支撐 fg-composite（S004）市場情緒綜合指標。
+Two tests are marked `xfail(strict=True)`. They assert the *correct* behaviour for
+known defects (see below); when a defect is fixed they turn into `XPASS` and fail the
+build, which is the reminder to remove the marker.
 
-- `adj_close`：Panama backward adjustment，最新合約價格不調整，歷史往前遞增調整
-- `adjustment`：累計調整量（`adj_close = close + adjustment`）
-- `is_rollover`：換倉日當天的 K 棒標記為 `TRUE`
+The backtest engine itself is [backtesting.py](https://github.com/kernc/backtesting.py) —
+a third-party library. What is tested here is the layer this repo owns: the features
+fed into it, and the strategy rules built on top.
 
-## 選擇權策略回測
+## Known gaps
 
-### EstRange Credit Spread
+Listed because a repository that claims to be about honest research should be honest
+about itself.
 
-基於 EstRange（Volume-Weighted Estimated Range）的選擇權賣方策略：
+1. **`_compute_daily_adx` has look-ahead.** Day *D*'s ADX is computed from day *D*'s
+   full-session high/low, but the strategy reads it at 09:30 while the session is
+   still running. The ADX filter is disabled by default (`adx_period=0`), so no live
+   strategy is affected. Pinned by an `xfail` test; the fix is a one-line `.shift(1)`.
+   Notably, an earlier study found ADX had no predictive value here — a filter that
+   could see the future still found no edge, which strengthens that conclusion.
+2. **`trend_ma_days` does not mean days.** `runner.py` uses
+   `n_bars = trend_ma_days * 301`, where 301 is the *day-session* bar count — but it
+   applies that window to a series that also contains the night session (1,142 bars
+   per trading day). So `trend_ma_days=10` looks back roughly 2.6 trading days. The
+   fallback path inside the strategy uses the same constant *correctly*, so the same
+   parameter means different things depending on how data was loaded. The moving
+   average is still trailing, so no result is invalidated — but the label is wrong.
+3. **The Python ↔ Pine Script translation is unverified.** Confirmed strategies are
+   reimplemented as TradingView indicators for actual execution, in a language that
+   cannot run this backtest. Nothing checks that the two agree. Gap 2 is exactly the
+   kind of thing that breaks in translation.
+4. **The first day of any backtest never trades** — the opening-range indicator is
+   `NaN` before 09:30, and the engine skips leading bars until all indicators are
+   valid. On a short backtest window this silently removes a meaningful share of the
+   sample.
+5. **`end="YYYY-MM-DD"` excludes that whole day**, because it parses to midnight and
+   the session starts at 08:45.
+6. **Test coverage is targeted, not broad.** The feature layer and one strategy's
+   rules are covered. The remaining strategies, the options backtest and the
+   exploration scripts are not.
 
-- 09:30 計算 EstRange，定出 Est High / Est Low
-- 價格碰到一邊後，賣對側 Credit Spread（月選 TXO）
-- 跳過週三（雙邊觸及率高）、12:30 收工
+Gaps 4 and 5 are pinned by tests so they cannot regress silently.
 
-```bash
-# 回測 2026 年
-uv run python src/backtest/backtest_estrange_options.py --start 2026-01-01 --end 2026-03-18
-
-# 自訂參數
-uv run python src/backtest/backtest_estrange_options.py \
-  --fraction 0.70 --spread-pct 0.50 --exit-time 12:30
-```
-
-詳細規格見 `research/archive/confirmed/H008-estrange-options/spec.md`。
-
-## Chart UI（行情瀏覽 app）
-
-```bash
-uv run chart-ui            # 啟動，預設 http://127.0.0.1:8888/
-```
-
-讀 `data/futures.duckdb` 的 `ohlcv_1m`，可瀏覽每日 1 分K。主圖支援關卡（risk levels）觸及標記與 swing levels 高亮；副圖含延伸力（extension）、NYF（0050期）盤前延伸與 VIX regime 盤前判讀。回測腳本可用 `from src.chart_ui.list_writer import write_chart_list_from_backtesting` 輸出自訂清單。
-
-```bash
-./run-chart-ui-tailscale.sh   # 綁 tailscale 對外（自動抓 tailscale ip -4）
-```
-
-## 疑難排解
-
-### DuckDB 資料庫損壞或需要重建
-
-```bash
-rm data/futures.duckdb
-uv run python src/etl/parse_rpt.py
-uv run python src/etl/build_1m.py
-uv run python src/etl/build_continuous.py
-```
-
-### rpt 檔編碼問題
-
-`parse_rpt.py` 會自動嘗試 UTF-8 → Big5 → CP950。
-
-### DuckDB 鎖定錯誤
+## Repository layout
 
 ```
-IO Error: Could not set lock on file "futures.duckdb"
+src/etl/            TAIFEX / TWSE / TPEX / FinMind ingestion → DuckDB
+                    (download → parse → 1-min bars → Panama continuous contract → validate)
+src/backtest/       data loading, feature computation, EstRange, optimisation
+src/strategies/     strategy classes for backtesting.py
+src/analysis/       pre-market briefing, key price levels, VIX regime, breadth thermometer
+src/chart_ui/       FastAPI + lightweight-charts market browser
+
+research/           140 hypotheses — active/ and archive/{confirmed,rejected,inconclusive}
+strategies/live/    4 strategies promoted from confirmed hypotheses
+indicators/         14 TradingView Pine Script indicators (the execution surface)
+tests/              197 tests, synthetic fixtures only
+.claude/skills/     the six research-lifecycle skills
 ```
 
-表示另一個 process 正在使用資料庫。關閉其他連線（如 Jupyter notebook）後重試。
+## Stack
+
+Python 3.14 (free-threaded) · uv · DuckDB · backtesting.py · pandas / numpy ·
+FastAPI + lightweight-charts · matplotlib · Resend · launchd
+
+Data sources: TAIFEX (futures and options tick archives), TWSE / TPEX (market breadth,
+daily equity bars), FinMind (index and per-symbol minute bars), NDC (business cycle
+indicator). Nothing is redistributed here — everything is fetched at run time.
+
+## A note on language
+
+Code identifiers, test names, directory names and the API surface are English. Prose —
+docstrings, comments, the 140 research write-ups and 576 commit messages — is
+Traditional Chinese, because that is the language I think in while doing this research
+and translating it would have slowed the research down.
+
+If you are evaluating this repository and do not read Chinese, the test suite is the
+most readable entry point: test names state the property being asserted, and the
+assertions themselves are language-neutral.
+
+## Scope
+
+Nothing here is investment advice, and backtested numbers are simulated results that
+exclude costs and slippage. See [LICENSE](LICENSE).
+
+MIT.
