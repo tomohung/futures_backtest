@@ -14,7 +14,7 @@
 - Email 必須 **inline 樣式**（客戶端剝 `<style>`/class）。暗色系沿用 `../trading_spirit/scripts/email_alerts.py`：底 `#111` / 文字 `#e8e8e8` / accent `#d4a574` / 表格等寬 `ui-monospace` / th `#d4a574` 底線。
 - 箭頭上色 **台股漲紅跌綠**：`↑` = `#e06666`、`↓` = `#57bb8a`。
 - 圖表用 Resend **inline attachment**：欄位 `filename` / `content`（base64 字串）/ `content_id`；HTML 端 `<img src="cid:<content_id>">`。
-- Resend 呼叫用 stdlib `urllib`（不加依賴），帶常規 `User-Agent`（Cloudflare 擋預設 python-urllib）。環境變數：`RESEND_API_KEY`（缺則 warn + `return 0`）、`ALERT_EMAIL_TO`（預設 `tomohung@gmail.com`）、`ALERT_EMAIL_FROM`（預設 `onboarding@resend.dev`）。
+- Resend 呼叫用 stdlib `urllib`（不加依賴），帶常規 `User-Agent`（Cloudflare 擋預設 python-urllib）。環境變數：`RESEND_API_KEY`（缺則 warn + `return 0`）、`ALERT_EMAIL_TO`（預設 `you@example.com`）、`ALERT_EMAIL_FROM`（預設 `onboarding@resend.dev`）。
 - `from src.analysis... import ...` 在 `uv run` 下可用（`packages = ["src"]` 已安裝）。
 - 測試放 `tests/`，pytest class/function 皆可；renderer 為純函式免 DB。
 - 分析腳本 stdout 需濾掉雜訊行（含「圖表已儲存」「已複製到剪貼簿」「已儲存」者）。
@@ -401,7 +401,7 @@ Create `src/analysis/email_briefing.py`:
 
 環境變數：
   RESEND_API_KEY   必填，缺則 warn + exit 0（不擋 pipeline）
-  ALERT_EMAIL_TO   收件人，預設 tomohung@gmail.com
+  ALERT_EMAIL_TO   收件人，必填，無預設值
   ALERT_EMAIL_FROM 寄件人，預設 onboarding@resend.dev
 """
 from __future__ import annotations
@@ -503,7 +503,7 @@ def send(html: str, attachments: list[dict], target: str) -> int:
 
     payload = {
         "from": os.environ.get("ALERT_EMAIL_FROM", "onboarding@resend.dev"),
-        "to": os.environ.get("ALERT_EMAIL_TO", "tomohung@gmail.com"),
+        "to": os.environ["ALERT_EMAIL_TO"],
         "subject": f"[台指早盤] {target} 關鍵價格簡報",
         "html": html,
     }
@@ -615,7 +615,7 @@ Expected: 無輸出（語法 OK）
 - [ ] **Step 3: 手動端到端驗證（真的寄一封）**
 
 Run: `uv run python src/analysis/email_briefing.py --skip-update`
-Expected: 終端印 `✓ 已寄出早盤簡報 → tomohung@gmail.com (...)`；信箱收到一封含文字表格 + 4 張圖的暗色 email。
+Expected: 終端印 `✓ 已寄出早盤簡報 → you@example.com (...)`；信箱收到一封含文字表格 + 4 張圖的暗色 email。
 （若印 `⚠ RESEND_API_KEY 未設定` 表示該 shell 沒帶 key——`RESEND` 已在互動 shell env，直接跑即可；launchd 環境另由 Step 4 補。）
 
 - [ ] **Step 4: 在 plist 補 RESEND_API_KEY（launchd 環境看不到互動 shell env）**

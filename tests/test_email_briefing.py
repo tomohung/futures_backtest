@@ -1,6 +1,7 @@
 """Tests for email_briefing orchestration (no real subprocess / no real send)."""
 import base64
 import io
+import json
 import types
 import urllib.error
 
@@ -90,8 +91,54 @@ def test_send_skips_without_api_key(monkeypatch):
     assert called["urlopen"] is False
 
 
+def test_send_skips_without_recipient(monkeypatch):
+    """ALERT_EMAIL_TO 未設定時跳過寄信，不得回退到任何硬編碼收件人。
+
+    這裡曾經寫死作者的個人信箱當預設值。這條測試釘住「必填」語意，
+    避免日後為了方便又加回 default。
+    """
+    monkeypatch.setenv("RESEND_API_KEY", "fake-key")
+    monkeypatch.delenv("ALERT_EMAIL_TO", raising=False)
+    called = {"urlopen": False}
+    monkeypatch.setattr(eb.urllib.request, "urlopen",
+                        lambda *a, **k: called.__setitem__("urlopen", True))
+
+    rc = eb.send("<div>x</div>", [], "2026-07-24")
+
+    assert rc == 0
+    assert called["urlopen"] is False
+
+
+def test_send_uses_configured_recipient(monkeypatch):
+    """收件人完全來自 ALERT_EMAIL_TO。"""
+    monkeypatch.setenv("RESEND_API_KEY", "fake-key")
+    monkeypatch.setenv("ALERT_EMAIL_TO", "someone@example.com")
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"id":"abc"}'
+
+    def capture(req, *a, **k):
+        captured["payload"] = json.loads(req.data.decode())
+        return FakeResponse()
+
+    monkeypatch.setattr(eb.urllib.request, "urlopen", capture)
+
+    eb.send("<div>x</div>", [], "2026-07-24")
+
+    assert captured["payload"]["to"] == "someone@example.com"
+
+
 def test_send_returns_0_on_success(monkeypatch):
     monkeypatch.setenv("RESEND_API_KEY", "fake-key")
+    monkeypatch.setenv("ALERT_EMAIL_TO", "someone@example.com")
     called = {"urlopen": False}
 
     class FakeResponse:
@@ -115,6 +162,7 @@ def test_send_returns_0_on_success(monkeypatch):
 
 def test_send_returns_1_on_http_error(monkeypatch):
     monkeypatch.setenv("RESEND_API_KEY", "fake-key")
+    monkeypatch.setenv("ALERT_EMAIL_TO", "someone@example.com")
 
     def raise_http_error(*a, **k):
         raise urllib.error.HTTPError(
@@ -134,6 +182,7 @@ def test_send_returns_1_on_http_error(monkeypatch):
 
 def test_send_returns_1_on_url_error(monkeypatch):
     monkeypatch.setenv("RESEND_API_KEY", "fake-key")
+    monkeypatch.setenv("ALERT_EMAIL_TO", "someone@example.com")
 
     def raise_url_error(*a, **k):
         raise urllib.error.URLError("no route")

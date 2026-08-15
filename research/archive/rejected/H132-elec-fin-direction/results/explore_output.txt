@@ -60,4 +60,4 @@
   剔除 2025 後: dir t=+2.01 (N=366) spread=+0.18%
 
 每日 long-short（dir20 持1日）年化 Sharpe≈0.72
-圖：/Users/tomohung/Projects/futures_backtest/research/active/H132-elec-fin-direction/results/h132_stability.png
+圖：research/active/H132-elec-fin-direction/results/h132_stability.png

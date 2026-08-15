@@ -55,7 +55,7 @@
 3. 收集 4 張圖（存在才收）：`output/sr_chart.png`、`output/30m_chart.png`、`output/daily_range.png`、`output/breadth_thermometer.png`。
 4. 用 `md_to_email_html.render()` 把各段 markdown 轉 HTML，組成完整 HTML doc，每段文字後插入該段的 `<img src="cid:...">`。
 5. 用 Resend urllib pattern 送出（複製 reference）：
-   - 環境變數：`RESEND_API_KEY`（必填，缺則 warn + exit 0）、`ALERT_EMAIL_TO`（預設 `tomohung@gmail.com`）、`ALERT_EMAIL_FROM`（預設 `onboarding@resend.dev`）。**複用同一把 Resend key**。
+   - 環境變數：`RESEND_API_KEY`（必填，缺則 warn + exit 0）、`ALERT_EMAIL_TO`（預設 `you@example.com`）、`ALERT_EMAIL_FROM`（預設 `onboarding@resend.dev`）。**複用同一把 Resend key**。
    - 圖以 `content_id` inline attachment 送：`attachments: [{filename, content: <base64>, content_id}]`，HTML 端 `<img src="cid:<content_id>">`。（已查證 Resend 支援：欄位 `content`/`filename`/`content_type`/`content_id`。）
    - Header 帶常規 `User-Agent`（Cloudflare 會擋預設 python-urllib）。
    - 錯誤處理：HTTPError / URLError 印警告回非 0，但不丟例外中斷。

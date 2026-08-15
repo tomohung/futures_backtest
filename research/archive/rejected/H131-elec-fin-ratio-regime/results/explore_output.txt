@@ -87,4 +87,4 @@
      K=10: 電子領先 median=+0.82% (N=217) | 金融領先 median=+0.46% (N=173)
      K=20: 電子領先 median=+1.67% (N=109) | 金融領先 median=+0.80% (N=86)
 
-圖：/Users/tomohung/Projects/futures_backtest/research/active/H131-elec-fin-ratio-regime/results/ratioER_vs_fwdER.png
+圖：research/active/H131-elec-fin-ratio-regime/results/ratioER_vs_fwdER.png

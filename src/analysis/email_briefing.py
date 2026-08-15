@@ -7,7 +7,7 @@
 
 環境變數：
   RESEND_API_KEY   必填，缺則 warn + exit 0（不擋 pipeline）
-  ALERT_EMAIL_TO   收件人，預設 tomohung@gmail.com
+  ALERT_EMAIL_TO   必填，收件人。缺則 warn + exit 0（與 API key 同樣處理）
   ALERT_EMAIL_FROM 寄件人，預設 onboarding@resend.dev
 """
 from __future__ import annotations
@@ -122,9 +122,14 @@ def send(html: str, attachments: list[dict], target: str) -> int:
         print("⚠ RESEND_API_KEY 未設定，跳過寄信", file=sys.stderr)
         return 0
 
+    recipient = os.environ.get("ALERT_EMAIL_TO")
+    if not recipient:
+        print("⚠ ALERT_EMAIL_TO 未設定，跳過寄信", file=sys.stderr)
+        return 0
+
     payload = {
         "from": os.environ.get("ALERT_EMAIL_FROM", "onboarding@resend.dev"),
-        "to": os.environ.get("ALERT_EMAIL_TO", "tomohung@gmail.com"),
+        "to": recipient,
         "subject": f"[台指早盤] {target} 關鍵價格簡報",
         "html": html,
     }

@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd 排程模板。以雙底線包住的大寫佔位符由 deploy/deploy.sh 在安裝時替換，
+  替換後的複本只寫進 ~/Library/LaunchAgents，不進版控。
+  （此註解刻意不寫出佔位符字面形式，否則會誤觸 deploy.sh 的殘留檢查。）
+
+  launchd 的 plist 值不做 shell 展開，因此路徑必須是絕對路徑，
+  由 deploy.sh 用當下環境的 $HOME 與專案位置填入。
+-->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -7,14 +15,13 @@
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>HOME</key>
-		<string>/Users/tomohung</string>
+		<string>__HOME__</string>
 		<key>LANG</key>
 		<string>en_US.UTF-8</string>
 		<key>PATH</key>
-		<string>/Users/tomohung/.asdf/shims:/Users/tomohung/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>__HOME__/.asdf/shims:__HOME__/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 		<key>FINMIND_API_KEY</key>
-		<string>eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wNC0wOSAyMDowODoxNSIsInVzZXJfaWQiOiJ0b21vaHVuZyIsImVtYWlsIjoidG9tb2h1bmdAZ21haWwuY29tIiwiaXAiOiIxLjE3MS42NC4yMDMifQ.5aiu36M0M1dvn7uhAaUQyTMVNL1QIeIv8q1eyIIfgsU</string>
-		<!-- 部署時以真實金鑰替換此佔位符（見 deploy/deploy.sh）；佔位符不進版控歷史 -->
+		<string>__FINMIND_API_KEY__</string>
 		<key>RESEND_API_KEY</key>
 		<string>__RESEND_API_KEY__</string>
 	</dict>
@@ -24,14 +31,14 @@
 	<array>
 		<string>/bin/bash</string>
 		<string>-c</string>
-		<string>cd /Users/tomohung/Projects/futures_backtest &amp;&amp; bash run-daily-update.sh</string>
+		<string>cd __PROJECT_DIR__ &amp;&amp; bash run-daily-update.sh</string>
 	</array>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>StandardOutPath</key>
-	<string>/Users/tomohung/Projects/futures_backtest/logs/launchd/daily.log</string>
+	<string>__PROJECT_DIR__/logs/launchd/daily.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/tomohung/Projects/futures_backtest/logs/launchd/daily.log</string>
+	<string>__PROJECT_DIR__/logs/launchd/daily.log</string>
 	<key>StartCalendarInterval</key>
 	<array>
 		<dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>0</integer></dict>
