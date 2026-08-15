@@ -104,37 +104,32 @@ fed into it, and the strategy rules built on top.
 
 ## Known gaps
 
-Listed because a repository that claims to be about honest research should be honest
-about itself.
+Writing the tests above found two real bugs in code that had been producing results
+for months. Both are the kind that never raise an error — they just quietly make the
+numbers different:
 
-1. **`_compute_daily_adx` has look-ahead.** Day *D*'s ADX is computed from day *D*'s
-   full-session high/low, but the strategy reads it at 09:30 while the session is
-   still running. The ADX filter is disabled by default (`adx_period=0`), so no live
-   strategy is affected. Pinned by an `xfail` test; the fix is a one-line `.shift(1)`.
-   Notably, an earlier study found ADX had no predictive value here — a filter that
-   could see the future still found no edge, which strengthens that conclusion.
-2. **`trend_ma_days` does not mean days.** `runner.py` uses
-   `n_bars = trend_ma_days * 301`, where 301 is the *day-session* bar count — but it
-   applies that window to a series that also contains the night session (1,142 bars
-   per trading day). So `trend_ma_days=10` looks back roughly 2.6 trading days. The
-   fallback path inside the strategy uses the same constant *correctly*, so the same
-   parameter means different things depending on how data was loaded. The moving
-   average is still trailing, so no result is invalidated — but the label is wrong.
-3. **The Python ↔ Pine Script translation is unverified.** Confirmed strategies are
-   reimplemented as TradingView indicators for actual execution, in a language that
-   cannot run this backtest. Nothing checks that the two agree. Gap 2 is exactly the
-   kind of thing that breaks in translation.
-4. **The first day of any backtest never trades** — the opening-range indicator is
-   `NaN` before 09:30, and the engine skips leading bars until all indicators are
-   valid. On a short backtest window this silently removes a meaningful share of the
-   sample.
-5. **`end="YYYY-MM-DD"` excludes that whole day**, because it parses to midnight and
-   the session starts at 08:45.
-6. **Test coverage is targeted, not broad.** The feature layer and one strategy's
-   rules are covered. The remaining strategies, the options backtest and the
-   exploration scripts are not.
+- **A filter reads a value that depends on data from later in the same day.** It is
+  disabled by default, so no live strategy is affected.
+- **A parameter named in days spans a different window than its name implies** — and
+  means two different things depending on how the data was loaded.
 
-Gaps 4 and 5 are pinned by tests so they cannot regress silently.
+Neither is fixed yet, because fixing them changes signals and invalidates existing
+backtests. Both are pinned by `xfail(strict=True)` tests that assert the *correct*
+behaviour: when someone fixes the bug, the test starts passing, strict mode fails the
+build, and that is the reminder to update everything downstream. Full write-ups are in
+[`tests/test_lookahead.py`](tests/test_lookahead.py).
+
+Three more, listed because a repo about honest research should be honest about itself:
+
+- **The Python research and the Pine Script execution are not verified to agree.**
+  Confirmed strategies get reimplemented as TradingView indicators — the language they
+  actually run in, which cannot execute this backtest. Nothing checks the two match.
+  This is the largest untested surface in the project.
+- **Two engine behaviours silently shrink results**: the first day of any backtest
+  never trades, and an end date excludes its own day. Now pinned by tests.
+- **Coverage is targeted, not broad** — the feature layer and one strategy's rules.
+  The other strategies, the options backtest and the exploration scripts are not
+  covered.
 
 ## Repository layout
 
