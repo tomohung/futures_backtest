@@ -29,6 +29,18 @@
 
 71 否決比 52 確認——這是我希望讀者看的數字。**一份沒有失敗紀錄的研究記錄，不是研究記錄。**
 
+挑三個，看看實際長什麼樣：
+
+- [**H041** — 否決](research/archive/rejected/H041-reversal-skip-after-breakout/summary.md)。
+  我很確定這些日子是壞交易的來源，想把它們濾掉。結果它們是**表現比較好**的日子
+  （勝率 50% vs 43%）。假設不是被修正，是被反轉。
+- [**H083** — 正式研究還沒開始就否決](research/archive/rejected/H083-lagged-concentration-vol-prediction/summary.md)。
+  兩支探索腳本就已經提供決定性證據，Phase 1 從未執行。GATE 的作用是**及早停損**，
+  不只是事後評分。
+- [**H008** — 確認](research/archive/confirmed/H008-estrange-options/summary.md)，
+  而且結論裡自己記錄了：修正出場定價之後，PF 從 23.3 降到 1.70。
+  **確認不等於蓋章放行。**
+
 ## 研究循環
 
 六個 [Claude Code skills](.claude/skills/) 實作整個生命週期。每一步都寫進檔案系統，

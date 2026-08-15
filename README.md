@@ -34,6 +34,19 @@ that looked good in my head and did not survive contact with the data.
 That ratio — 71 rejected to 52 confirmed — is the number I would want a reviewer to
 look at. A research log with no failures in it is not a research log.
 
+Three of them, to show what one actually looks like:
+
+- [**H041** — rejected](research/archive/rejected/H041-reversal-skip-after-breakout/summary.md).
+  I was confident these were the days producing bad trades, and wanted to filter them
+  out. They turned out to be the *better* days (50% win rate versus 43%). The
+  hypothesis was not refined, it was inverted.
+- [**H083** — rejected before the formal study ran](research/archive/rejected/H083-lagged-concentration-vol-prediction/summary.md).
+  Two exploration scripts were decisive enough that Phase 1 was never started. The
+  gate exists to stop work early, not only to grade it afterwards.
+- [**H008** — confirmed](research/archive/confirmed/H008-estrange-options/summary.md),
+  and the write-up records that correcting how exits were priced cut the profit factor
+  from 23.3 to 1.70. A confirmation is not a rubber stamp.
+
 ## The research loop
 
 Six [Claude Code skills](.claude/skills/) implement the lifecycle. Each one writes to
