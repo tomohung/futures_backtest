@@ -6,8 +6,9 @@ briefing email.
 
 **But the system is not the interesting part. The research log is.**
 
-> 140 hypotheses tested. **71 rejected.** 4 inconclusive. 52 confirmed.
-> Every one of them is still in this repository, including the ones that failed.
+> 139 hypotheses. 126 have a verdict: **71 rejected**, 4 inconclusive, 51 confirmed.
+> The other 13 are still open. Every one of them is in this repository, including the
+> ones that failed.
 
 *繁體中文完整說明（含安裝與操作手冊）→ [README.zh-TW.md](README.zh-TW.md)*
 
@@ -50,7 +51,7 @@ Three of them, to show what one actually looks like:
 
 ## The research loop
 
-Six [Claude Code skills](.claude/skills/) implement the lifecycle. Each one writes to
+Five [Claude Code skills](.claude/skills/) implement the lifecycle. Each one writes to
 the filesystem, so the state of every hypothesis is a directory you can read, diff and
 review — not conversation history.
 
@@ -71,7 +72,7 @@ review — not conversation history.
                        │              │
   /archive          ←──┴──────────────┘
         │
-        ├─ research/archive/confirmed/      (52)  ──by hand──→  strategies/live/ (4)
+        ├─ research/archive/confirmed/      (51)  ──by hand──→  strategies/live/ (3)
         ├─ research/archive/rejected/       (71)                       │
         └─ research/archive/inconclusive/    (4)                       ↓
                                                      indicators/tradingview/*.pine (14)
@@ -106,7 +107,7 @@ worth reading first:
 |---|---|
 | [`tests/test_lookahead.py`](tests/test_lookahead.py) | **Look-ahead detection.** Perturbs every bar *after* a decision point and asserts the feature value at that point does not move. Also checks feature *semantics* — whether a "10-day moving average" is really 10 days. |
 | [`tests/test_pipeline_invariants.py`](tests/test_pipeline_invariants.py) | Contracts that are otherwise only comments: indicators must be computed on full history *before* date filtering; warm-up must be `NaN` and never `0`; OHLC columns must not be positionally swapped. |
-| [`tests/test_orb_long_rules.py`](tests/test_orb_long_rules.py) | Entry/exit rules driven through the real engine on synthetic days. Verified by mutation testing — eight strategy parameters were perturbed and every mutation was caught. |
+| [`tests/test_orb_long_rules.py`](tests/test_orb_long_rules.py) | Entry/exit rules driven through the real engine on synthetic days. Checked by hand-mutating each strategy parameter and confirming a test broke — done once while writing them, not wired into CI. |
 | [`tests/test_runner_pure.py`](tests/test_runner_pure.py) | Settlement-date arithmetic, Wilder smoothing, volume adjustment. |
 
 Two tests are marked `xfail(strict=True)`. They assert the *correct* behaviour for
@@ -156,11 +157,11 @@ src/strategies/     strategy classes for backtesting.py
 src/analysis/       pre-market briefing, key price levels, VIX regime, breadth thermometer
 src/chart_ui/       FastAPI + lightweight-charts market browser
 
-research/           140 hypotheses — active/ and archive/{confirmed,rejected,inconclusive}
-strategies/live/    4 strategies promoted from confirmed hypotheses
+research/           139 hypotheses — active/ and archive/{confirmed,rejected,inconclusive}
+strategies/live/    3 live strategies (5 were promoted; 2 are in strategies/retired/)
 indicators/         14 TradingView Pine Script indicators (the execution surface)
 tests/              197 tests, synthetic fixtures only
-.claude/skills/     the six research-lifecycle skills
+.claude/skills/     five research-lifecycle skills, plus /ship (a git helper)
 ```
 
 ## Stack
@@ -174,10 +175,11 @@ indicator). Nothing is redistributed here — everything is fetched at run time.
 
 ## A note on language
 
-Code identifiers, test names, directory names and the API surface are English. Prose —
-docstrings, comments, the 140 research write-ups and 576 commit messages — is
-Traditional Chinese, because that is the language I think in while doing this research
-and translating it would have slowed the research down.
+Code identifiers, test names, directory names and the API surface are English. Most of
+the prose — docstrings, comments, and the research write-ups — is Traditional Chinese,
+because that is the language I think in while doing this research and translating it
+would have slowed the research down. Commit subjects are mixed: of 580 commits, 255
+have Chinese somewhere in the message.
 
 If you are evaluating this repository and do not read Chinese, the test suite is the
 most readable entry point: test names state the property being asserted, and the

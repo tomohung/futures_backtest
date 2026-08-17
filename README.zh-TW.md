@@ -5,8 +5,8 @@
 
 **但系統本身不是重點，研究記錄才是。**
 
-> 測試過 140 個假設。**否決 71 個。** 4 個結論不明。52 個確認。
-> 全部都還在這個 repo 裡，包括失敗的那些。
+> 139 個假設，其中 126 個已有結論：**否決 71 個**、4 個結論不明、51 個確認。
+> 另外 13 個仍在進行中。全部都還在這個 repo 裡，包括失敗的那些。
 
 *English version → [README.md](README.md)*
 
@@ -42,7 +42,7 @@
 
 ## 研究循環
 
-六個 [Claude Code skills](.claude/skills/) 實作整個生命週期。每一步都寫進檔案系統，
+五個 [Claude Code skills](.claude/skills/) 實作整個生命週期。每一步都寫進檔案系統，
 所以任何假設的狀態都是一個可以讀、可以 diff、可以 review 的目錄，而不是對話歷史。
 
 ```
@@ -62,7 +62,7 @@
                        │              │
   /archive          ←──┴──────────────┘
         │
-        ├─ research/archive/confirmed/      (52)  ──人工──→  strategies/live/  (4)
+        ├─ research/archive/confirmed/      (51)  ──人工──→  strategies/live/  (3)
         ├─ research/archive/rejected/       (71)                   │
         └─ research/archive/inconclusive/    (4)                   ↓
                                                      indicators/tradingview/*.pine (14)
@@ -93,7 +93,7 @@ uv run pytest       # 197 個測試，不需要任何市場資料
 |---|---|
 | [`tests/test_lookahead.py`](tests/test_lookahead.py) | **前瞻偏誤偵測。** 擾動決策時點**之後**的所有 bar，斷言該時點的特徵值不變。也檢查特徵**語意**——「10 日均線」是不是真的 10 日。 |
 | [`tests/test_pipeline_invariants.py`](tests/test_pipeline_invariants.py) | 原本只靠註解維持的契約：指標必須在日期篩選**前**用完整歷史計算、暖身期必須是 `NaN` 不能是 `0`、OHLC 欄位不可位置錯位。 |
-| [`tests/test_orb_long_rules.py`](tests/test_orb_long_rules.py) | 用真實引擎跑合成日 K，驗證進出場規則。經突變測試驗證——擾動 8 個策略參數，每一個突變都被抓到。 |
+| [`tests/test_orb_long_rules.py`](tests/test_orb_long_rules.py) | 用真實引擎跑合成日 K，驗證進出場規則。寫測試時逐一手動擾動策略參數，確認每個改動都會弄壞某個測試——只做過一次，沒有接進 CI。 |
 | [`tests/test_runner_pure.py`](tests/test_runner_pure.py) | 結算日推算、Wilder 平滑、結算日量校正。 |
 
 兩個測試標記 `xfail(strict=True)`，斷言的是已知缺陷的**應有行為**；缺陷修好後會變成
@@ -137,11 +137,11 @@ src/strategies/     backtesting.py 用的策略類別
 src/analysis/       早盤簡報、關鍵價格、VIX regime、廣度溫度計、fg-composite 監控
 src/chart_ui/       FastAPI + lightweight-charts 行情瀏覽 app
 
-research/           140 個假設 — active/ 與 archive/{confirmed,rejected,inconclusive}
-strategies/live/    4 支由 confirmed 假設晉升的策略
+research/           139 個假設 — active/ 與 archive/{confirmed,rejected,inconclusive}
+strategies/live/    3 支現行策略（曾晉升 5 支，2 支已移到 strategies/retired/）
 indicators/         14 支 TradingView Pine Script 指標（實際執行面）
 tests/              197 個測試，僅用合成 fixture
-.claude/skills/     六個研究生命週期 skills
+.claude/skills/     五個研究生命週期 skills，外加 /ship（git 輔助）
 ```
 
 ## 技術棧
