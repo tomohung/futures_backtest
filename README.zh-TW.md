@@ -18,16 +18,15 @@
 一個支持你原本就相信的數字。研究的瓶頸於是從**產出**移到了**否決**——而否決是完全
 沒有多巴胺的那一半。
 
-所以這套流程建立在一條規則上，而且在任何程式跑起來之前就強制執行：
+所以這套流程建立在一條規則上，而且要在任何程式跑起來之前就先滿足：
 
 > **Step 1.4 — 無效條件：什麼結果代表假設不成立？（必須在開始前就定義）**
 > — [`.claude/skills/new-hypothesis/SKILL.md`](.claude/skills/new-hypothesis/SKILL.md)
 
-先寫下什麼會推翻這個想法，才開始探索。接著是 GATE 判定——而 `/backtest` skill 會
-拒絕在沒通過 GATE 的假設上執行。結果就是 `research/archive/rejected/`：71 個在我腦中
-很有道理、碰到資料就沒撐過去的想法。
-
-71 否決比 52 確認——這是我希望讀者看的數字。**一份沒有失敗紀錄的研究記錄，不是研究記錄。**
+先寫下什麼會推翻這個想法，才開始探索。接著是 GATE 判定，寫進 `distribution.md`；
+`/backtest` skill 被要求先讀它，沒通過就停下。那是對 agent 的約束，不是編譯錯誤——
+它成立是因為狀態落在一個可以被檢查的檔案裡，而不是因為執行期有東西擋著。結果就是
+`research/archive/rejected/`：71 個在我腦中很有道理、碰到資料就沒撐過去的想法。
 
 挑三個，看看實際長什麼樣：
 
@@ -63,14 +62,14 @@
                        │              │
   /archive          ←──┴──────────────┘
         │
-        ├─ research/archive/confirmed/      (52)  ──/ship──→  strategies/live/  (4)
-        ├─ research/archive/rejected/       (71)                     │
-        └─ research/archive/inconclusive/    (4)                     ↓
+        ├─ research/archive/confirmed/      (52)  ──人工──→  strategies/live/  (4)
+        ├─ research/archive/rejected/       (71)                   │
+        └─ research/archive/inconclusive/    (4)                   ↓
                                                      indicators/tradingview/*.pine (14)
   /status  →  所有進行中假設的總覽
 ```
 
-skills 強制執行（而非建議）的規則：
+寫進 skills 的規則——好處是它們套用在每一個假設上，而不是只套用在我記得要套用的那些：
 
 - 無效條件必須在 Phase 1 開始前就存在
 - 未通過 GATE 不得執行回測

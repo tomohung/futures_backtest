@@ -20,19 +20,20 @@ prompt, get a chart, get a number that supports what you already believed. The
 bottleneck in research stops being *generation* and becomes *rejection* — and
 rejection is the part that has no dopamine attached to it.
 
-So the workflow in this repo is built around one rule, enforced before any code runs:
+So the workflow in this repo is built around one rule, which has to be satisfied
+before any code runs:
 
 > **Step 1.4 — Invalidation criteria: what result would mean this hypothesis is wrong?**
 > *(must be defined before starting)*
 > — [`.claude/skills/new-hypothesis/SKILL.md`](.claude/skills/new-hypothesis/SKILL.md)
 
 You write down what would falsify the idea *first*. Then exploration runs. Then a
-GATE decision — and the backtest skill refuses to run on a hypothesis that has not
-passed its GATE. The result is `research/archive/rejected/`: 71 directories of ideas
-that looked good in my head and did not survive contact with the data.
-
-That ratio — 71 rejected to 52 confirmed — is the number I would want a reviewer to
-look at. A research log with no failures in it is not a research log.
+GATE decision, recorded in `distribution.md`, which the backtest skill is instructed
+to read and refuse to proceed without. That is a constraint on the agent, not a
+compiler error — it holds because the state lives in a file that can be checked, not
+because anything enforces it at runtime. The result is `research/archive/rejected/`:
+71 directories of ideas that looked good in my head and did not survive contact with
+the data.
 
 Three of them, to show what one actually looks like:
 
@@ -70,14 +71,15 @@ review — not conversation history.
                        │              │
   /archive          ←──┴──────────────┘
         │
-        ├─ research/archive/confirmed/      (52)  ──/ship──→  strategies/live/  (4)
-        ├─ research/archive/rejected/       (71)                     │
-        └─ research/archive/inconclusive/    (4)                     ↓
+        ├─ research/archive/confirmed/      (52)  ──by hand──→  strategies/live/ (4)
+        ├─ research/archive/rejected/       (71)                       │
+        └─ research/archive/inconclusive/    (4)                       ↓
                                                      indicators/tradingview/*.pine (14)
   /status  →  overview of everything in flight
 ```
 
-Rules the skills enforce, not just suggest:
+Rules written into the skills, so they apply to every hypothesis rather than the ones
+I remember to apply them to:
 
 - Invalidation criteria must exist before Phase 1 starts.
 - No backtest without a passing GATE.
