@@ -31,6 +31,21 @@ investment advice or a recommendation to trade. Backtested performance is
 simulated, does not account for all real-world costs, and is not indicative
 of future results. Use at your own risk.
 
+THIRD-PARTY DATA
+
 Market data is retrieved from public sources (TAIFEX, TWSE, TPEX, FinMind and
-others) at run time and is not redistributed with this repository. Users are
-responsible for complying with those providers' terms of use.
+others) at run time. Two small derived series are checked in under
+data/external_sources/, so that the fg-composite work (S004, H085) stays
+reproducible without an API key: 0050_TW_adj.csv (adjusted closes for 0050.TW)
+and VIXTWN.csv (TAIFEX Taiwan VIX). Everything else — tick archives, daily bars,
+breadth, margin and business-cycle series — is fetched at run time and is not
+redistributed here. Users are responsible for complying with the providers' terms
+of use.
+
+THIRD-PARTY CODE
+
+Backtests run on backtesting.py (https://github.com/kernc/backtesting.py), which
+is licensed AGPL-3.0. This repository does not redistribute it; it is installed
+from PyPI at setup time, so the combination is formed on the user's machine. If
+you redistribute a combined work that bundles backtesting.py, AGPL-3.0 terms
+apply to that combination regardless of the MIT licence above.

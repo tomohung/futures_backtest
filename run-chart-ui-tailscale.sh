@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # 啟動 chart-ui 並只綁 Tailscale 介面，讓 tailnet 內的其它裝置可連。
+#
+# ⚠️ chart-ui 沒有任何認證機制。綁 tailnet 位址是靠 tailscale 本身做存取控制；
+#    綁 0.0.0.0 等於把行情瀏覽介面直接開給外網，除非你已自行加上認證，否則別這樣做。
+#
 # Usage:
 #   ./run-chart-ui-tailscale.sh             # 自動抓 tailscale ip -4
-#   ./run-chart-ui-tailscale.sh 0.0.0.0     # 覆寫 host（例如想綁所有介面）
+#   ./run-chart-ui-tailscale.sh 0.0.0.0     # 覆寫 host（無認證，自負風險）
 #   CHART_UI_PORT=9000 ./run-chart-ui-tailscale.sh
 
 set -euo pipefail

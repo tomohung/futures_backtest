@@ -152,8 +152,13 @@ Python 3.14（free-threaded）· uv · DuckDB · backtesting.py · pandas / nump
 FastAPI + lightweight-charts · matplotlib · Resend · launchd
 
 資料來源：期交所（期貨與選擇權 tick 檔）、TWSE / TPEX（大盤廣度、個股日線）、
-FinMind（指數與個股分 K）、國發會（景氣對策信號）。**本 repo 不轉散布任何資料**，
-一律在執行時抓取。
+FinMind（指數與個股分 K）、國發會（景氣對策信號）。資料一律在執行時抓取，
+只有兩個衍生序列納入版控（`data/external_sources/`），讓 fg-composite 相關研究
+在沒有 API key 的情況下仍可重現：0050.TW 還原收盤價、以及台灣 VIX。
+
+`backtesting.py` 授權為 **AGPL-3.0**。本 repo 不轉散布它 —— `uv sync` 時才從 PyPI
+安裝，結合行為發生在你的機器上，因此下方的 MIT 只涵蓋這裡的程式碼。若你把
+backtesting.py 打包進自己要散布的東西，那個結合體就適用 AGPL-3.0。
 
 ---
 
@@ -359,6 +364,10 @@ uv run chart-ui            # 啟動，預設 http://127.0.0.1:8888/
 ./run-chart-ui-tailscale.sh   # 綁 tailscale 對外（自動抓 tailscale ip -4）
 ```
 
+> ⚠️ **chart-ui 沒有任何認證機制。** 預設綁 `127.0.0.1` 只有本機能連；上面這個腳本
+> 改綁 tailnet 位址，在 tailnet 內部可接受。**不要**綁 `0.0.0.0` 或任何公開介面 ——
+> 那等於把整個資料庫的行情瀏覽介面直接開放給外網。真要對外請先加上認證。
+
 ## 疑難排解
 
 ### DuckDB 資料庫損壞或需要重建
@@ -384,4 +393,7 @@ IO Error: Could not set lock on file "futures.duckdb"
 
 ## 授權與免責
 
-MIT。本專案不構成投資建議，回測數字為模擬結果且未計交易成本與滑價。詳見 [LICENSE](LICENSE)。
+MIT。本專案不構成投資建議，回測數字為模擬結果且未計交易成本與滑價。
+
+回測引擎 `backtesting.py` 為 AGPL-3.0，本 repo 不轉散布（執行時才從 PyPI 安裝）；
+`data/external_sources/` 下兩個衍生序列以外的行情資料皆在執行時抓取。詳見 [LICENSE](LICENSE)。

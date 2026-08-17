@@ -175,7 +175,18 @@ FastAPI + lightweight-charts · matplotlib · Resend · launchd
 
 Data sources: TAIFEX (futures and options tick archives), TWSE / TPEX (market breadth,
 daily equity bars), FinMind (index and per-symbol minute bars), NDC (business cycle
-indicator). Nothing is redistributed here — everything is fetched at run time.
+indicator). Everything is fetched at run time, with two exceptions checked in under
+`data/external_sources/` so the fg-composite work stays reproducible without an API
+key: adjusted closes for 0050.TW, and the TAIFEX Taiwan VIX series.
+
+`backtesting.py` is **AGPL-3.0**. This repository does not redistribute it — `uv sync`
+pulls it from PyPI, so the combination is formed on your machine, and the MIT licence
+below covers only the code here. Bundling backtesting.py into something you
+redistribute puts AGPL-3.0 terms on that combination.
+
+The chart UI (`uv run chart-ui`) binds to `127.0.0.1` and **has no authentication**.
+`run-chart-ui-tailscale.sh` rebinds it to your tailnet address, which is fine inside a
+tailnet; do not put it on `0.0.0.0` or a public interface without adding auth first.
 
 ## A note on language
 
