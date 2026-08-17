@@ -120,32 +120,36 @@ fed into it, and the strategy rules built on top.
 
 ## Known gaps
 
-Writing the tests above found two real bugs in code that had been producing results
-for months. Both are the kind that never raise an error — they just quietly make the
-numbers different:
+Writing the tests above found a bug that had been shaping results for months.
 
-- **A filter reads a value that depends on data from later in the same day.** It is
-  disabled by default, so no live strategy is affected.
-- **A parameter named in days spans a different window than its name implies** — and
-  means two different things depending on how the data was loaded.
+**`trend_ma_days` does not mean days.** The trend moving average is computed as
+`trend_ma_days * 301` bars, where 301 is the length of a *day session*
+([`runner.py:189`](src/backtest/runner.py#L189), and hardcoded again at
+[`runner.py:348`](src/backtest/runner.py#L348)). Both apply it to the continuous
+series, which includes the night session at 1142 bars per trading day. So
+`trend_ma_days=10` — described in [`orb.py:214`](src/strategies/orb.py#L214) as "the
+10-day trend moving average" — actually looks back about 2.6 trading days. The same
+constant is *correct* at `orb.py:51` and `orb.py:324`, where the series really is
+day-session only. One parameter, two meanings, decided by which loader ran.
 
-Neither is fixed yet, because fixing them changes signals and invalidates existing
-backtests. Both are pinned by `xfail(strict=True)` tests that assert the *correct*
-behaviour: when someone fixes the bug, the test starts passing, strict mode fails the
-build, and that is the reminder to update everything downstream. Full write-ups are in
+The consequence is not that the backtests are invalid — the average is still trailing,
+with no look-ahead. It is that `trend_ma_days=10` was selected by optimisation *against
+the 2.6-day version*. Fixing the constant does not fix the parameter; the search has to
+be re-run.
+
+There is also a latent one: `_compute_daily_adx` is never shifted, so day D's ADX is
+computed from day D's own high and low. `adx_period` defaults to `0`, so the filter has
+always been off and no strategy has ever read it.
+
+Neither is fixed, because the first one invalidates the backtests that chose the
+current parameters. Both are pinned by `xfail(strict=True)` tests asserting the
+*correct* behaviour: when someone fixes one, the test starts passing, strict mode fails
+the build, and that is the reminder to redo everything downstream. Write-ups are in
 [`tests/test_lookahead.py`](tests/test_lookahead.py).
 
-Three more, listed because a repo about honest research should be honest about itself:
-
-- **The Python research and the Pine Script execution are not verified to agree.**
-  Confirmed strategies get reimplemented as TradingView indicators — the language they
-  actually run in, which cannot execute this backtest. Nothing checks the two match.
-  This is the largest untested surface in the project.
-- **Two engine behaviours silently shrink results**: the first day of any backtest
-  never trades, and an end date excludes its own day. Now pinned by tests.
-- **Coverage is targeted, not broad** — the feature layer and one strategy's rules.
-  The other strategies, the options backtest and the exploration scripts are not
-  covered.
+The largest untested surface is somewhere else entirely. Confirmed strategies are
+reimplemented as TradingView Pine Script — the language they actually trade in, and one
+that cannot run this backtest. Nothing checks that the two implementations agree.
 
 ## Repository layout
 
