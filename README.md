@@ -179,15 +179,13 @@ indicator). Nothing is redistributed here — everything is fetched at run time.
 
 ## A note on language
 
-Code identifiers, test names, directory names and the API surface are English. Most of
-the prose — docstrings, comments, and the research write-ups — is Traditional Chinese,
-because that is the language I think in while doing this research and translating it
-would have slowed the research down. Commit subjects are mixed: of 580 commits, 255
-have Chinese somewhere in the message.
+Code identifiers, test names, directory names and the API surface are English. The
+research write-ups and most comments are Traditional Chinese; commit messages are
+mixed.
 
-If you are evaluating this repository and do not read Chinese, the test suite is the
-most readable entry point: test names state the property being asserted, and the
-assertions themselves are language-neutral.
+If you are evaluating this repository and do not read Chinese, start with the test
+suite: the names state the property being asserted, and the assertions themselves are
+language-neutral.
 
 ## Scope
 
